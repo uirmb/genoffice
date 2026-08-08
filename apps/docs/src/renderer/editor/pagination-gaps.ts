@@ -58,6 +58,8 @@ function makeGapEl(m: GapMetrics, kind: 'block' | 'inline' | 'table' | 'cut'): H
   gap.style.height = `${m.marginBottom + GAP_BAND + m.marginTop}px`
   gap.style.setProperty('--gap-mb', `${m.marginBottom}px`)
   gap.style.setProperty('--gap-mt', `${m.marginTop}px`)
+  gap.style.setProperty('--gap-ml', `${m.marginLeft}px`)
+  gap.style.setProperty('--gap-mr', `${m.marginRight}px`)
   if (kind === 'table') {
     // A real spanning cell is required here. Chromium's collapsed-border table
     // painting can leak the neighboring row's border/fill through a cell-less
