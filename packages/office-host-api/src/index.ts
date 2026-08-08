@@ -62,12 +62,7 @@ export interface SaveDocumentResult {
   ok: boolean
   file?: OfficeFileDescriptor
   error?: string
-  code?:
-    | 'VERSION_CONFLICT'
-    | 'PERMISSION_DENIED'
-    | 'NOT_FOUND'
-    | 'SAVE_FAILED'
-    | 'CANCELLED'
+  code?: 'VERSION_CONFLICT' | 'PERMISSION_DENIED' | 'NOT_FOUND' | 'SAVE_FAILED' | 'CANCELLED'
 }
 
 export interface PickFileOptions {

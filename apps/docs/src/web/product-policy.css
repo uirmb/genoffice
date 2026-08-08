@@ -24,14 +24,10 @@ html.office-web:not(.office-can-save-as) .file-menu > button:nth-child(3) {
 html.office-page-crop-marks .doc-page {
   background-color: var(--page-bg, var(--surface));
   background-image:
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b);
+    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b);
   background-repeat: no-repeat;
   background-origin: content-box;
   background-size:
@@ -63,14 +59,10 @@ html.office-page-crop-marks .page-gap:not(.page-gap-table)::after {
   z-index: 5;
   pointer-events: none;
   background-image:
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b);
+    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b);
   background-repeat: no-repeat;
   background-size:
     12px 1px,
