@@ -99,8 +99,8 @@ html.office-page-crop-marks .page-gap:not(.page-gap-table)::after {
     /* previous page: bottom-right (right + down) */
     calc(100% - var(--gap-mr, 96px) + var(--office-page-mark-length)) top,
     calc(100% - var(--gap-mr, 96px)) top,
-    /* next page: top-left (left + up) */
-    calc(var(--gap-ml, 96px) - var(--office-page-mark-length)) bottom,
+    /* next page: top-left (left + up) */ calc(var(--gap-ml, 96px) - var(--office-page-mark-length))
+      bottom,
     var(--gap-ml, 96px) bottom,
     /* next page: top-right (right + up) */
     calc(100% - var(--gap-mr, 96px) + var(--office-page-mark-length)) bottom,
