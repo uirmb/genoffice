@@ -19,39 +19,54 @@ html.office-web:not(.office-can-save-as) .file-menu > button:nth-child(3) {
   display: none;
 }
 
-/* The document content-box is the editing area. Backgrounds are visual only:
-   they do not create Tiptap nodes, affect selection, print, or enter OOXML. */
+html.office-page-crop-marks {
+  --office-page-mark-length: 24px;
+  --office-page-mark-color: #a6a6a6;
+}
+
+/* Word-style text-boundary corner marks.
+   The corner opens toward the document body, so the two visible arms extend
+   OUT into the page margins rather than IN over editable content. The page
+   background is visual only and never enters Tiptap/OOXML/printing. */
 html.office-page-crop-marks .doc-page {
   background-color: var(--page-bg, var(--surface));
   background-image:
-    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b);
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color));
   background-repeat: no-repeat;
   background-origin: content-box;
   background-size:
-    12px 1px,
-    1px 12px,
-    12px 1px,
-    1px 12px,
-    12px 1px,
-    1px 12px,
-    12px 1px,
-    1px 12px;
+    var(--office-page-mark-length) 1px,
+    1px var(--office-page-mark-length),
+    var(--office-page-mark-length) 1px,
+    1px var(--office-page-mark-length),
+    var(--office-page-mark-length) 1px,
+    1px var(--office-page-mark-length),
+    var(--office-page-mark-length) 1px,
+    1px var(--office-page-mark-length);
   background-position:
-    left top,
-    left top,
-    right top,
-    right top,
-    left bottom,
-    left bottom,
-    right bottom,
-    right bottom;
+    calc(0% - var(--office-page-mark-length)) top,
+    left calc(0% - var(--office-page-mark-length)),
+    calc(100% + var(--office-page-mark-length)) top,
+    right calc(0% - var(--office-page-mark-length)),
+    calc(0% - var(--office-page-mark-length)) bottom,
+    left calc(100% + var(--office-page-mark-length)),
+    calc(100% + var(--office-page-mark-length)) bottom,
+    right calc(100% + var(--office-page-mark-length));
 }
 
-/* Intermediate pages are separated by page-gap decorations. Once the gap
-   exposes its section margins, its top/bottom are the previous/next body edges. */
+/* A pagination gap contains, in order:
+   previous page bottom margin -> gray inter-page band -> next page top margin.
+   Therefore its TOP edge is the previous page's BODY BOTTOM and must use
+   bottom-corner geometry; its BOTTOM edge is the next page's BODY TOP and must
+   use top-corner geometry. Keeping those two boundaries distinct prevents the
+   corner marks from flipping or intruding into text at page breaks. */
 html.office-page-crop-marks .page-gap:not(.page-gap-table)::after {
   content: '';
   position: absolute;
@@ -59,27 +74,35 @@ html.office-page-crop-marks .page-gap:not(.page-gap-table)::after {
   z-index: 5;
   pointer-events: none;
   background-image:
-    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b),
-    linear-gradient(#8b8b8b, #8b8b8b), linear-gradient(#8b8b8b, #8b8b8b);
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color)),
+    linear-gradient(var(--office-page-mark-color), var(--office-page-mark-color));
   background-repeat: no-repeat;
   background-size:
-    12px 1px,
-    1px 12px,
-    12px 1px,
-    1px 12px,
-    12px 1px,
-    1px 12px,
-    12px 1px,
-    1px 12px;
+    var(--office-page-mark-length) 1px,
+    1px var(--office-page-mark-length),
+    var(--office-page-mark-length) 1px,
+    1px var(--office-page-mark-length),
+    var(--office-page-mark-length) 1px,
+    1px var(--office-page-mark-length),
+    var(--office-page-mark-length) 1px,
+    1px var(--office-page-mark-length);
   background-position:
+    /* previous page: bottom-left (left + down) */
+    calc(var(--gap-ml, 96px) - var(--office-page-mark-length)) top,
     var(--gap-ml, 96px) top,
-    var(--gap-ml, 96px) top,
-    calc(100% - var(--gap-mr, 96px) - 12px) top,
-    calc(100% - var(--gap-mr, 96px) - 1px) top,
-    var(--gap-ml, 96px) calc(100% - 1px),
-    var(--gap-ml, 96px) calc(100% - 12px),
-    calc(100% - var(--gap-mr, 96px) - 12px) calc(100% - 1px),
-    calc(100% - var(--gap-mr, 96px) - 1px) calc(100% - 12px);
+    /* previous page: bottom-right (right + down) */
+    calc(100% - var(--gap-mr, 96px) + var(--office-page-mark-length)) top,
+    calc(100% - var(--gap-mr, 96px)) top,
+    /* next page: top-left (left + up) */
+    calc(var(--gap-ml, 96px) - var(--office-page-mark-length)) bottom,
+    var(--gap-ml, 96px) bottom,
+    /* next page: top-right (right + up) */
+    calc(100% - var(--gap-mr, 96px) + var(--office-page-mark-length)) bottom,
+    calc(100% - var(--gap-mr, 96px)) bottom;
 }
