@@ -1,0 +1,93 @@
+/* Web-only product policy. Electron never imports this stylesheet. */
+
+html.office-web:not(.office-ai-enabled) .ribbon-group:has(.ai-entry),
+html.office-web:not(.office-ai-enabled) .ribbon-group:has(.ai-entry) + .ribbon-sep,
+html.office-web:not(.office-ai-enabled) .ai-dock,
+html.office-web:not(.office-ai-enabled) .ctx-item:has(.copilot-badge),
+html.office-web:not(.office-ai-enabled) .ctx-item-wrap:has(> .ctx-item .copilot-badge),
+html.office-web:not(.office-ai-enabled) .ctx-menu > .ctx-sep:has(+ .ctx-item .copilot-badge) {
+  display: none;
+}
+
+html.office-web:not(.office-autosave-editor) .autosave-toggle {
+  display: none;
+}
+
+html.office-web:not(.office-can-open) .file-menu > button:nth-child(1),
+html.office-web:not(.office-can-save) .file-menu > button:nth-child(2),
+html.office-web:not(.office-can-save-as) .file-menu > button:nth-child(3) {
+  display: none;
+}
+
+/* The document content-box is the editing area. Backgrounds are visual only:
+   they do not create Tiptap nodes, affect selection, print, or enter OOXML. */
+html.office-page-crop-marks .doc-page {
+  background-color: var(--page-bg, var(--surface));
+  background-image:
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b);
+  background-repeat: no-repeat;
+  background-origin: content-box;
+  background-size:
+    12px 1px,
+    1px 12px,
+    12px 1px,
+    1px 12px,
+    12px 1px,
+    1px 12px,
+    12px 1px,
+    1px 12px;
+  background-position:
+    left top,
+    left top,
+    right top,
+    right top,
+    left bottom,
+    left bottom,
+    right bottom,
+    right bottom;
+}
+
+/* Intermediate pages are separated by page-gap decorations. Once the gap
+   exposes its section margins, its top/bottom are the previous/next body edges. */
+html.office-page-crop-marks .page-gap:not(.page-gap-table)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background-image:
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b),
+    linear-gradient(#8b8b8b, #8b8b8b);
+  background-repeat: no-repeat;
+  background-size:
+    12px 1px,
+    1px 12px,
+    12px 1px,
+    1px 12px,
+    12px 1px,
+    1px 12px,
+    12px 1px,
+    1px 12px;
+  background-position:
+    var(--gap-ml, 96px) top,
+    var(--gap-ml, 96px) top,
+    calc(100% - var(--gap-mr, 96px) - 12px) top,
+    calc(100% - var(--gap-mr, 96px) - 1px) top,
+    var(--gap-ml, 96px) calc(100% - 1px),
+    var(--gap-ml, 96px) calc(100% - 12px),
+    calc(100% - var(--gap-mr, 96px) - 12px) calc(100% - 1px),
+    calc(100% - var(--gap-mr, 96px) - 1px) calc(100% - 12px);
+}
