@@ -1,0 +1,20 @@
+{
+  "name": "@genoffice/web-runtime",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone and embedded browser runtime for GenOffice web editors",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@genoffice/iframe-bridge": "*",
+    "@genoffice/office-host-api": "*",
+    "@genoffice/office-protocol": "*",
+    "typescript": "^5.9.3"
+  }
+}
