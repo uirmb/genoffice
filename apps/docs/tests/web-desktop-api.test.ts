@@ -23,15 +23,16 @@ function createHarness(
     bytes: bytesOf('source'),
   }
 
+  const saveDocument = vi.fn(
+    saveImpl ??
+      (async (input: SaveDocumentInput) => ({
+        ok: true,
+        file: { ...input.file, version: 'v2' },
+      })),
+  )
   const host: OfficeHostApi = {
     getLocale: vi.fn(async () => 'zh-CN'),
-    saveDocument: vi.fn(
-      saveImpl ??
-        (async (input) => ({
-          ok: true,
-          file: { ...input.file, version: 'v2' },
-        })),
-    ),
+    saveDocument,
     pickFile: vi.fn(async () => null),
     readFile: vi.fn(async () => initialFile),
     setDirty: vi.fn(),
@@ -61,7 +62,7 @@ function createHarness(
     controller.destroy()
   }
 
-  return { controller, policy, host, send, emit, initialFile, destroy }
+  return { controller, policy, host, saveDocument, send, emit, initialFile, destroy }
 }
 
 describe('Docs web desktop adapter', () => {
@@ -131,7 +132,7 @@ describe('Docs web desktop adapter', () => {
   })
 
   it('routes parent save through the host and acknowledges the original request', async () => {
-    const { controller, host, send, emit, initialFile, destroy } = createHarness()
+    const { controller, saveDocument, send, emit, initialFile, destroy } = createHarness()
     const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
     emit({
       protocol: OFFICE_PROTOCOL_VERSION,
@@ -154,14 +155,14 @@ describe('Docs web desktop adapter', () => {
       requestId: 'parent-save-1',
     })
 
-    expect(host.saveDocument).toHaveBeenCalledWith(
+    expect(saveDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         baseVersion: 'v1',
         mode: 'save',
         file: expect.objectContaining({ id: 'doc-1', name: initialFile.name }),
       }),
     )
-    const saveInput = vi.mocked(host.saveDocument).mock.calls[0]?.[0]
+    const saveInput = saveDocument.mock.calls[0]?.[0]
     expect(new TextDecoder().decode(saveInput?.bytes)).toBe('edited')
 
     await vi.waitFor(() => {
@@ -177,15 +178,17 @@ describe('Docs web desktop adapter', () => {
   })
 
   it('marks Save As explicitly so the host can create a new system file', async () => {
-    const { controller, host, emit, initialFile, destroy } = createHarness(async (input) => ({
-      ok: true,
-      file: {
-        ...input.file,
-        id: 'doc-copy',
-        name: '副本.docx',
-        version: 'v1',
-      },
-    }))
+    const { controller, saveDocument, emit, initialFile, host, destroy } = createHarness(
+      async (input) => ({
+        ok: true,
+        file: {
+          ...input.file,
+          id: 'doc-copy',
+          name: '副本.docx',
+          version: 'v1',
+        },
+      }),
+    )
     const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
     emit({
       protocol: OFFICE_PROTOCOL_VERSION,
@@ -197,7 +200,7 @@ describe('Docs web desktop adapter', () => {
 
     const result = await controller.desktopApi.saveDocxAs('副本.docx', bytesOf('copy'))
 
-    expect(host.saveDocument).toHaveBeenCalledWith(
+    expect(saveDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: 'saveAs',
         baseVersion: 'v1',
