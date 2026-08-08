@@ -5,6 +5,7 @@ import {
 } from '@genoffice/web-runtime'
 import './product-policy.css'
 import { createDocsWebDesktopController } from './desktop-api'
+import { installWebHostPolicy, installWebSaveModeAdapter } from './host-policy'
 
 function renderBootstrapError(error: unknown): void {
   const root = document.getElementById('root')
@@ -23,15 +24,8 @@ function resolveHostOrigin(): string | null {
 async function bootstrapWeb(): Promise<void> {
   const mode = detectWebRuntimeMode()
 
-  // Apply the default Web product policy before React renders so legacy desktop
-  // controls never flash on screen. office:init capabilities may refine it later.
-  document.documentElement.classList.add(
-    'office-web',
-    'office-page-crop-marks',
-    'office-can-open',
-    'office-can-save',
-    'office-can-save-as',
-  )
+  // Web Office starts with platform-owned policy: no legacy Genspark panel and
+  // no editor-owned autosave. Embedded hosts may refine capabilities via office:init.
   localStorage.setItem('aidocs.showAi', '0')
   localStorage.setItem('aidocs.autoSave', '0')
 
@@ -52,11 +46,15 @@ async function bootstrapWeb(): Promise<void> {
   const host = embeddedRuntime?.host ?? standaloneHost
   if (!host) throw new Error('Unable to initialize the Docs web host runtime.')
 
+  const hostPolicy = installWebHostPolicy(mode, embeddedRuntime?.bridge)
   const controller = createDocsWebDesktopController(host, embeddedRuntime?.bridge)
+  const uninstallSaveMode = installWebSaveModeAdapter(controller, host)
   window.desktop = controller.desktopApi
   window.projectApi = controller.projectApi
 
   const cleanup = () => {
+    uninstallSaveMode()
+    hostPolicy.destroy()
     controller.destroy()
     embeddedRuntime?.destroy()
     standaloneHost?.destroy()
