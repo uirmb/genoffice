@@ -49,7 +49,7 @@ jobs:
       - name: Browser E2E (Docs Web)
         env:
           DOCS_WEB_E2E_URL: http://127.0.0.1:5273/
-        run: npx playwright test e2e/docs-web.spec.ts --config e2e/playwright.config.ts --project=chromium
+        run: npx playwright test e2e/docs-web.spec.ts --config e2e/playwright.config.ts
 
       - name: Upload browser artifacts on failure
         if: failure()
