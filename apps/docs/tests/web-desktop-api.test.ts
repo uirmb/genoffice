@@ -77,6 +77,7 @@ describe('Docs web desktop adapter', () => {
     emit({
       protocol: OFFICE_PROTOCOL_VERSION,
       type: 'office:init',
+      requestId: 'init-1',
       payload: {
         kind: 'docx',
         mode: 'view',
@@ -116,6 +117,7 @@ describe('Docs web desktop adapter', () => {
     emit({
       protocol: OFFICE_PROTOCOL_VERSION,
       type: 'office:init',
+      requestId: 'init-2',
       payload: { kind: 'docx', mode: 'edit', file: initialFile },
     })
     const opened = await pendingOpen
@@ -162,6 +164,7 @@ describe('Docs web desktop adapter', () => {
     emit({
       protocol: OFFICE_PROTOCOL_VERSION,
       type: 'office:init',
+      requestId: 'init-3',
       payload: { kind: 'docx', mode: 'edit', file: initialFile },
     })
     const opened = await pendingOpen
