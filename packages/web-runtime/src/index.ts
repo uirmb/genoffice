@@ -28,6 +28,14 @@ function localFileId(file: File): string {
   return `local:${file.name}:${file.size}:${file.lastModified}:${suffix}`
 }
 
+function standaloneSavedFileId(name: string): string {
+  const suffix =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `download:${name}:${suffix}`
+}
+
 function downloadBuffer(bytes: ArrayBuffer, name: string, mimeType: string): void {
   const blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' })
   const url = URL.createObjectURL(blob)
@@ -50,12 +58,26 @@ export class StandaloneOfficeHost implements OfficeHostApi {
   }
 
   async saveDocument(input: SaveDocumentInput): Promise<SaveDocumentResult> {
-    downloadBuffer(input.bytes, input.file.name, input.file.mimeType)
+    let file = input.file
+    if (input.mode === 'saveAs') {
+      const requested = window.prompt('Save as', input.file.name)
+      if (requested === null) {
+        return { ok: false, code: 'CANCELLED', error: 'Save As cancelled.' }
+      }
+      const name = requested.trim()
+      if (!name) {
+        return { ok: false, code: 'CANCELLED', error: 'A file name is required.' }
+      }
+      file = { ...input.file, id: standaloneSavedFileId(name), name, version: null }
+    }
+
+    downloadBuffer(input.bytes, file.name, file.mimeType)
     return {
       ok: true,
       file: {
-        ...input.file,
-        version: input.baseVersion ?? input.file.version ?? null,
+        ...file,
+        size: input.bytes.byteLength,
+        version: input.mode === 'saveAs' ? null : (input.baseVersion ?? file.version ?? null),
       },
     }
   }
@@ -169,6 +191,7 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
           file: input.file,
           bytes,
           baseVersion: input.baseVersion,
+          mode: input.mode,
         },
       },
       'office:save-document-result',
