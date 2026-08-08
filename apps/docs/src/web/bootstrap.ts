@@ -21,6 +21,12 @@ function resolveHostOrigin(): string | null {
 
 async function bootstrapWeb(): Promise<void> {
   const mode = detectWebRuntimeMode()
+
+  // Web Office starts with platform-owned policy: no legacy Genspark panel and
+  // no editor-owned autosave. Embedded hosts may opt capabilities back in via office:init.
+  localStorage.setItem('aidocs.showAi', '0')
+  localStorage.setItem('aidocs.autoSave', '0')
+
   const embeddedRuntime =
     mode === 'embedded'
       ? createEmbeddedOfficeRuntime({
