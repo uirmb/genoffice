@@ -6,10 +6,7 @@ import type {
   SelectedOfficeFile,
 } from '@genoffice/office-host-api'
 import type { EditorIframeBridge } from '@genoffice/web-runtime'
-import {
-  OFFICE_PROTOCOL_VERSION,
-  type HostToEditorMessage,
-} from '@genoffice/office-protocol'
+import { OFFICE_PROTOCOL_VERSION, type HostToEditorMessage } from '@genoffice/office-protocol'
 import type {
   AiSettings,
   AiStreamChunk,
@@ -83,7 +80,10 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary)
 }
 
-async function selectedToOfficeFile(host: OfficeHostApi, selected: SelectedOfficeFile): Promise<OfficeFile> {
+async function selectedToOfficeFile(
+  host: OfficeHostApi,
+  selected: SelectedOfficeFile,
+): Promise<OfficeFile> {
   if (selected.transport === 'buffer' && selected.bytes) {
     return { ...selected, bytes: selected.bytes }
   }
@@ -124,7 +124,9 @@ export function createDocsWebDesktopController(
   let pendingStateRequestId: string | null = null
   let mode: 'view' | 'edit' = 'edit'
   let saving = false
-  let currentLang: DocsLang = normalizeLang(document.documentElement.lang || navigator.language || 'en')
+  let currentLang: DocsLang = normalizeLang(
+    document.documentElement.lang || navigator.language || 'en',
+  )
   let aiSettings = emptyAiSettings()
 
   const openHandlers = new Set<OpenHandler>()
@@ -319,7 +321,10 @@ export function createDocsWebDesktopController(
       aiSettings = settings
     },
     print: async () => window.print(),
-    exportPdf: async () => ({ ok: false, error: 'PDF export is not available in the web runtime yet.' }),
+    exportPdf: async () => ({
+      ok: false,
+      error: 'PDF export is not available in the web runtime yet.',
+    }),
     printPdfBuffer: async () => ({
       ok: false,
       error: 'PDF buffer export is not available in the web runtime yet.',
@@ -337,10 +342,19 @@ export function createDocsWebDesktopController(
     imageSearch: async () => ({ images: [], method: 'error', error: 'Image search is disabled.' }),
     fetchImage: async () => null,
     pickAttachments: async () => null,
-    addAttachmentPaths: async () => ({ accepted: [], rejected: ['Local path attachments are unavailable on the web.'] }),
-    addPastedImage: async () => ({ accepted: [], rejected: ['AI attachments are disabled on the web.'] }),
+    addAttachmentPaths: async () => ({
+      accepted: [],
+      rejected: ['Local path attachments are unavailable on the web.'],
+    }),
+    addPastedImage: async () => ({
+      accepted: [],
+      rejected: ['AI attachments are disabled on the web.'],
+    }),
     readAttachment: async () => ({ ok: false, error: 'AI attachments are disabled on the web.' }),
-    readAttachmentImage: async () => ({ ok: false, error: 'AI attachments are disabled on the web.' }),
+    readAttachmentImage: async () => ({
+      ok: false,
+      error: 'AI attachments are disabled on the web.',
+    }),
     getPathForFile: (file) => `browser-file://${encodeURIComponent(file.name)}`,
     openNewTab: async () => {},
     listDocsTabs: async () => [],

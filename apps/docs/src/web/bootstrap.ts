@@ -1,4 +1,8 @@
-import { StandaloneOfficeHost, createEmbeddedOfficeRuntime, detectWebRuntimeMode } from '@genoffice/web-runtime'
+import {
+  StandaloneOfficeHost,
+  createEmbeddedOfficeRuntime,
+  detectWebRuntimeMode,
+} from '@genoffice/web-runtime'
 import { createDocsWebDesktopController } from './desktop-api'
 
 function renderBootstrapError(error: unknown): void {

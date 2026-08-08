@@ -21,9 +21,10 @@ export function detectWebRuntimeMode(currentWindow: Window = window): WebRuntime
 }
 
 function localFileId(file: File): string {
-  const suffix = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const suffix =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   return `local:${file.name}:${file.size}:${file.lastModified}:${suffix}`
 }
 
@@ -157,7 +158,9 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
   async saveDocument(input: SaveDocumentInput): Promise<SaveDocumentResult> {
     const requestId = createOfficeRequestId('save')
     const bytes = input.bytes.slice(0)
-    const response = await this.bridge.request<Extract<HostToEditorMessage, { type: 'office:save-document-result' }>>(
+    const response = await this.bridge.request<
+      Extract<HostToEditorMessage, { type: 'office:save-document-result' }>
+    >(
       {
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:save-document',
@@ -176,7 +179,9 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
 
   async pickFile(options: PickFileOptions): Promise<SelectedOfficeFile[] | null> {
     const requestId = createOfficeRequestId('pick')
-    const response = await this.bridge.request<Extract<HostToEditorMessage, { type: 'office:pick-file-result' }>>(
+    const response = await this.bridge.request<
+      Extract<HostToEditorMessage, { type: 'office:pick-file-result' }>
+    >(
       {
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:pick-file',
@@ -190,7 +195,9 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
 
   async readFile(fileId: string): Promise<OfficeFile> {
     const requestId = createOfficeRequestId('read')
-    const response = await this.bridge.request<Extract<HostToEditorMessage, { type: 'office:read-file-result' }>>(
+    const response = await this.bridge.request<
+      Extract<HostToEditorMessage, { type: 'office:read-file-result' }>
+    >(
       {
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:read-file',
