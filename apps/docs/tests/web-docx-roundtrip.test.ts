@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildBlankDocx, parseDocx, saveDocx, type GeneratedBlock, type SaveBlock } from '@genoffice/docx-engine'
+import {
+  buildBlankDocx,
+  parseDocx,
+  saveDocx,
+  type GeneratedBlock,
+  type SaveBlock,
+} from '@genoffice/docx-engine'
 
 function visibleBlocks<T extends { hidden?: boolean }>(blocks: T[]): T[] {
   return blocks.filter((block) => !block.hidden)

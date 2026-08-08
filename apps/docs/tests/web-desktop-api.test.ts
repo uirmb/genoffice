@@ -10,7 +10,9 @@ function bytesOf(text: string): ArrayBuffer {
   return new TextEncoder().encode(text).buffer
 }
 
-function createHarness(saveImpl?: (input: SaveDocumentInput) => ReturnType<OfficeHostApi['saveDocument']>) {
+function createHarness(
+  saveImpl?: (input: SaveDocumentInput) => ReturnType<OfficeHostApi['saveDocument']>,
+) {
   const initialFile: OfficeFile = {
     id: 'doc-1',
     name: '测试文档.docx',
