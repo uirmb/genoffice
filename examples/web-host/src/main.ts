@@ -79,6 +79,17 @@ function sendInit(): void {
       kind: 'docx',
       mode,
       locale: 'zh-CN',
+      capabilities: {
+        ai: false,
+        open: true,
+        save: true,
+        saveAs: true,
+        autoSave: 'host',
+        download: false,
+        print: true,
+        systemFilePicker: true,
+        pageCropMarks: true,
+      },
       file: { ...currentFile, bytes: currentFile.bytes.slice(0) },
     },
   })
@@ -154,6 +165,16 @@ function openPicker(requestIdValue: string, options: PickFileOptions): void {
   pickerDialog.hidden = false
 }
 
+function respondSaveCancelled(requestIdValue: string): void {
+  send({
+    protocol: OFFICE_PROTOCOL_VERSION,
+    type: 'office:save-document-result',
+    requestId: requestIdValue,
+    payload: { ok: false, code: 'CANCELLED', error: '已取消另存为。' },
+  })
+  setHostState('ready')
+}
+
 async function handleEditorMessage(message: EditorToHostMessage): Promise<void> {
   switch (message.type) {
     case 'office:ready':
@@ -172,9 +193,25 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
       break
     case 'office:save-document': {
       const bytes = message.payload.bytes.slice(0)
-      versionCounter += 1
+      const saveAs = message.payload.mode === 'saveAs'
+      let targetName = message.payload.file.name
+
+      if (saveAs) {
+        const requested = window.prompt('另存为文件名', targetName)
+        if (requested === null || !requested.trim()) {
+          respondSaveCancelled(message.requestId)
+          break
+        }
+        targetName = requested.trim()
+        versionCounter = 1
+      } else {
+        versionCounter += 1
+      }
+
       const saved: OfficeFile = {
         ...message.payload.file,
+        id: saveAs ? `doc:${crypto.randomUUID()}` : message.payload.file.id,
+        name: targetName,
         size: bytes.byteLength,
         version: `v${versionCounter}`,
         bytes,
