@@ -3,6 +3,7 @@ import type { OfficeFile, OfficeHostApi, SaveDocumentInput } from '@genoffice/of
 import { OFFICE_PROTOCOL_VERSION, type HostToEditorMessage } from '@genoffice/office-protocol'
 import type { EditorIframeBridge } from '@genoffice/web-runtime'
 import { createDocsWebDesktopController } from '../src/web/desktop-api'
+import { installWebHostPolicy, installWebSaveModeAdapter } from '../src/web/host-policy'
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
@@ -37,30 +38,35 @@ function createHarness(
     setTitle: vi.fn(),
   }
 
-  let incoming: ((message: HostToEditorMessage) => void) | null = null
+  const incoming = new Set<(message: HostToEditorMessage) => void>()
   const send = vi.fn()
   const bridge = {
     send,
     subscribe: vi.fn((handler: (message: HostToEditorMessage) => void) => {
-      incoming = handler
-      return () => {
-        incoming = null
-      }
+      incoming.add(handler)
+      return () => incoming.delete(handler)
     }),
   } as unknown as EditorIframeBridge
 
+  const policy = installWebHostPolicy('embedded', bridge)
   const controller = createDocsWebDesktopController(host, bridge)
+  const uninstallSaveMode = installWebSaveModeAdapter(controller, host)
   const emit = (message: HostToEditorMessage) => {
-    if (!incoming) throw new Error('Bridge handler is not registered')
-    incoming(message)
+    if (incoming.size === 0) throw new Error('Bridge handler is not registered')
+    for (const handler of incoming) handler(message)
+  }
+  const destroy = () => {
+    uninstallSaveMode()
+    policy.destroy()
+    controller.destroy()
   }
 
-  return { controller, host, send, emit, initialFile }
+  return { controller, policy, host, send, emit, initialFile, destroy }
 }
 
 describe('Docs web desktop adapter', () => {
-  it('serializes initial ready/init, applies parent mode, and exposes Web UI capabilities', async () => {
-    const { controller, host, send, emit, initialFile } = createHarness()
+  it('serializes initial ready/init, applies parent mode, and applies Web UI capabilities', async () => {
+    const { controller, policy, host, send, emit, initialFile, destroy } = createHarness()
 
     const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
 
@@ -93,7 +99,7 @@ describe('Docs web desktop adapter', () => {
     expect(new TextDecoder().decode(opened?.data)).toBe('source')
     expect(await controller.desktopApi.getHostEditorMode?.()).toBe('view')
     expect(await controller.desktopApi.getLanguage()).toBe('zh')
-    expect(await controller.desktopApi.getHostCapabilities?.()).toMatchObject({
+    expect(policy.getCapabilities()).toMatchObject({
       ai: false,
       open: true,
       save: true,
@@ -120,12 +126,12 @@ describe('Docs web desktop adapter', () => {
     controller.desktopApi.reportDirtyChange?.(true)
     expect(host.setDirty).toHaveBeenCalledWith(true)
 
-    controller.destroy()
+    destroy()
     expect(document.documentElement.classList.contains('office-web')).toBe(false)
   })
 
   it('routes parent save through the host and acknowledges the original request', async () => {
-    const { controller, host, send, emit, initialFile } = createHarness()
+    const { controller, host, send, emit, initialFile, destroy } = createHarness()
     const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
     emit({
       protocol: OFFICE_PROTOCOL_VERSION,
@@ -167,11 +173,11 @@ describe('Docs web desktop adapter', () => {
       })
     })
 
-    controller.destroy()
+    destroy()
   })
 
   it('marks Save As explicitly so the host can create a new system file', async () => {
-    const { controller, host, emit, initialFile } = createHarness(async (input) => ({
+    const { controller, host, emit, initialFile, destroy } = createHarness(async (input) => ({
       ok: true,
       file: {
         ...input.file,
@@ -202,11 +208,11 @@ describe('Docs web desktop adapter', () => {
     expect(result.path).toContain('web-office://files/doc-copy/')
     expect(host.setTitle).toHaveBeenLastCalledWith('副本.docx')
 
-    controller.destroy()
+    destroy()
   })
 
   it('maps host version conflicts to the existing external-modified save contract', async () => {
-    const { controller, emit, initialFile } = createHarness(async () => ({
+    const { controller, emit, initialFile, destroy } = createHarness(async () => ({
       ok: false,
       code: 'VERSION_CONFLICT',
       error: 'The document changed on the server.',
@@ -227,6 +233,6 @@ describe('Docs web desktop adapter', () => {
       reason: 'external-modified',
     })
 
-    controller.destroy()
+    destroy()
   })
 })
