@@ -9,12 +9,16 @@ const hostUrl = process.env.DOCS_WEB_HOST_E2E_URL
 test.describe('Docs Web', () => {
   test.skip(!docsWebUrl, 'DOCS_WEB_E2E_URL is only set by the Docs Web browser CI step')
 
-  test('boots the real browser editor and edits a blank document', async ({ page }) => {
+  test('boots the productized browser editor and edits a blank document', async ({ page }) => {
     await page.goto(docsWebUrl!)
 
     const editor = page.locator('.ProseMirror').first()
     await expect(editor).toBeVisible({ timeout: 30_000 })
     await expect(page.locator('text=GenOffice Web failed to start')).toHaveCount(0)
+    await expect(page.locator('.autosave-toggle')).toBeHidden()
+    await expect(page.locator('.ribbon-group:has(.ai-entry)')).toBeHidden()
+    await expect(page.locator('.ai-dock')).toBeHidden()
+    await expect(page.locator('html')).toHaveClass(/office-page-crop-marks/)
 
     const text = 'GenOffice Web 浏览器编辑回归'
     await editor.click()
@@ -24,7 +28,7 @@ test.describe('Docs Web', () => {
     await expect.poll(() => page.title()).toBeTruthy()
   })
 
-  test('opens, edits, saves, downloads, and reparses a real DOCX through the iframe host', async ({
+  test('opens, edits, saves, saves as, downloads, and reparses a real DOCX through the iframe host', async ({
     page,
   }) => {
     test.skip(!hostUrl, 'DOCS_WEB_HOST_E2E_URL is required for the iframe host flow')
@@ -37,6 +41,9 @@ test.describe('Docs Web', () => {
     await expect(editor).toBeVisible({ timeout: 30_000 })
     await expect(editor).toContainText('标题')
     await expect(editor).toContainText('第一段。')
+    await expect(editorFrame.locator('.autosave-toggle')).toBeHidden()
+    await expect(editorFrame.locator('.ribbon-group:has(.ai-entry)')).toBeHidden()
+    await expect(editorFrame.locator('.ai-dock')).toBeHidden()
 
     const editedText = 'Word Web iframe 保存验证中文'
     await editor.click()
@@ -49,9 +56,26 @@ test.describe('Docs Web', () => {
     await expect(page.locator('#host-state')).toHaveText('saved', { timeout: 30_000 })
     await expect(page.locator('#dirty-state')).toHaveText('clean')
 
+    const saveAsText = '另存为链路验证'
+    await editor.click()
+    await editor.press('Control+End')
+    await page.keyboard.type(saveAsText)
+    await expect(page.locator('#dirty-state')).toHaveText('dirty')
+
+    page.once('dialog', async (dialog) => {
+      expect(dialog.type()).toBe('prompt')
+      await dialog.accept('Word-Web-另存为验证.docx')
+    })
+    await editorFrame.locator('.ribbon-tab-file').click()
+    await editorFrame.locator('.file-menu > button').nth(2).click()
+    await expect(page.locator('#host-state')).toHaveText('saved', { timeout: 30_000 })
+    await expect(page.locator('#file-name')).toHaveText('Word-Web-另存为验证.docx')
+    await expect(page.locator('#dirty-state')).toHaveText('clean')
+
     const downloadPromise = page.waitForEvent('download')
     await page.locator('#download-button').click()
     const download = await downloadPromise
+    expect(download.suggestedFilename()).toBe('Word-Web-另存为验证.docx')
     const downloadPath = await download.path()
     expect(downloadPath).toBeTruthy()
 
@@ -67,5 +91,6 @@ test.describe('Docs Web', () => {
 
     expect(text).toContain('标题')
     expect(text).toContain(editedText)
+    expect(text).toContain(saveAsText)
   })
 })
