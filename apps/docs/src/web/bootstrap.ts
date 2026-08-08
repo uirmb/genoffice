@@ -3,6 +3,7 @@ import {
   createEmbeddedOfficeRuntime,
   detectWebRuntimeMode,
 } from '@genoffice/web-runtime'
+import './product-policy.css'
 import { createDocsWebDesktopController } from './desktop-api'
 
 function renderBootstrapError(error: unknown): void {
@@ -22,8 +23,15 @@ function resolveHostOrigin(): string | null {
 async function bootstrapWeb(): Promise<void> {
   const mode = detectWebRuntimeMode()
 
-  // Web Office starts with platform-owned policy: no legacy Genspark panel and
-  // no editor-owned autosave. Embedded hosts may opt capabilities back in via office:init.
+  // Apply the default Web product policy before React renders so legacy desktop
+  // controls never flash on screen. office:init capabilities may refine it later.
+  document.documentElement.classList.add(
+    'office-web',
+    'office-page-crop-marks',
+    'office-can-open',
+    'office-can-save',
+    'office-can-save-as',
+  )
   localStorage.setItem('aidocs.showAi', '0')
   localStorage.setItem('aidocs.autoSave', '0')
 
