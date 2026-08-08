@@ -34,7 +34,7 @@ jobs:
 
       - name: Start Docs Web
         run: |
-          npx vite preview --config apps/docs/vite.web.config.ts --host 127.0.0.1 --port 5273 > /tmp/docs-web.log 2>&1 &
+          npx vite preview --config vite.web.config.ts --host 127.0.0.1 --port 5273 > /tmp/docs-web.log 2>&1 &
           echo $! > /tmp/docs-web.pid
           for i in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:5273/ >/dev/null; then
@@ -44,6 +44,7 @@ jobs:
           done
           cat /tmp/docs-web.log
           exit 1
+        working-directory: apps/docs
 
       - name: Browser E2E (Docs Web)
         env:
