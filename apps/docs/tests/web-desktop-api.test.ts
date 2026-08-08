@@ -58,12 +58,6 @@ function createHarness(
   return { controller, host, send, emit, initialFile }
 }
 
-async function flushAsync(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await new Promise((resolve) => setTimeout(resolve, 0))
-}
-
 describe('Docs web desktop adapter', () => {
   it('serializes the initial ready/init handshake and applies parent mode', async () => {
     const { controller, host, send, emit, initialFile } = createHarness()
@@ -136,7 +130,6 @@ describe('Docs web desktop adapter', () => {
       type: 'office:save',
       requestId: 'parent-save-1',
     })
-    await flushAsync()
 
     expect(host.saveDocument).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -146,11 +139,14 @@ describe('Docs web desktop adapter', () => {
     )
     const saveInput = vi.mocked(host.saveDocument).mock.calls[0]?.[0]
     expect(new TextDecoder().decode(saveInput?.bytes)).toBe('edited')
-    expect(send).toHaveBeenCalledWith({
-      protocol: OFFICE_PROTOCOL_VERSION,
-      type: 'office:save-result',
-      requestId: 'parent-save-1',
-      payload: { ok: true, error: undefined },
+
+    await vi.waitFor(() => {
+      expect(send).toHaveBeenCalledWith({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:save-result',
+        requestId: 'parent-save-1',
+        payload: { ok: true, error: undefined },
+      })
     })
 
     controller.destroy()
