@@ -121,6 +121,8 @@ export function createDocsWebDesktopController(
 ): DocsWebDesktopController {
   let current: WebDocumentContext | null = null
   let pendingOpen: OpenFileResult | null = null
+  let initialOpenResolve: ((result: OpenFileResult | null) => void) | null = null
+  let readyNotified = false
   let pendingStateRequestId: string | null = null
   let mode: 'view' | 'edit' = 'edit'
   let saving = false
@@ -144,6 +146,16 @@ export function createDocsWebDesktopController(
     if (mode === nextMode) return
     mode = nextMode
     for (const handler of modeHandlers) handler(mode)
+  }
+
+  const notifyReady = (): void => {
+    if (readyNotified) return
+    readyNotified = true
+    bridge?.send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:ready',
+      payload: { kind: 'docx' },
+    })
   }
 
   const reportHostSaveResult = (ok: boolean, error?: string): void => {
@@ -282,8 +294,19 @@ export function createDocsWebDesktopController(
     openDocxPath: async (path) => (current?.path === path ? contextToOpenResult() : null),
     consumePendingOpenDocx: async () => {
       const value = pendingOpen
-      pendingOpen = null
-      return value
+      if (value) {
+        pendingOpen = null
+        return value
+      }
+      if (!bridge) return null
+
+      // The App registers onOpenDocx before calling this method. Announce readiness
+      // only now, then keep the initial boot open pending until the host replies
+      // with office:init. This prevents a blank document from racing the real file.
+      notifyReady()
+      return new Promise<OpenFileResult | null>((resolve) => {
+        initialOpenResolve = resolve
+      })
     },
     consumeNewBlankDoc: async () => false,
     onOpenDocx: (handler) => {
@@ -404,7 +427,11 @@ export function createDocsWebDesktopController(
           for (const handler of languageHandlers) handler(currentLang)
         }
         void setCurrentFile(message.payload.file).then((result) => {
-          if (openHandlers.size > 0) {
+          if (initialOpenResolve) {
+            const resolve = initialOpenResolve
+            initialOpenResolve = null
+            resolve(result)
+          } else if (openHandlers.size > 0) {
             for (const handler of openHandlers) handler(result)
           } else {
             pendingOpen = result
@@ -441,13 +468,7 @@ export function createDocsWebDesktopController(
   return {
     desktopApi,
     projectApi: createProjectApi(),
-    notifyReady: () => {
-      bridge?.send({
-        protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:ready',
-        payload: { kind: 'docx' },
-      })
-    },
+    notifyReady,
     destroy: () => {
       unsubscribeBridge?.()
       for (const handler of teardownHandlers) handler()
@@ -456,6 +477,8 @@ export function createDocsWebDesktopController(
       languageHandlers.clear()
       modeHandlers.clear()
       pendingSaveRequestIds.clear()
+      initialOpenResolve?.(null)
+      initialOpenResolve = null
       teardownHandlers.clear()
       menuHandlers.clear()
       closeCheckHandlers.clear()

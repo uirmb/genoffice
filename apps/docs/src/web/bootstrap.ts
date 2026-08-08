@@ -50,7 +50,6 @@ async function bootstrapWeb(): Promise<void> {
   window.addEventListener('pagehide', cleanup, { once: true })
 
   await import('../renderer/main')
-  controller.notifyReady()
 }
 
 void bootstrapWeb().catch((error) => {
