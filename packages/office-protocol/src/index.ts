@@ -25,6 +25,11 @@ export interface OfficeEditorState {
   title?: string
 }
 
+export interface OfficeProtocolErrorPayload {
+  code: string
+  message: string
+}
+
 export type HostToEditorMessage =
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
@@ -47,6 +52,30 @@ export type HostToEditorMessage =
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:query-state'
       requestId: string
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:save-document-result'
+      requestId: string
+      payload: SaveDocumentResult
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:pick-file-result'
+      requestId: string
+      payload: { files: SelectedOfficeFile[] | null }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:read-file-result'
+      requestId: string
+      payload: { file: OfficeFile }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:error'
+      requestId?: string
+      payload: OfficeProtocolErrorPayload
     }
 
 export type EditorToHostMessage =
@@ -83,21 +112,9 @@ export type EditorToHostMessage =
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
-      type: 'office:save-document-result'
-      requestId: string
-      payload: SaveDocumentResult
-    }
-  | {
-      protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:pick-file'
       requestId: string
       payload: PickFileOptions
-    }
-  | {
-      protocol: typeof OFFICE_PROTOCOL_VERSION
-      type: 'office:pick-file-result'
-      requestId: string
-      payload: { files: SelectedOfficeFile[] | null }
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
@@ -107,18 +124,14 @@ export type EditorToHostMessage =
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
-      type: 'office:read-file-result'
-      requestId: string
-      payload: { file: OfficeFile }
-    }
-  | {
-      protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:error'
       requestId?: string
-      payload: { code: string; message: string }
+      payload: OfficeProtocolErrorPayload
     }
 
-export function isOfficeProtocolMessage(value: unknown): value is HostToEditorMessage | EditorToHostMessage {
+export type OfficeProtocolMessage = HostToEditorMessage | EditorToHostMessage
+
+export function isOfficeProtocolMessage(value: unknown): value is OfficeProtocolMessage {
   if (!value || typeof value !== 'object') return false
   const message = value as { protocol?: unknown; type?: unknown }
   return message.protocol === OFFICE_PROTOCOL_VERSION && typeof message.type === 'string'
