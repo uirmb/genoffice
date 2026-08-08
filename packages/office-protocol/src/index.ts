@@ -102,6 +102,12 @@ export type EditorToHostMessage =
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:save-result'
+      requestId: string
+      payload: { ok: boolean; error?: string }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:save-document'
       requestId: string
       payload: {

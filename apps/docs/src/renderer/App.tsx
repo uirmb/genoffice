@@ -438,6 +438,7 @@ export function App() {
   const [showNav, setShowNav] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('print')
   const [readMode, setReadMode] = useState(false)
+  const [hostEditorMode, setHostEditorMode] = useState<'view' | 'edit'>('edit')
   const [showGrid, setShowGrid] = useState(false)
   const [splitView, setSplitView] = useState(false)
   const [showPagePreview, setShowPagePreview] = useState(false)
@@ -610,6 +611,24 @@ export function App() {
     localStorage.setItem('aidocs.autoSave', autoSave ? '1' : '0')
   }, [autoSave])
 
+  // Web/iframe hosts can force a true view-only mode without changing desktop behavior.
+  useEffect(() => {
+    let active = true
+    const initialMode = window.desktop.getHostEditorMode?.()
+    if (initialMode) {
+      void initialMode.then((nextMode) => {
+        if (active) setHostEditorMode(nextMode)
+      })
+    }
+    const offMode = window.desktop.onHostEditorModeChanged?.((nextMode) => {
+      setHostEditorMode(nextMode)
+    })
+    return () => {
+      active = false
+      offMode?.()
+    }
+  }, [])
+
   // Pinch-to-zoom: Chromium delivers trackpad pinch as a wheel event
   // with ctrlKey set. Also support ⌘+scroll. Must be non-passive to preventDefault.
   useEffect(() => {
@@ -625,17 +644,17 @@ export function App() {
 
   const isProtected = !!protection?.enforced && protection.edit === 'readOnly'
 
-  // Read Mode / Restrict Editing: the document becomes read-only; Esc leaves Read Mode
+  // Read Mode / Restrict Editing / parent view mode: the document becomes read-only.
   useEffect(() => {
     if (!editor) return
-    editor.setEditable(!readMode && !isProtected)
+    editor.setEditable(hostEditorMode === 'edit' && !readMode && !isProtected)
     if (!readMode) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setReadMode(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [editor, readMode, isProtected])
+  }, [editor, readMode, isProtected, hostEditorMode])
 
   // Track Changes: the recorder plugin reads its toggle from extension storage
   useEffect(() => {
@@ -2078,6 +2097,10 @@ export function App() {
   const anyDirtyRef = useRef(false)
   const hasUnsavedChanges = isDocDirty(fileCtxRef.current)
   anyDirtyRef.current = hasUnsavedChanges
+  const hostDirty = !!doc && (hasUnsavedChanges || dirtyRef.current)
+  useEffect(() => {
+    window.desktop.reportDirtyChange?.(hostDirty)
+  }, [hostDirty])
 
   // close guard: the main process queries dirty state before closing a tab/window; choosing "Save" runs a full save and reports back
   useEffect(() => {
@@ -2617,8 +2640,9 @@ export function App() {
         <style>{`.editor-scroll .doc-page { column-count: ${colFlow.cols}; column-gap: ${colFlow.gapPx}px; column-fill: balance; }
 .editor-scroll .doc-page.measuring-columns { column-count: auto; width: ${colFlow.colWidthPx + twipsToPx(canvasSection?.marginLeft ?? section?.marginLeft ?? 0) + twipsToPx(canvasSection?.marginRight ?? section?.marginRight ?? 0)}px; }`}</style>
       )}
-      <Ribbon
-        quickActions={quickActions}
+      {hostEditorMode === 'edit' && (
+        <Ribbon
+          quickActions={quickActions}
         editor={editor}
         formatState={formatState}
         hasDoc={!!doc}
@@ -2658,11 +2682,12 @@ export function App() {
         readMode={readMode}
         showGrid={showGrid}
         splitView={splitView}
-        {...ribbonActions}
-      />
+          {...ribbonActions}
+        />
+      )}
 
       <div className="app-main">
-        {doc && (
+        {doc && hostEditorMode === 'edit' && (
           <div className={`ai-dock${showAi ? '' : ' collapsed'}`}>
             {/* always mounted: collapse must not drop state or in-flight runs */}
             <AiPanel
@@ -2692,7 +2717,7 @@ export function App() {
                   <div
                     className={docZoomClass}
                     onClick={onDocClick}
-                    onContextMenu={onDocContextMenu}
+                    onContextMenu={hostEditorMode === 'edit' ? onDocContextMenu : undefined}
                     style={docZoomStyle}
                   >
                     {showRuler && section && (

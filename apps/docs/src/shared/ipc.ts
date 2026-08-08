@@ -140,6 +140,11 @@ export interface DesktopApi {
       lang: 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar',
     ) => void,
   ): () => void
+  /** optional parent-controlled mode used by iframe/web runtimes */
+  getHostEditorMode?(): Promise<'view' | 'edit'>
+  onHostEditorModeChanged?(handler: (mode: 'view' | 'edit') => void): () => void
+  /** optional live dirty-state reporting used by iframe/web runtimes */
+  reportDirtyChange?(dirty: boolean): void
   openDocx(): Promise<OpenFileResult | null>
   openDocxPath(path: string): Promise<OpenFileResult | null>
   /** mark the renderer ready and consume a file passed by Finder/Explorer at launch */

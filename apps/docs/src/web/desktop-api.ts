@@ -130,11 +130,32 @@ export function createDocsWebDesktopController(
   const openHandlers = new Set<OpenHandler>()
   const renameHandlers = new Set<RenameHandler>()
   const languageHandlers = new Set<LanguageHandler>()
+  const modeHandlers = new Set<(nextMode: 'view' | 'edit') => void>()
   const teardownHandlers = new Set<VoidHandler>()
   const menuHandlers = new Set<MenuHandler>()
   const closeCheckHandlers = new Set<VoidHandler>()
   const closeSaveHandlers = new Set<VoidHandler>()
   const aiStreamHandlers = new Set<(chunk: AiStreamChunk) => void>()
+  const pendingSaveRequestIds = new Set<string>()
+
+  const setMode = (nextMode: 'view' | 'edit'): void => {
+    if (mode === nextMode) return
+    mode = nextMode
+    for (const handler of modeHandlers) handler(mode)
+  }
+
+  const reportHostSaveResult = (ok: boolean, error?: string): void => {
+    if (!bridge || pendingSaveRequestIds.size === 0) return
+    for (const requestId of pendingSaveRequestIds) {
+      bridge.send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:save-result',
+        requestId,
+        payload: { ok, error },
+      })
+    }
+    pendingSaveRequestIds.clear()
+  }
 
   const contextToOpenResult = (): OpenFileResult | null =>
     current
@@ -200,6 +221,7 @@ export function createDocsWebDesktopController(
         baseVersion: current?.file.version ?? null,
       })
       if (!result.ok) {
+        reportHostSaveResult(false, result.error)
         return {
           ok: false,
           error: result.error,
@@ -219,9 +241,12 @@ export function createDocsWebDesktopController(
       if (oldPath && oldPath !== current.path) {
         for (const handler of renameHandlers) handler({ oldPath, newPath: current.path })
       }
+      reportHostSaveResult(true)
       return { ok: true, path: current.path }
     } catch (error) {
-      return { ok: false, error: String(error) }
+      const message = error instanceof Error ? error.message : String(error)
+      reportHostSaveResult(false, message)
+      return { ok: false, error: message }
     } finally {
       saving = false
     }
@@ -245,6 +270,12 @@ export function createDocsWebDesktopController(
       languageHandlers.add(handler)
       return () => languageHandlers.delete(handler)
     },
+    getHostEditorMode: async () => mode,
+    onHostEditorModeChanged: (handler) => {
+      modeHandlers.add(handler)
+      return () => modeHandlers.delete(handler)
+    },
+    reportDirtyChange: (dirty) => host.setDirty(dirty),
     openDocx: openSelectedDocx,
     openDocxPath: async (path) => (current?.path === path ? contextToOpenResult() : null),
     consumePendingOpenDocx: async () => {
@@ -353,7 +384,7 @@ export function createDocsWebDesktopController(
     switch (message.type) {
       case 'office:init': {
         if (message.payload.kind !== 'docx') return
-        mode = message.payload.mode
+        setMode(message.payload.mode)
         if (message.payload.locale) {
           currentLang = normalizeLang(message.payload.locale)
           for (const handler of languageHandlers) handler(currentLang)
@@ -367,16 +398,23 @@ export function createDocsWebDesktopController(
         })
         break
       }
-      case 'office:save':
+      case 'office:save': {
+        const shouldTriggerSave = pendingSaveRequestIds.size === 0
+        pendingSaveRequestIds.add(message.requestId)
+        if (!shouldTriggerSave) break
+        if (menuHandlers.size === 0) {
+          reportHostSaveResult(false, 'Editor save handler is not ready.')
+          break
+        }
         for (const handler of menuHandlers) handler('save' satisfies MenuCommand)
         break
+      }
       case 'office:query-state':
         pendingStateRequestId = message.requestId
         for (const handler of closeCheckHandlers) handler()
         break
       case 'office:set-mode':
-        mode = message.payload.mode
-        window.dispatchEvent(new CustomEvent('genoffice:web-mode-change', { detail: { mode } }))
+        setMode(message.payload.mode)
         break
       case 'office:error':
         console.error(`[office host:${message.payload.code}] ${message.payload.message}`)
@@ -402,6 +440,8 @@ export function createDocsWebDesktopController(
       openHandlers.clear()
       renameHandlers.clear()
       languageHandlers.clear()
+      modeHandlers.clear()
+      pendingSaveRequestIds.clear()
       teardownHandlers.clear()
       menuHandlers.clear()
       closeCheckHandlers.clear()
