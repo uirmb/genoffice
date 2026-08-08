@@ -4,6 +4,10 @@ on:
   push:
     branches: [agent/web-office-foundation]
 
+concurrency:
+  group: web-foundation-validation-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -68,15 +72,12 @@ jobs:
       - name: Build Docs web
         run: npm run build:web:docs
 
-      - name: Commit formatting if needed
+      - name: Record successful validation
         shell: bash
         run: |
-          if git diff --quiet; then
-            echo "Formatting already clean"
-            exit 0
-          fi
+          printf 'validated_commit=%s\n' "$GITHUB_SHA" > .web-office-foundation-validation
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/docs/src/renderer/App.tsx apps/docs/src/shared/ipc.ts apps/docs/src/web/bootstrap.ts apps/docs/src/web/desktop-api.ts apps/docs/vite.web.config.ts packages/office-host-api/src/index.ts packages/office-protocol/src/index.ts packages/iframe-bridge/src/index.ts packages/web-runtime/src/index.ts
-          git commit -m "style(web): format foundation changes"
+          git add .web-office-foundation-validation apps/docs/src/renderer/App.tsx apps/docs/src/shared/ipc.ts apps/docs/src/web/bootstrap.ts apps/docs/src/web/desktop-api.ts apps/docs/vite.web.config.ts packages/office-host-api/src/index.ts packages/office-protocol/src/index.ts packages/iframe-bridge/src/index.ts packages/web-runtime/src/index.ts
+          git commit -m "chore(web): record successful foundation validation"
           git push origin HEAD:agent/web-office-foundation
