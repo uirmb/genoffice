@@ -3,6 +3,8 @@ import type {
   OfficeEditorMode,
   OfficeFile,
   OfficeFileDescriptor,
+  OfficeHostCapabilities,
+  OfficeSaveMode,
   PickFileOptions,
   SaveDocumentResult,
   SelectedOfficeFile,
@@ -15,6 +17,7 @@ export interface OfficeInitPayload {
   mode: OfficeEditorMode
   locale?: string
   file: OfficeFile
+  capabilities?: Partial<OfficeHostCapabilities>
 }
 
 export interface OfficeEditorState {
@@ -114,6 +117,7 @@ export type EditorToHostMessage =
         file: OfficeFileDescriptor
         bytes: ArrayBuffer
         baseVersion?: string | null
+        mode?: OfficeSaveMode
       }
     }
   | {
