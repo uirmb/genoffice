@@ -1,0 +1,45 @@
+name: Format Web MVP Tests
+
+on:
+  push:
+    branches: [agent/web-office-foundation]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/web-office-foundation
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Format tests
+        run: npx prettier --write apps/docs/tests/web-desktop-api.test.ts apps/docs/tests/web-docx-roundtrip.test.ts
+
+      - name: Commit formatting
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/docs/tests/web-desktop-api.test.ts apps/docs/tests/web-docx-roundtrip.test.ts
+          git commit -m "style(web): format MVP regression tests"
+          git push origin HEAD:agent/web-office-foundation
