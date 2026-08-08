@@ -29,8 +29,14 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Generate DOCX fixtures
+        run: npm run fixtures
+
       - name: Build Docs Web
         run: npm run build:web:docs
+
+      - name: Build iframe Host Demo
+        run: npm run build:web-host
 
       - name: Start Docs Web
         run: |
@@ -46,9 +52,23 @@ jobs:
           exit 1
         working-directory: apps/docs
 
+      - name: Start iframe Host Demo
+        run: |
+          npx vite preview --config examples/web-host/vite.config.ts --host 127.0.0.1 --port 8080 > /tmp/web-host.log 2>&1 &
+          echo $! > /tmp/web-host.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/web-host.log
+          exit 1
+
       - name: Browser E2E (Docs Web)
         env:
           DOCS_WEB_E2E_URL: http://127.0.0.1:5273/
+          DOCS_WEB_HOST_E2E_URL: http://127.0.0.1:8080/
         run: npx playwright test e2e/docs-web.spec.ts --config e2e/playwright.config.ts
 
       - name: Upload browser artifacts on failure
@@ -60,4 +80,5 @@ jobs:
             e2e/test-results
             e2e/playwright-report
             /tmp/docs-web.log
+            /tmp/web-host.log
           retention-days: 7
