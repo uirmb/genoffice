@@ -59,7 +59,7 @@ function createHarness(
 }
 
 describe('Docs web desktop adapter', () => {
-  it('serializes the initial ready/init handshake and applies parent mode', async () => {
+  it('serializes initial ready/init, applies parent mode, and exposes Web UI capabilities', async () => {
     const { controller, host, send, emit, initialFile } = createHarness()
 
     const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
@@ -78,6 +78,11 @@ describe('Docs web desktop adapter', () => {
         kind: 'docx',
         mode: 'view',
         locale: 'zh-CN',
+        capabilities: {
+          ai: false,
+          autoSave: 'host',
+          pageCropMarks: true,
+        },
         file: initialFile,
       },
     })
@@ -88,6 +93,17 @@ describe('Docs web desktop adapter', () => {
     expect(new TextDecoder().decode(opened?.data)).toBe('source')
     expect(await controller.desktopApi.getHostEditorMode?.()).toBe('view')
     expect(await controller.desktopApi.getLanguage()).toBe('zh')
+    expect(await controller.desktopApi.getHostCapabilities?.()).toMatchObject({
+      ai: false,
+      open: true,
+      save: true,
+      saveAs: true,
+      autoSave: 'host',
+      pageCropMarks: true,
+    })
+    expect(document.documentElement.classList.contains('office-web')).toBe(true)
+    expect(document.documentElement.classList.contains('office-ai-enabled')).toBe(false)
+    expect(document.documentElement.classList.contains('office-page-crop-marks')).toBe(true)
     expect(host.setTitle).toHaveBeenCalledWith(initialFile.name)
 
     const modeChanged = vi.fn()
@@ -105,6 +121,7 @@ describe('Docs web desktop adapter', () => {
     expect(host.setDirty).toHaveBeenCalledWith(true)
 
     controller.destroy()
+    expect(document.documentElement.classList.contains('office-web')).toBe(false)
   })
 
   it('routes parent save through the host and acknowledges the original request', async () => {
@@ -134,6 +151,7 @@ describe('Docs web desktop adapter', () => {
     expect(host.saveDocument).toHaveBeenCalledWith(
       expect.objectContaining({
         baseVersion: 'v1',
+        mode: 'save',
         file: expect.objectContaining({ id: 'doc-1', name: initialFile.name }),
       }),
     )
@@ -148,6 +166,41 @@ describe('Docs web desktop adapter', () => {
         payload: { ok: true, error: undefined },
       })
     })
+
+    controller.destroy()
+  })
+
+  it('marks Save As explicitly so the host can create a new system file', async () => {
+    const { controller, host, emit, initialFile } = createHarness(async (input) => ({
+      ok: true,
+      file: {
+        ...input.file,
+        id: 'doc-copy',
+        name: '副本.docx',
+        version: 'v1',
+      },
+    }))
+    const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:init',
+      requestId: 'init-save-as',
+      payload: { kind: 'docx', mode: 'edit', file: initialFile },
+    })
+    await pendingOpen
+
+    const result = await controller.desktopApi.saveDocxAs('副本.docx', bytesOf('copy'))
+
+    expect(host.saveDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'saveAs',
+        baseVersion: 'v1',
+        file: expect.objectContaining({ id: 'doc-1', name: '副本.docx' }),
+      }),
+    )
+    expect(result.ok).toBe(true)
+    expect(result.path).toContain('web-office://files/doc-copy/')
+    expect(host.setTitle).toHaveBeenLastCalledWith('副本.docx')
 
     controller.destroy()
   })
