@@ -6,51 +6,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  dirty-exit-fix:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/ppt-web-foundation' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 12
-    steps:
-      - name: Checkout feature branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: agent/ppt-web-foundation
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - name: Install dependencies
-        run: npm ci
-      - name: Fix dirty exit source of truth
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('apps/slides/src/renderer/App.tsx')
-          text = path.read_text(encoding='utf-8')
-          old = """  const requestExit = useCallback(async () => {\n    if (!dirty) {\n      await window.slidesApi.requestHostClose?.()\n      return\n    }\n    setExitConfirmOpen(true)\n  }, [dirty])\n"""
-          new = """  const requestExit = useCallback(async () => {\n    const sessionDirty = await window.slidesApi.isDirty()\n    if (!dirty && !sessionDirty) {\n      await window.slidesApi.requestHostClose?.()\n      return\n    }\n    setExitConfirmOpen(true)\n  }, [dirty])\n"""
-          if old not in text:
-              raise SystemExit('requestExit anchor not found')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
-          PY
-      - name: Format and verify
-        run: |
-          npx prettier --write apps/slides/src/renderer/App.tsx
-          npx eslint apps/slides/src/renderer/App.tsx
-          npm run typecheck -w @genoffice/slides
-      - name: Commit dirty exit fix
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add apps/slides/src/renderer/App.tsx
-          git commit -m "fix(slides-web): guard exit with session dirty state" || exit 0
-          git push origin HEAD:agent/ppt-web-foundation
-
   slides-web-e2e:
     runs-on: ubuntu-22.04
     timeout-minutes: 25
