@@ -10,6 +10,9 @@ test.describe('Docs Web', () => {
   test.skip(!docsWebUrl, 'DOCS_WEB_E2E_URL is only set by the Docs Web browser CI step')
 
   test('boots the productized browser editor and edits a blank document', async ({ page }) => {
+    const unexpectedDownloads: string[] = []
+    page.on('download', (download) => unexpectedDownloads.push(download.suggestedFilename()))
+
     await page.goto(docsWebUrl!)
 
     const editor = page.locator('.ProseMirror').first()
@@ -24,6 +27,12 @@ test.describe('Docs Web', () => {
     await editor.click()
     await page.keyboard.type(text)
     await expect(editor).toContainText(text)
+
+    // A pathless Web document must never turn background recovery or the
+    // legacy AI-complete silent-save hook into a browser download.
+    await page.evaluate(() => window.dispatchEvent(new Event('ai-docs-run-done')))
+    await page.waitForTimeout(31_000)
+    expect(unexpectedDownloads).toEqual([])
 
     await expect.poll(() => page.title()).toBeTruthy()
   })

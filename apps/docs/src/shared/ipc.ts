@@ -145,6 +145,8 @@ export interface DesktopApi {
   onHostEditorModeChanged?(handler: (mode: 'view' | 'edit') => void): () => void
   /** optional live dirty-state reporting used by iframe/web runtimes */
   reportDirtyChange?(dirty: boolean): void
+  /** Web runtimes cannot silently create a local file during recovery/autosave. */
+  canAutoPersistPathlessDocument?(): boolean
   openDocx(): Promise<OpenFileResult | null>
   openDocxPath(path: string): Promise<OpenFileResult | null>
   /** mark the renderer ready and consume a file passed by Finder/Explorer at launch */

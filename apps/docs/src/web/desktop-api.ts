@@ -290,6 +290,7 @@ export function createDocsWebDesktopController(
       return () => modeHandlers.delete(handler)
     },
     reportDirtyChange: (dirty) => host.setDirty(dirty),
+    canAutoPersistPathlessDocument: () => false,
     openDocx: openSelectedDocx,
     openDocxPath: async (path) => (current?.path === path ? contextToOpenResult() : null),
     consumePendingOpenDocx: async () => {
