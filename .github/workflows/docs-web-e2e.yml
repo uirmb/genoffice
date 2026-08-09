@@ -6,62 +6,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  protocol-patch:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/web-office-foundation' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
-    steps:
-      - name: Checkout feature branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: agent/web-office-foundation
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Apply Word Web host protocol patch
-        run: python .github/scripts/patch-word-web-host-protocol.py
-
-      - name: Format changed files
-        run: |
-          npx prettier --write \
-            packages/office-host-api/src/index.ts \
-            packages/office-protocol/src/index.ts \
-            packages/web-runtime/src/index.ts \
-            apps/docs/src/shared/ipc.ts \
-            apps/docs/src/web/desktop-api.ts \
-            apps/docs/src/web/host-policy.ts \
-            apps/docs/src/web/product-policy.css \
-            apps/docs/src/renderer/components/Ribbon.tsx \
-            apps/docs/src/renderer/components/ExitConfirmModal.tsx \
-            apps/docs/src/renderer/i18n/strings-ribbon.ts \
-            apps/docs/src/renderer/App.tsx \
-            apps/docs/tests/web-desktop-api.test.ts
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Focused Docs Web tests
-        run: npm run test -w @genoffice/docs -- web-desktop-api.test.ts
-
-      - name: Commit product patch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/office-host-api packages/office-protocol packages/web-runtime apps/docs/src apps/docs/tests/web-desktop-api.test.ts
-          git commit -m "feat(docs-web): extend host file lifecycle protocol"
-          git push origin HEAD:agent/web-office-foundation
-
   docs-web-e2e:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
