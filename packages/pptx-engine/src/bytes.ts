@@ -2,7 +2,10 @@ const utf8Encoder = new TextEncoder()
 const utf8Decoder = new TextDecoder('utf-8')
 
 export function encodeUtf8(value: string): Uint8Array {
-  return utf8Encoder.encode(value)
+  // TextEncoder can belong to a different realm under jsdom. JSZip identifies
+  // Uint8Array with instanceof, so copy into this module's realm before storing
+  // modified XML parts in PackageArchive.
+  return new Uint8Array(utf8Encoder.encode(value))
 }
 
 export function decodeUtf8(bytes: Uint8Array): string {
