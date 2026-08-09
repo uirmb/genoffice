@@ -1,3 +1,5 @@
+import type { Lang } from '@genoffice/i18n'
+
 export interface OpenFileResult {
   path: string
   name: string
@@ -133,13 +135,9 @@ export type MenuCommand =
 
 export interface DesktopApi {
   /** current UI language (persisted by the shell in app-settings.json) */
-  getLanguage(): Promise<'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar'>
-  /** language switched from the shell home page */
-  onLanguageChanged(
-    handler: (
-      lang: 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar',
-    ) => void,
-  ): () => void
+  getLanguage(): Promise<Lang>
+  /** language switched from the shell or embedded host */
+  onLanguageChanged(handler: (lang: Lang) => void): () => void
   /** optional parent-controlled mode used by iframe/web runtimes */
   getHostEditorMode?(): Promise<'view' | 'edit'>
   onHostEditorModeChanged?(handler: (mode: 'view' | 'edit') => void): () => void
@@ -178,6 +176,15 @@ export interface DesktopApi {
     defaultName: string,
     data: ArrayBuffer,
   ): Promise<{ ok: boolean; path?: string; error?: string }>
+  /** Platform-owned snapshot; does not replace the current file identity. */
+  saveHistoryVersion?(
+    defaultName: string,
+    data: ArrayBuffer,
+  ): Promise<{ ok: boolean; error?: string }>
+  /** Export/download current DOCX bytes without changing the current file identity. */
+  exportDocx?(defaultName: string, data: ArrayBuffer): Promise<{ ok: boolean; error?: string }>
+  /** The embedded platform owns the actual plugin/window lifecycle. */
+  requestHostClose?(): Promise<void>
   getRecentFiles(): Promise<string[]>
   pickImage(): Promise<PickImageResult | null>
   getAiSettings(): Promise<AiSettings>

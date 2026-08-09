@@ -15,6 +15,9 @@ const CAPABILITY_CLASSES = [
   'office-can-open',
   'office-can-save',
   'office-can-save-as',
+  'office-can-save-history',
+  'office-can-export-docx',
+  'office-can-close',
 ] as const
 
 function applyCapabilityClasses(capabilities: OfficeHostCapabilities): void {
@@ -26,6 +29,9 @@ function applyCapabilityClasses(capabilities: OfficeHostCapabilities): void {
   root.classList.toggle('office-can-open', capabilities.open)
   root.classList.toggle('office-can-save', capabilities.save)
   root.classList.toggle('office-can-save-as', capabilities.saveAs)
+  root.classList.toggle('office-can-save-history', capabilities.saveHistoryVersion)
+  root.classList.toggle('office-can-export-docx', capabilities.exportDocx)
+  root.classList.toggle('office-can-close', capabilities.close)
 }
 
 export interface WebHostPolicyController {
@@ -50,7 +56,10 @@ export function installWebHostPolicy(
   apply()
 
   const unsubscribe = bridge?.subscribe((message) => {
-    if (message.type === 'office:init' && message.payload.capabilities) {
+    if (
+      (message.type === 'office:init' || message.type === 'office:new') &&
+      message.payload.capabilities
+    ) {
       apply(message.payload.capabilities)
     }
   })

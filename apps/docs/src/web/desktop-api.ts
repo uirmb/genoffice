@@ -1,4 +1,5 @@
 import type { ProjectApi } from '@genoffice/project-store'
+import { normalizeLang as normalizeUiLang, type Lang } from '@genoffice/i18n'
 import type {
   OfficeFile,
   OfficeFileDescriptor,
@@ -19,7 +20,7 @@ import type {
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/gif'] as const
 
-type DocsLang = Awaited<ReturnType<DesktopApi['getLanguage']>>
+type DocsLang = Lang
 type OpenHandler = Parameters<DesktopApi['onOpenDocx']>[0]
 type RenameHandler = Parameters<DesktopApi['onRenamedDocx']>[0]
 type LanguageHandler = Parameters<DesktopApi['onLanguageChanged']>[0]
@@ -56,9 +57,7 @@ function emptyAiSettings(): AiSettings {
 }
 
 function normalizeLang(value: string): DocsLang {
-  const lang = value.toLowerCase().split('-')[0]
-  const supported: DocsLang[] = ['zh', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'th', 'id', 'ru', 'ar']
-  return supported.includes(lang as DocsLang) ? (lang as DocsLang) : 'en'
+  return normalizeUiLang(value)
 }
 
 function virtualPath(file: OfficeFileDescriptor): string {
@@ -148,6 +147,13 @@ export function createDocsWebDesktopController(
     for (const handler of modeHandlers) handler(mode)
   }
 
+  const setLanguage = (locale: string): void => {
+    const next = normalizeLang(locale)
+    if (currentLang === next) return
+    currentLang = next
+    for (const handler of languageHandlers) handler(currentLang)
+  }
+
   const notifyReady = (): void => {
     if (readyNotified) return
     readyNotified = true
@@ -227,12 +233,14 @@ export function createDocsWebDesktopController(
       size: data.byteLength,
     }
 
+    const newDocument = current === null
     saving = true
     try {
       const result = await host.saveDocument({
         file,
         bytes: data,
         baseVersion: current?.file.version ?? null,
+        newDocument,
       })
       if (!result.ok) {
         reportHostSaveResult(false, result.error)
@@ -326,6 +334,39 @@ export function createDocsWebDesktopController(
     },
     saveDocxAs: async (defaultName, data) => saveWithName(defaultName, data),
     saveDocxNew: async (defaultName, data) => saveWithName(defaultName, data),
+    saveHistoryVersion: async (_defaultName, data) => {
+      if (!current) return { ok: false, error: 'Save the new document before creating history.' }
+      if (!host.saveHistoryVersion) {
+        return { ok: false, error: 'History versions are not supported by this host.' }
+      }
+      const result = await host.saveHistoryVersion({
+        file: current.file,
+        bytes: data,
+        baseVersion: current.file.version ?? null,
+      })
+      return { ok: result.ok, error: result.error }
+    },
+    exportDocx: async (defaultName, data) => {
+      if (!host.exportDocument) {
+        return { ok: false, error: 'DOCX export is not supported by this host.' }
+      }
+      const descriptor: OfficeFileDescriptor = current?.file ?? {
+        id: `export:${Date.now()}`,
+        name: defaultName,
+        mimeType: DOCX_MIME,
+        size: data.byteLength,
+        version: null,
+      }
+      const result = await host.exportDocument({
+        format: 'docx',
+        file: { ...descriptor, name: defaultName, size: data.byteLength },
+        bytes: data,
+      })
+      return { ok: result.ok, error: result.error }
+    },
+    requestHostClose: async () => {
+      await host.requestClose?.()
+    },
     getRecentFiles: async () => [],
     pickImage: async (): Promise<PickImageResult | null> => {
       const selected = await host.pickFile({ multiple: false, accept: [...IMAGE_MIMES] })
@@ -423,10 +464,7 @@ export function createDocsWebDesktopController(
       case 'office:init': {
         if (message.payload.kind !== 'docx') return
         setMode(message.payload.mode)
-        if (message.payload.locale) {
-          currentLang = normalizeLang(message.payload.locale)
-          for (const handler of languageHandlers) handler(currentLang)
-        }
+        if (message.payload.locale) setLanguage(message.payload.locale)
         void setCurrentFile(message.payload.file).then((result) => {
           if (initialOpenResolve) {
             const resolve = initialOpenResolve
@@ -440,6 +478,24 @@ export function createDocsWebDesktopController(
         })
         break
       }
+      case 'office:new': {
+        if (message.payload.kind !== 'docx') return
+        setMode(message.payload.mode)
+        if (message.payload.locale) setLanguage(message.payload.locale)
+        current = null
+        pendingOpen = null
+        if (initialOpenResolve) {
+          const resolve = initialOpenResolve
+          initialOpenResolve = null
+          resolve(null)
+        } else {
+          for (const handler of menuHandlers) handler('new' satisfies MenuCommand)
+        }
+        break
+      }
+      case 'office:set-locale':
+        setLanguage(message.payload.locale)
+        break
       case 'office:save': {
         const shouldTriggerSave = pendingSaveRequestIds.size === 0
         pendingSaveRequestIds.add(message.requestId)

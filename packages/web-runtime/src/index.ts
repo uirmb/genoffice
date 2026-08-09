@@ -1,10 +1,14 @@
 import { OfficeIframeBridge, createOfficeRequestId } from '@genoffice/iframe-bridge'
 import type {
+  ExportDocumentInput,
+  ExportDocumentResult,
   OfficeFile,
   OfficeHostApi,
   PickFileOptions,
   SaveDocumentInput,
   SaveDocumentResult,
+  SaveHistoryVersionInput,
+  SaveHistoryVersionResult,
   SelectedOfficeFile,
 } from '@genoffice/office-host-api'
 import {
@@ -80,6 +84,23 @@ export class StandaloneOfficeHost implements OfficeHostApi {
         version: input.mode === 'saveAs' ? null : (input.baseVersion ?? file.version ?? null),
       },
     }
+  }
+
+  async saveHistoryVersion(_input: SaveHistoryVersionInput): Promise<SaveHistoryVersionResult> {
+    return {
+      ok: false,
+      code: 'SAVE_FAILED',
+      error: 'History versions require an embedded platform host.',
+    }
+  }
+
+  async exportDocument(input: ExportDocumentInput): Promise<ExportDocumentResult> {
+    downloadBuffer(input.bytes, input.file.name, input.file.mimeType)
+    return { ok: true }
+  }
+
+  async requestClose(): Promise<void> {
+    window.close()
   }
 
   async pickFile(options: PickFileOptions): Promise<SelectedOfficeFile[] | null> {
@@ -192,12 +213,57 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
           bytes,
           baseVersion: input.baseVersion,
           mode: input.mode,
+          newDocument: input.newDocument,
         },
       },
       'office:save-document-result',
       [bytes],
     )
     return response.payload
+  }
+
+  async saveHistoryVersion(input: SaveHistoryVersionInput): Promise<SaveHistoryVersionResult> {
+    const requestId = createOfficeRequestId('history')
+    const bytes = input.bytes.slice(0)
+    const response = await this.bridge.request<
+      Extract<HostToEditorMessage, { type: 'office:save-history-version-result' }>
+    >(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:save-history-version',
+        requestId,
+        payload: { file: input.file, bytes, baseVersion: input.baseVersion },
+      },
+      'office:save-history-version-result',
+      [bytes],
+    )
+    return response.payload
+  }
+
+  async exportDocument(input: ExportDocumentInput): Promise<ExportDocumentResult> {
+    const requestId = createOfficeRequestId('export')
+    const bytes = input.bytes.slice(0)
+    const response = await this.bridge.request<
+      Extract<HostToEditorMessage, { type: 'office:export-document-result' }>
+    >(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:export-document',
+        requestId,
+        payload: { format: input.format, file: input.file, bytes },
+      },
+      'office:export-document-result',
+      [bytes],
+    )
+    return response.payload
+  }
+
+  async requestClose(): Promise<void> {
+    this.bridge.send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:close-request',
+      payload: { reason: 'file-menu' },
+    })
   }
 
   async pickFile(options: PickFileOptions): Promise<SelectedOfficeFile[] | null> {

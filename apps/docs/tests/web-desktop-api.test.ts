@@ -131,6 +131,43 @@ describe('Docs web desktop adapter', () => {
     expect(document.documentElement.classList.contains('office-web')).toBe(false)
   })
 
+  it('starts a blank embedded document, switches locale live, and marks its first save', async () => {
+    const { controller, emit, saveDocument, destroy } = createHarness()
+    const changed = vi.fn()
+    const offLanguage = controller.desktopApi.onLanguageChanged(changed)
+    const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:new',
+      requestId: 'new-1',
+      payload: { kind: 'docx', mode: 'edit', locale: 'pt-BR', capabilities: { open: true } },
+    })
+
+    expect(await pendingOpen).toBeNull()
+    expect(await controller.desktopApi.getLanguage()).toBe('pt')
+    expect(changed).toHaveBeenCalledWith('pt')
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:set-locale',
+      payload: { locale: 'zh-TW' },
+    })
+    expect(await controller.desktopApi.getLanguage()).toBe('zh-TW')
+    expect(changed).toHaveBeenLastCalledWith('zh-TW')
+
+    await controller.desktopApi.saveDocxNew('新建文档.docx', bytesOf('draft'))
+    expect(saveDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        newDocument: true,
+        file: expect.objectContaining({ name: '新建文档.docx' }),
+      }),
+    )
+
+    offLanguage()
+    destroy()
+  })
+
   it('routes parent save through the host and acknowledges the original request', async () => {
     const { controller, saveDocument, send, emit, initialFile, destroy } = createHarness()
     const pendingOpen = controller.desktopApi.consumePendingOpenDocx()

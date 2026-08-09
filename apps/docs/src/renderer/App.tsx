@@ -94,6 +94,7 @@ import {
   type ContextMenuState,
 } from './components/ContextMenu'
 import { PromptModal } from './components/PromptModal'
+import { ExitConfirmModal } from './components/ExitConfirmModal'
 import { t, useI18n } from './i18n/locale'
 import {
   getActiveSubEditor,
@@ -127,6 +128,7 @@ import {
   type PendingNumbering,
 } from './doc-state'
 import {
+  buildDocBytes,
   exportPdf as exportPdfImpl,
   loadFile as loadFileImpl,
   newFile as newFileImpl,
@@ -907,6 +909,59 @@ export function App() {
     (saveAs: boolean, auto = false) => saveImpl(fileCtxRef.current, saveAs, auto),
     [],
   )
+
+  const [showExitConfirm, setShowExitConfirm] = useState(false)
+  const [exitSaving, setExitSaving] = useState(false)
+
+  const currentDocBuffer = useCallback(async (): Promise<ArrayBuffer | null> => {
+    const bytes = await buildDocBytes(fileCtxRef.current)
+    if (!bytes) return null
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  }, [])
+
+  const saveHistoryVersion = useCallback(async () => {
+    const current = fileCtxRef.current.doc
+    if (!current?.filePath || !window.desktop.saveHistoryVersion) return
+    const buffer = await currentDocBuffer()
+    if (!buffer) return
+    await window.desktop.saveHistoryVersion(current.fileName, buffer)
+  }, [currentDocBuffer])
+
+  const exportDocx = useCallback(async () => {
+    const current = fileCtxRef.current.doc
+    if (!current || !window.desktop.exportDocx) return
+    const buffer = await currentDocBuffer()
+    if (!buffer) return
+    await window.desktop.exportDocx(current.fileName, buffer)
+  }, [currentDocBuffer])
+
+  const requestExit = useCallback(() => {
+    if (!window.desktop.requestHostClose) return
+    if (isDocDirty(fileCtxRef.current)) {
+      setShowExitConfirm(true)
+      return
+    }
+    void window.desktop.requestHostClose()
+  }, [])
+
+  const discardAndExit = useCallback(() => {
+    setShowExitConfirm(false)
+    void window.desktop.requestHostClose?.()
+  }, [])
+
+  const saveAndExit = useCallback(async () => {
+    if (exitSaving) return
+    setExitSaving(true)
+    try {
+      const ok = await save(false)
+      if (ok && !isDocDirty(fileCtxRef.current)) {
+        setShowExitConfirm(false)
+        await window.desktop.requestHostClose?.()
+      }
+    } finally {
+      setExitSaving(false)
+    }
+  }, [exitSaving, save])
 
   // inserting a section break needs one save for the new section to take effect; the
   // flag is consumed in the render after state commit, guaranteeing the save closure
@@ -2682,6 +2737,11 @@ export function App() {
           readMode={readMode}
           showGrid={showGrid}
           splitView={splitView}
+          onSaveHistoryVersion={
+            window.desktop.saveHistoryVersion ? () => void saveHistoryVersion() : undefined
+          }
+          onExportDocx={window.desktop.exportDocx ? () => void exportDocx() : undefined}
+          onExit={window.desktop.requestHostClose ? requestExit : undefined}
           {...ribbonActions}
         />
       )}
@@ -2988,6 +3048,15 @@ export function App() {
           </footer>
         </div>
       </div>
+
+      {showExitConfirm && (
+        <ExitConfirmModal
+          saving={exitSaving}
+          onSave={() => void saveAndExit()}
+          onDiscard={discardAndExit}
+          onCancel={() => setShowExitConfirm(false)}
+        />
+      )}
 
       {showLinkModal && <LinkInsertModal editor={editor} onClose={() => setShowLinkModal(false)} />}
       {showEquationModal && editor && (

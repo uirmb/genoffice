@@ -1,6 +1,7 @@
 export type OfficeDocumentKind = 'docx' | 'pptx' | 'xlsx'
 export type OfficeEditorMode = 'view' | 'edit'
 export type OfficeSaveMode = 'save' | 'saveAs'
+export type OfficeExportFormat = 'docx'
 export type OfficeAutoSavePolicy = 'disabled' | 'host' | 'editor'
 
 export interface OfficeHostCapabilities {
@@ -8,6 +9,9 @@ export interface OfficeHostCapabilities {
   open: boolean
   save: boolean
   saveAs: boolean
+  saveHistoryVersion: boolean
+  exportDocx: boolean
+  close: boolean
   autoSave: OfficeAutoSavePolicy
   download: boolean
   print: boolean
@@ -20,6 +24,9 @@ export const DEFAULT_STANDALONE_OFFICE_CAPABILITIES: OfficeHostCapabilities = {
   open: true,
   save: true,
   saveAs: true,
+  saveHistoryVersion: false,
+  exportDocx: true,
+  close: false,
   autoSave: 'disabled',
   download: true,
   print: true,
@@ -32,6 +39,9 @@ export const DEFAULT_EMBEDDED_OFFICE_CAPABILITIES: OfficeHostCapabilities = {
   open: true,
   save: true,
   saveAs: true,
+  saveHistoryVersion: true,
+  exportDocx: true,
+  close: true,
   autoSave: 'host',
   download: false,
   print: true,
@@ -56,6 +66,8 @@ export interface SaveDocumentInput {
   bytes: ArrayBuffer
   baseVersion?: string | null
   mode?: OfficeSaveMode
+  /** First persistence of a blank editor document; the Host should choose/create its destination. */
+  newDocument?: boolean
 }
 
 export interface SaveDocumentResult {
@@ -63,6 +75,30 @@ export interface SaveDocumentResult {
   file?: OfficeFileDescriptor
   error?: string
   code?: 'VERSION_CONFLICT' | 'PERMISSION_DENIED' | 'NOT_FOUND' | 'SAVE_FAILED' | 'CANCELLED'
+}
+
+export interface SaveHistoryVersionInput {
+  file: OfficeFileDescriptor
+  bytes: ArrayBuffer
+  baseVersion?: string | null
+}
+
+export interface SaveHistoryVersionResult {
+  ok: boolean
+  error?: string
+  code?: 'PERMISSION_DENIED' | 'NOT_FOUND' | 'SAVE_FAILED' | 'CANCELLED'
+}
+
+export interface ExportDocumentInput {
+  format: OfficeExportFormat
+  file: OfficeFileDescriptor
+  bytes: ArrayBuffer
+}
+
+export interface ExportDocumentResult {
+  ok: boolean
+  error?: string
+  code?: 'PERMISSION_DENIED' | 'SAVE_FAILED' | 'CANCELLED'
 }
 
 export interface PickFileOptions {
@@ -81,6 +117,9 @@ export interface SelectedOfficeFile extends OfficeFileDescriptor {
 export interface OfficeHostApi {
   getLocale(): Promise<string>
   saveDocument(input: SaveDocumentInput): Promise<SaveDocumentResult>
+  saveHistoryVersion?(input: SaveHistoryVersionInput): Promise<SaveHistoryVersionResult>
+  exportDocument?(input: ExportDocumentInput): Promise<ExportDocumentResult>
+  requestClose?(): Promise<void>
   pickFile(options: PickFileOptions): Promise<SelectedOfficeFile[] | null>
   readFile(fileId: string): Promise<OfficeFile>
   setDirty(dirty: boolean): void

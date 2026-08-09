@@ -1,12 +1,15 @@
 import type {
   OfficeDocumentKind,
   OfficeEditorMode,
+  OfficeExportFormat,
   OfficeFile,
   OfficeFileDescriptor,
   OfficeHostCapabilities,
   OfficeSaveMode,
+  ExportDocumentResult,
   PickFileOptions,
   SaveDocumentResult,
+  SaveHistoryVersionResult,
   SelectedOfficeFile,
 } from '@genoffice/office-host-api'
 
@@ -17,6 +20,13 @@ export interface OfficeInitPayload {
   mode: OfficeEditorMode
   locale?: string
   file: OfficeFile
+  capabilities?: Partial<OfficeHostCapabilities>
+}
+
+export interface OfficeNewPayload {
+  kind: OfficeDocumentKind
+  mode: OfficeEditorMode
+  locale?: string
   capabilities?: Partial<OfficeHostCapabilities>
 }
 
@@ -42,6 +52,18 @@ export type HostToEditorMessage =
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:new'
+      requestId: string
+      payload: OfficeNewPayload
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:set-locale'
+      requestId?: string
+      payload: { locale: string }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:set-mode'
       requestId?: string
       payload: { mode: OfficeEditorMode }
@@ -61,6 +83,18 @@ export type HostToEditorMessage =
       type: 'office:save-document-result'
       requestId: string
       payload: SaveDocumentResult
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:save-history-version-result'
+      requestId: string
+      payload: SaveHistoryVersionResult
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:export-document-result'
+      requestId: string
+      payload: ExportDocumentResult
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
@@ -118,7 +152,33 @@ export type EditorToHostMessage =
         bytes: ArrayBuffer
         baseVersion?: string | null
         mode?: OfficeSaveMode
+        newDocument?: boolean
       }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:save-history-version'
+      requestId: string
+      payload: {
+        file: OfficeFileDescriptor
+        bytes: ArrayBuffer
+        baseVersion?: string | null
+      }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:export-document'
+      requestId: string
+      payload: {
+        format: OfficeExportFormat
+        file: OfficeFileDescriptor
+        bytes: ArrayBuffer
+      }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:close-request'
+      payload: { reason: 'file-menu' }
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION

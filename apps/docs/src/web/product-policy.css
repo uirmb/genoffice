@@ -13,9 +13,12 @@ html.office-web:not(.office-autosave-editor) .autosave-toggle {
   display: none;
 }
 
-html.office-web:not(.office-can-open) .file-menu > button:nth-child(1),
-html.office-web:not(.office-can-save) .file-menu > button:nth-child(2),
-html.office-web:not(.office-can-save-as) .file-menu > button:nth-child(3) {
+html.office-web:not(.office-can-open) .file-menu-open,
+html.office-web:not(.office-can-save) .file-menu-save,
+html.office-web:not(.office-can-save-as) .file-menu-save-as,
+html.office-web:not(.office-can-save-history) .file-menu-save-history,
+html.office-web:not(.office-can-export-docx) .file-menu-export-docx,
+html.office-web:not(.office-can-close) .file-menu-exit {
   display: none;
 }
 
