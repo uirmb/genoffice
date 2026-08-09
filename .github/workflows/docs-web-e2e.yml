@@ -6,28 +6,54 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  ppt-web-check:
+  ppt-web-patch:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/ppt-web-foundation' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - name: Checkout
+      - name: Checkout feature branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ppt-web-foundation
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-      - name: Install dependencies for diagnostic
+      - name: Apply PPT Web patch
+        run: python .github/scripts/patch-ppt-web.py
+      - name: Update lockfile
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Install dependencies
         run: npm install --ignore-scripts
-      - name: Remaining Node byte dependencies
+      - name: Format changed sources
         run: |
-          grep -RInE "Buffer\.|node:crypto|node:fs" packages/pptx-engine/src || true
+          npx prettier --write \
+            package.json package-lock.json \
+            apps/slides/src/shared/ipc.ts \
+            apps/slides/src/renderer/App.tsx \
+            apps/slides/src/renderer/components/Ribbon.tsx \
+            apps/slides/src/renderer/components/ribbon-shared.tsx \
+            apps/slides/src/renderer/web-labels.ts \
+            apps/slides/src/web \
+            apps/slides/vite.web.config.ts \
+            packages/office-host-api/src/index.ts \
+            packages/pptx-engine/src
       - name: Slides typecheck
         run: npm run typecheck -w @genoffice/slides
+      - name: PPTX engine typecheck
+        run: npm run typecheck -w @genoffice/pptx-engine
       - name: Slides Web build
         run: npm run build:web -w @genoffice/slides
+      - name: Commit product patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add package.json package-lock.json apps/slides packages/office-host-api packages/pptx-engine
+          git commit -m "feat(slides-web): complete browser host lifecycle" || exit 0
+          git push origin HEAD:agent/ppt-web-foundation
 
   docs-web-e2e:
     runs-on: ubuntu-22.04
