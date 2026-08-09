@@ -35,7 +35,7 @@ await replaceExact(
 await replaceExact(
   'apps/slides/tests/web-slides-api.test.ts',
   `    const blank = await controller.slidesApi.newBlank(960)\n    expect(blank.slides).toHaveLength(1)\n\n    const added = await controller.slidesApi.addElement({\n      slideIndex: 0,\n      kind: 'textbox',\n      xPx: 100,\n      yPx: 100,\n      wPx: 400,\n      hPx: 80,\n      fitWidthPx: 960,\n      text: '新建 PPT Web',\n    })\n    expect(added).not.toBeNull()`,
-  `    const blank = await controller.slidesApi.newBlank(960)\n    expect(blank.slides).toHaveLength(1)\n    const editablePlaceholder = blank.slides[0]?.nodes.find(\n      (node) => node.placeholder && (node.type === 'text' || node.type === 'shape'),\n    )\n    expect(editablePlaceholder).toBeTruthy()\n\n    const added = await controller.slidesApi.editText({\n      slideIndex: 0,\n      sourceId: editablePlaceholder!.sourceId,\n      paragraphs: [{ runs: [{ text: '新建 PPT Web' }] }],\n    })\n    expect(added).not.toBeNull()`,
+  `    const blank = await controller.slidesApi.newBlank(960)\n    expect(blank.slides).toHaveLength(1)\n    const editablePlaceholder = blank.slides[0]?.nodes.find(\n      (node: any) => node.placeholder && (node.type === 'text' || node.type === 'shape'),\n    )\n    expect(editablePlaceholder).toBeTruthy()\n\n    const added = await controller.slidesApi.editText({\n      slideIndex: 0,\n      sourceId: editablePlaceholder!.sourceId,\n      paragraphs: [{ runs: [{ text: '新建 PPT Web' }] }],\n    })\n    expect(added).not.toBeNull()`,
 )
 
 await replaceExact(
