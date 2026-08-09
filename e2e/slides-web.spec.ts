@@ -31,7 +31,9 @@ async function generateFixture(): Promise<void> {
 
 async function slidesFrame(page: Page): Promise<Frame> {
   await expect
-    .poll(() => page.frames().some((frame) => frame.url().includes(':5274/')), { timeout: 30_000 })
+    .poll(() => page.frames().some((frame) => frame.url().includes(':5274/')), {
+      timeout: 30_000,
+    })
     .toBe(true)
   const frame = page.frames().find((candidate) => candidate.url().includes(':5274/'))
   if (!frame) throw new Error('Slides Web iframe was not found')
@@ -42,6 +44,19 @@ async function slideJson(frame: Frame): Promise<string> {
   return frame.evaluate(async () => {
     const api = (window as any).slidesApi
     return JSON.stringify((await api.getRenderSlides()) ?? [])
+  })
+}
+
+async function slideText(frame: Frame): Promise<string> {
+  return frame.evaluate(async () => {
+    const api = (window as any).slidesApi
+    const slides = (await api.getRenderSlides()) ?? []
+    return slides
+      .flatMap((slide: any) => slide.nodes ?? [])
+      .flatMap((node: any) => node.text?.lines ?? [])
+      .flatMap((line: any) => line.runs ?? [])
+      .map((run: any) => run.text ?? '')
+      .join('')
   })
 }
 
@@ -105,10 +120,18 @@ test.describe('Slides Web', () => {
     page.on('download', (download) => unexpectedDownloads.push(download.suggestedFilename()))
 
     await page.goto(slidesWebUrl!)
-    await expect.poll(async () => JSON.parse(await page.evaluate(async () => {
-      const api = (window as any).slidesApi
-      return JSON.stringify((await api.getRenderSlides()) ?? [])
-    })).length, { timeout: 30_000 }).toBeGreaterThan(0)
+    await expect
+      .poll(
+        async () =>
+          JSON.parse(
+            await page.evaluate(async () => {
+              const api = (window as any).slidesApi
+              return JSON.stringify((await api.getRenderSlides()) ?? [])
+            }),
+          ).length,
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0)
 
     await expect(page.locator('.autosave-toggle')).toBeHidden()
     await expect(page.locator('.ai-dock')).toBeHidden()
@@ -129,7 +152,9 @@ test.describe('Slides Web', () => {
     const frame = await slidesFrame(page)
 
     // App Center flow: no selected node means office:new and a real blank PPTX.
-    await expect.poll(async () => JSON.parse(await slideJson(frame)).length, { timeout: 30_000 }).toBe(1)
+    await expect
+      .poll(async () => JSON.parse(await slideJson(frame)).length, { timeout: 30_000 })
+      .toBe(1)
     await addTextBox(frame, 'App Center 新建演示文稿第一次保存')
     await expect(page.locator('#dirty-state')).toHaveText('dirty')
 
@@ -142,9 +167,10 @@ test.describe('Slides Web', () => {
     await expect(page.locator('#file-name')).toHaveText('PPT-Web-新建验证.pptx')
     await expect(page.locator('#dirty-state')).toHaveText('clean')
 
-    // Open a real PPTX through the Host-owned file path.
+    // Open a real PPTX through the Host-owned file path. Render text may be split
+    // into per-glyph runs, so compare the recombined rendered text rather than JSON.
     await page.locator('#pptx-picker').setInputFiles(fixturePath)
-    await expect.poll(() => slideJson(frame), { timeout: 30_000 }).toContain(fixtureText)
+    await expect.poll(() => slideText(frame), { timeout: 30_000 }).toContain(fixtureText)
 
     // Embedded File menu matches the Word Web lifecycle contract.
     await frame.locator('.ribbon-tab-file').click()
@@ -200,16 +226,24 @@ test.describe('Slides Web', () => {
 
     // Host-authoritative preview/edit switching happens live without reloading the PPTX.
     await page.locator('#mode-button').click()
-    await expect.poll(() => frame.evaluate(() => (window as any).slidesApi.getHostEditorMode())).toBe('view')
+    await expect
+      .poll(() => frame.evaluate(() => (window as any).slidesApi.getHostEditorMode()))
+      .toBe('view')
     await expect(frame.locator('html')).toHaveClass(/office-view-mode/)
     await page.locator('#mode-button').click()
-    await expect.poll(() => frame.evaluate(() => (window as any).slidesApi.getHostEditorMode())).toBe('edit')
+    await expect
+      .poll(() => frame.evaluate(() => (window as any).slidesApi.getHostEditorMode()))
+      .toBe('edit')
 
     // System language switching is propagated at runtime.
     await page.locator('#locale-button').click()
-    await expect.poll(() => frame.evaluate(() => (window as any).slidesApi.getLanguage())).toBe('en')
+    await expect
+      .poll(() => frame.evaluate(() => (window as any).slidesApi.getLanguage()))
+      .toBe('en')
     await page.locator('#locale-button').click()
-    await expect.poll(() => frame.evaluate(() => (window as any).slidesApi.getLanguage())).toBe('zh')
+    await expect
+      .poll(() => frame.evaluate(() => (window as any).slidesApi.getLanguage()))
+      .toBe('zh')
 
     // Dirty Exit is guarded by GenOffice. Discard sends only the final Host close request.
     await replaceFirstElementText(frame, '退出前未保存修改')
