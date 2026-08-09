@@ -9,6 +9,26 @@ permissions:
   contents: read
 
 jobs:
+  ppt-web-check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Install dependencies for diagnostic
+        run: npm install --ignore-scripts
+      - name: Remaining Node byte dependencies
+        run: |
+          grep -RInE "Buffer\.|node:crypto|node:fs" packages/pptx-engine/src || true
+      - name: Slides typecheck
+        run: npm run typecheck -w @genoffice/slides
+      - name: Slides Web build
+        run: npm run build:web -w @genoffice/slides
+
   docs-web-e2e:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
