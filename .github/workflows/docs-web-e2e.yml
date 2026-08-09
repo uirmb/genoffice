@@ -23,7 +23,9 @@ jobs:
         with:
           node-version: 22
       - name: Apply PPT Web patch
-        run: python .github/scripts/patch-ppt-web.py
+        run: |
+          python .github/scripts/patch-ppt-web.py
+          python .github/scripts/patch-ppt-web-fixup.py
       - name: Update lockfile
         run: npm install --package-lock-only --ignore-scripts
       - name: Install dependencies
