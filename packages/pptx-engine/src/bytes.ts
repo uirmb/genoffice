@@ -23,8 +23,9 @@ export function decodeBase64(value: string): Uint8Array {
     return bytes
   }
 
-  const nodeBuffer = (globalThis as { Buffer?: { from(value: string, encoding: string): Uint8Array } })
-    .Buffer
+  const nodeBuffer = (
+    globalThis as { Buffer?: { from(value: string, encoding: string): Uint8Array } }
+  ).Buffer
   if (nodeBuffer) return new Uint8Array(nodeBuffer.from(value, 'base64'))
   throw new Error('Base64 decoding is unavailable in this runtime.')
 }
@@ -39,9 +40,11 @@ export function encodeBase64(bytes: Uint8Array): string {
     return btoa(binary)
   }
 
-  const nodeBuffer = (globalThis as {
-    Buffer?: { from(value: Uint8Array): { toString(encoding: string): string } }
-  }).Buffer
+  const nodeBuffer = (
+    globalThis as {
+      Buffer?: { from(value: Uint8Array): { toString(encoding: string): string } }
+    }
+  ).Buffer
   if (nodeBuffer) return nodeBuffer.from(bytes).toString('base64')
   throw new Error('Base64 encoding is unavailable in this runtime.')
 }
@@ -58,7 +61,11 @@ export function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
 }
 
 export function writeUint32Be(target: Uint8Array, offset: number, value: number): void {
-  new DataView(target.buffer, target.byteOffset, target.byteLength).setUint32(offset, value >>> 0, false)
+  new DataView(target.buffer, target.byteOffset, target.byteLength).setUint32(
+    offset,
+    value >>> 0,
+    false,
+  )
 }
 
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {

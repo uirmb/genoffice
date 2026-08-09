@@ -19,6 +19,7 @@ import { restoreEditSelection } from '../TextEditOverlay'
 import { armColorInput, toPickerHex } from '../color-input'
 import { TABLE_SHADING_COLORS } from './table-shading-colors'
 import { useI18n, type StringKey } from '../i18n/locale'
+import { slidesWebLifecycleLabels } from '../web-labels'
 import {
   IconSlideMaster,
   IconBullets,
@@ -648,7 +649,8 @@ function TableToggleBtn({
   onClick: () => void
   offClick: () => void
 }) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
+  const webLabels = slidesWebLifecycleLabels(lang)
   return (
     <button
       className={`rb-icon ${on ? 'active' : ''}`}
@@ -730,6 +732,9 @@ export function Ribbon({
   onUndo,
   onRedo,
   onSaveAs,
+  onSaveHistoryVersion,
+  onExportPptx,
+  onExit,
   onExportPdf,
   onPrint,
   onExportImages,
@@ -862,7 +867,8 @@ export function Ribbon({
   onFlip,
   canDistribute,
 }: Props) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
+  const webLabels = slidesWebLifecycleLabels(lang)
   // Contextual tabs: table → table design; chart → chart design (imported charts auto-convert on first edit); picture → picture format
   const contextTab: ContextTab | null =
     contextElementType === 'table'
@@ -1325,6 +1331,7 @@ export function Ribbon({
             {fileOpen && (
               <div className="file-menu">
                 <button
+                  className="file-menu-open"
                   onClick={() => {
                     setFileOpen(false)
                     onOpen()
@@ -1333,6 +1340,7 @@ export function Ribbon({
                   {t('ribbonFileOpen')} <span className="file-menu-key">Ctrl+O</span>
                 </button>
                 <button
+                  className="file-menu-save"
                   disabled={!hasDoc}
                   onClick={() => {
                     setFileOpen(false)
@@ -1342,6 +1350,7 @@ export function Ribbon({
                   {t('ribbonFileSave')} <span className="file-menu-key">Ctrl+S</span>
                 </button>
                 <button
+                  className="file-menu-save-as"
                   disabled={!hasDoc}
                   onClick={() => {
                     setFileOpen(false)
@@ -1350,7 +1359,43 @@ export function Ribbon({
                 >
                   {t('ribbonFileSaveAs')} <span className="file-menu-key">Ctrl+Shift+S</span>
                 </button>
+                {onSaveHistoryVersion && (
+                  <button
+                    className="file-menu-save-history"
+                    disabled={!hasDoc}
+                    onClick={() => {
+                      setFileOpen(false)
+                      onSaveHistoryVersion()
+                    }}
+                  >
+                    {webLabels.saveHistory}
+                  </button>
+                )}
+                {onExportPptx && (
+                  <button
+                    className="file-menu-export-pptx"
+                    disabled={!hasDoc}
+                    onClick={() => {
+                      setFileOpen(false)
+                      onExportPptx()
+                    }}
+                  >
+                    {webLabels.exportPptx}
+                  </button>
+                )}
+                {onExit && (
+                  <button
+                    className="file-menu-exit"
+                    onClick={() => {
+                      setFileOpen(false)
+                      onExit()
+                    }}
+                  >
+                    {webLabels.exit}
+                  </button>
+                )}
                 <button
+                  className="file-menu-electron-only"
                   disabled={!hasDoc}
                   onClick={() => {
                     setFileOpen(false)
@@ -1360,6 +1405,7 @@ export function Ribbon({
                   {t('ribbonFileExportPdf')}
                 </button>
                 <button
+                  className="file-menu-electron-only"
                   disabled={!hasDoc}
                   onClick={() => {
                     setFileOpen(false)
@@ -1369,6 +1415,7 @@ export function Ribbon({
                   {t('ribbonFilePrint')} <span className="file-menu-key">Ctrl+P</span>
                 </button>
                 <button
+                  className="file-menu-electron-only"
                   disabled={!hasDoc}
                   onClick={() => {
                     setFileOpen(false)

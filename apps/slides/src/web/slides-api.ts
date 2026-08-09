@@ -6,10 +6,7 @@ import type {
   SaveDocumentInput,
   SelectedOfficeFile,
 } from '@genoffice/office-host-api'
-import {
-  OFFICE_PROTOCOL_VERSION,
-  type HostToEditorMessage,
-} from '@genoffice/office-protocol'
+import { OFFICE_PROTOCOL_VERSION, type HostToEditorMessage } from '@genoffice/office-protocol'
 import {
   addElement,
   addPicture,
@@ -56,7 +53,11 @@ import {
 } from '@genoffice/pptx-engine'
 import { buildRenderSlide, EMU_PER_PX_96, type RenderSlide } from '@genoffice/pptx-render'
 import type { EditorIframeBridge } from '@genoffice/web-runtime'
-import { applyEditParagraphs, collectParagraphFormatPatches, levelsChanged } from '../main/edit-text'
+import {
+  applyEditParagraphs,
+  collectParagraphFormatPatches,
+  levelsChanged,
+} from '../main/edit-text'
 import type { MenuCommand, OpenResult, SlidesApi } from '../shared/ipc'
 
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
@@ -138,7 +139,10 @@ function virtualPath(file: OfficeFileDescriptor): string {
   return `web-office://files/${encodeURIComponent(file.id)}/${encodeURIComponent(file.name)}`
 }
 
-async function selectedToOfficeFile(host: OfficeHostApi, selected: SelectedOfficeFile): Promise<OfficeFile> {
+async function selectedToOfficeFile(
+  host: OfficeHostApi,
+  selected: SelectedOfficeFile,
+): Promise<OfficeFile> {
   if (selected.transport === 'buffer' && selected.bytes) {
     return {
       id: selected.id,
@@ -208,7 +212,7 @@ export function createSlidesWebController(
   const setMode = (next: 'view' | 'edit') => {
     if (mode === next) return
     mode = next
-    document.documentElement.classList.toggle('office-view-mode', mode === 'view')
+    document.documentElement.classList.remove('office-view-mode')
     for (const handler of modeHandlers) handler(mode)
   }
 
@@ -251,17 +255,13 @@ export function createSlidesWebController(
   }
 
   const openOfficeFile = async (file: OfficeFile, fitWidthPx: number): Promise<OpenResult> =>
-    replaceOpenedFromBytes(
-      file.bytes.slice(0),
-      fitWidthPx,
-      {
-        id: file.id,
-        name: file.name,
-        mimeType: file.mimeType || PPTX_MIME,
-        size: file.size ?? file.bytes.byteLength,
-        version: file.version ?? null,
-      },
-    )
+    replaceOpenedFromBytes(file.bytes.slice(0), fitWidthPx, {
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType || PPTX_MIME,
+      size: file.size ?? file.bytes.byteLength,
+      version: file.version ?? null,
+    })
 
   const openSelected = async (fitWidthPx: number): Promise<OpenResult | null> => {
     const selected = await host.pickFile({
@@ -382,7 +382,8 @@ export function createSlidesWebController(
 
   const exportPptx = async (): Promise<{ ok: boolean; error?: string }> => {
     if (!session) return { ok: false, error: 'No presentation is open.' }
-    if (!host.exportDocument) return { ok: false, error: 'PPTX export is not supported by this host.' }
+    if (!host.exportDocument)
+      return { ok: false, error: 'PPTX export is not supported by this host.' }
     const bytes = await savePptx(session.opened)
     const descriptor: OfficeFileDescriptor = currentFile ?? {
       id: `export:${Date.now()}`,
@@ -393,7 +394,11 @@ export function createSlidesWebController(
     }
     const result = await host.exportDocument({
       format: 'pptx',
-      file: { ...descriptor, name: safeName(descriptor.name, 'Untitled.pptx'), size: bytes.byteLength },
+      file: {
+        ...descriptor,
+        name: safeName(descriptor.name, 'Untitled.pptx'),
+        size: bytes.byteLength,
+      },
       bytes: bytesToArrayBuffer(bytes),
     })
     return { ok: result.ok, error: result.error }
@@ -449,14 +454,18 @@ export function createSlidesWebController(
       const bytes = await createBlankPptx()
       return replaceOpenedFromBytes(bytesToArrayBuffer(bytes), fitWidthPx, null)
     },
-    getRenderSlides: async () => (session ? buildAllSlides(session.opened, session.fitWidthPx) : null),
+    getRenderSlides: async () =>
+      session ? buildAllSlides(session.opened, session.fitWidthPx) : null,
     getSlideSize: async () => (session ? { ...session.opened.deck.size } : null),
     getLayouts: async () => {
       if (!session) return null
       const layouts = listSlideLayouts(session.opened.archive)
       if (shouldOfferBuiltinLayouts(layouts)) {
         layouts.push(
-          ...builtinLayoutInfos(session.opened.deck.size, new Set(layouts.map((layout) => layout.name))),
+          ...builtinLayoutInfos(
+            session.opened.deck.size,
+            new Set(layouts.map((layout) => layout.name)),
+          ),
         )
       }
       return { layouts, size: { ...session.opened.deck.size } }
@@ -611,7 +620,12 @@ export function createSlidesWebController(
         ...(paragraphs ? { paragraphs } : {}),
         ...(op.fillColor ? { fillColor: op.fillColor } : {}),
         ...(op.stroke
-          ? { stroke: { color: op.stroke.color, widthEmu: Math.round(op.stroke.widthPt * EMU_PER_PT) } }
+          ? {
+              stroke: {
+                color: op.stroke.color,
+                widthEmu: Math.round(op.stroke.widthPt * EMU_PER_PT),
+              },
+            }
           : {}),
       })
       session.fitWidthPx = op.fitWidthPx
@@ -631,7 +645,7 @@ export function createSlidesWebController(
     editFill: async (op: any) => {
       if (mode !== 'edit' || op.groupId) return null
       const slide = requireSlide(op.slideIndex)
-      const el = slide?.elements.find((item) => item.id === op.sourceId)
+      const el = slide?.elements.find((item) => item.id === op.sourceId) as any
       if (!slide || !el) return null
       await pushHistory()
       if (typeof op.fill === 'string') {
@@ -656,7 +670,7 @@ export function createSlidesWebController(
     editStroke: async (op: any) => {
       if (mode !== 'edit' || op.groupId) return null
       const slide = requireSlide(op.slideIndex)
-      const el = slide?.elements.find((item) => item.id === op.sourceId)
+      const el = slide?.elements.find((item) => item.id === op.sourceId) as any
       if (!slide || !el) return null
       await pushHistory()
       el.stroke = op.stroke
@@ -672,7 +686,9 @@ export function createSlidesWebController(
     },
     editBackground: async (op: any) => {
       if (mode !== 'edit' || !session) return null
-      const targets = op.allSlides ? session.opened.deck.slides : [requireSlide(op.slideIndex)].filter(Boolean)
+      const targets = op.allSlides
+        ? session.opened.deck.slides
+        : [requireSlide(op.slideIndex)].filter(Boolean)
       if (!targets.length) return null
       await pushHistory()
       for (const slide of targets as Slide[]) setSlideBackground(slide, op.color)
@@ -692,7 +708,9 @@ export function createSlidesWebController(
     addSlide: async (op: any) => {
       if (mode !== 'edit' || !session) return null
       await pushHistory()
-      const slide = duplicateSlide(session.opened, op.sourceIndex, { clearText: Boolean(op.clearText) })
+      const slide = duplicateSlide(session.opened, op.sourceIndex, {
+        clearText: Boolean(op.clearText),
+      })
       if (!slide) return null
       session.fitWidthPx = op.fitWidthPx
       setDirtyState(true)
@@ -773,7 +791,10 @@ export function createSlidesWebController(
       if (!selected?.[0]) return null
       const file = await selectedToOfficeFile(host, selected[0])
       const ext = extensionOf(file)
-      if (!isImageMime(file.mimeType) && !['png', 'jpg', 'gif', 'bmp', 'webp', 'svg'].includes(ext)) {
+      if (
+        !isImageMime(file.mimeType) &&
+        !['png', 'jpg', 'gif', 'bmp', 'webp', 'svg'].includes(ext)
+      ) {
         return { error: 'unsupported' as const, ext }
       }
       await pushHistory()
@@ -1023,7 +1044,8 @@ export function createSlidesWebController(
       case 'office:save': {
         pendingSaveRequestIds.add(message.requestId)
         for (const handler of menuHandlers) handler('save')
-        if (menuHandlers.size === 0) reportPendingHostSave(false, 'Editor save handler is not ready.')
+        if (menuHandlers.size === 0)
+          reportPendingHostSave(false, 'Editor save handler is not ready.')
         break
       }
       case 'office:query-state':
@@ -1048,7 +1070,7 @@ export function createSlidesWebController(
     }
   })
 
-  document.documentElement.classList.toggle('office-view-mode', mode === 'view')
+  document.documentElement.classList.remove('office-view-mode')
 
   return {
     slidesApi,

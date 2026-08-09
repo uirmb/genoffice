@@ -283,6 +283,10 @@ export interface Props {
   onUndo: () => void
   onRedo: () => void
   onSaveAs: () => void
+  /** Web Host lifecycle extensions; omitted by the Electron renderer. */
+  onSaveHistoryVersion?: () => void
+  onExportPptx?: () => void
+  onExit?: () => void
   /** Export as PDF (hidden slides skipped) */
   onExportPdf: () => void
   onPrint: () => void

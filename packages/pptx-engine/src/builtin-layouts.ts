@@ -8,6 +8,7 @@
  * override + slideMaster registration (rels + sldLayoutIdLst), so the result
  * is a regular layout PowerPoint also understands.
  */
+import { encodeUtf8 } from './bytes'
 import type { PackageArchive } from './zip'
 import { relsPathFor, resolveTarget } from './zip'
 import type { SlideSize } from './types'
@@ -188,25 +189,24 @@ export function ensureBuiltinLayout(
   }
   const layoutPath = `ppt/slideLayouts/slideLayout${maxLayout + 1}.xml`
 
-  archive.entries.set(layoutPath, Buffer.from(buildLayoutXml(def, size), 'utf8'))
+  archive.entries.set(layoutPath, encodeUtf8(buildLayoutXml(def, size)))
   const layoutRels =
     XMLDECL +
     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
     `<Relationship Id="rId1" Type="${MASTER_REL_TYPE}" Target="../slideMasters/${masterPath.slice('ppt/slideMasters/'.length)}"/>` +
     '</Relationships>'
-  archive.entries.set(relsPathFor(layoutPath), Buffer.from(layoutRels, 'utf8'))
+  archive.entries.set(relsPathFor(layoutPath), encodeUtf8(layoutRels))
 
   const ctPath = '[Content_Types].xml'
   const ct = archive.readText(ctPath)
   if (ct && !ct.includes(`PartName="/${layoutPath}"`)) {
     archive.entries.set(
       ctPath,
-      Buffer.from(
+      encodeUtf8(
         ct.replace(
           '</Types>',
           `<Override PartName="/${layoutPath}" ContentType="${LAYOUT_CONTENT_TYPE}"/></Types>`,
         ),
-        'utf8',
       ),
     )
   }
@@ -233,6 +233,6 @@ export function ensureBuiltinLayout(
   const nextMaster = masterXml.includes('</p:sldLayoutIdLst>')
     ? masterXml.replace('</p:sldLayoutIdLst>', `${idTag}</p:sldLayoutIdLst>`)
     : masterXml.replace(/(<p:clrMap\b[^>]*\/>)/, `$1<p:sldLayoutIdLst>${idTag}</p:sldLayoutIdLst>`)
-  archive.entries.set(masterPath, Buffer.from(nextMaster, 'utf8'))
+  archive.entries.set(masterPath, Buffer.from(nextMaster))
   return layoutPath
 }

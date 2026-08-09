@@ -428,7 +428,8 @@ function buildRPrAttrs(run: TextRun): string {
   if (run.fontSize != null && !run.fontSizeImplicit) s += ` sz="${Math.round(run.fontSize * 100)}"`
   if (run.bold) s += ' b="1"'
   if (run.italic) s += ' i="1"'
-  if (run.underline && !run.underlineImplicit) s += ` u="${escapeXmlAttr(run.underlineStyle ?? 'sng')}"`
+  if (run.underline && !run.underlineImplicit)
+    s += ` u="${escapeXmlAttr(run.underlineStyle ?? 'sng')}"`
   if (run.strike) s += ` strike="${escapeXmlAttr(run.strikeStyle ?? 'sngStrike')}"`
   if (run.letterSpacing) s += ` spc="${Math.round(run.letterSpacing * 100)}"`
   if (run.baseline) s += ` baseline="${Math.round(run.baseline * 1000)}"`
