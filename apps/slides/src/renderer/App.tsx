@@ -737,7 +737,8 @@ export function App() {
   }, [webLabels])
 
   const requestExit = useCallback(async () => {
-    if (!dirty) {
+    const sessionDirty = await window.slidesApi.isDirty()
+    if (!dirty && !sessionDirty) {
       await window.slidesApi.requestHostClose?.()
       return
     }
