@@ -236,7 +236,8 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
 
     case 'office:save-document': {
       const bytes = message.payload.bytes.slice(0)
-      const needsDestination = Boolean(message.payload.newDocument) || message.payload.mode === 'saveAs'
+      const needsDestination =
+        Boolean(message.payload.newDocument) || message.payload.mode === 'saveAs'
       let targetName = message.payload.file.name || currentFile?.name || 'Untitled.pptx'
       if (needsDestination) {
         const requested = window.prompt(
@@ -247,7 +248,9 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
           saveCancelled(message.requestId)
           break
         }
-        targetName = /\.pptx$/i.test(requested.trim()) ? requested.trim() : `${requested.trim()}.pptx`
+        targetName = /\.pptx$/i.test(requested.trim())
+          ? requested.trim()
+          : `${requested.trim()}.pptx`
         versionCounter = 1
       } else {
         versionCounter += 1

@@ -53,7 +53,11 @@ import {
 } from '@genoffice/pptx-engine'
 import { buildRenderSlide, EMU_PER_PX_96, type RenderSlide } from '@genoffice/pptx-render'
 import type { EditorIframeBridge } from '@genoffice/web-runtime'
-import { applyEditParagraphs, collectParagraphFormatPatches, levelsChanged } from '../main/edit-text'
+import {
+  applyEditParagraphs,
+  collectParagraphFormatPatches,
+  levelsChanged,
+} from '../main/edit-text'
 import type { MenuCommand, OpenResult, SlidesApi } from '../shared/ipc'
 
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
@@ -184,9 +188,7 @@ export function createSlidesWebController(
 ): SlidesWebController {
   let session: WebSession | null = null
   let currentFile: OfficeFileDescriptor | null = null
-  let currentLang: Lang = normalizeLang(
-    document.documentElement.lang || navigator.language || 'en',
-  )
+  let currentLang: Lang = normalizeLang(document.documentElement.lang || navigator.language || 'en')
   let mode: 'view' | 'edit' = 'edit'
   let dirty = false
   let saving = false
@@ -402,8 +404,7 @@ export function createSlidesWebController(
     return { ok: result.ok, error: result.error }
   }
 
-  const requireSlide = (index: number): Slide | null =>
-    session?.opened.deck.slides[index] ?? null
+  const requireSlide = (index: number): Slide | null => session?.opened.deck.slides[index] ?? null
 
   const rebuild = (index: number): RenderSlide | null =>
     session ? buildSlide(session.opened, index, session.fitWidthPx) : null
@@ -472,9 +473,7 @@ export function createSlidesWebController(
     editText: async (op: any) => {
       if (mode !== 'edit' || !session || op.groupId) return null
       const slide = requireSlide(op.slideIndex)
-      const el = slide?.elements.find((item) => item.id === op.sourceId) as
-        | TextElement
-        | undefined
+      const el = slide?.elements.find((item) => item.id === op.sourceId) as TextElement | undefined
       if (!slide || !el?.text) return null
       await pushHistory()
       const levelDirty = levelsChanged(el.text.paragraphs, op.paragraphs)
@@ -548,8 +547,7 @@ export function createSlidesWebController(
       const el = slide?.elements.find((item) => item.id === op.sourceId)
       if (!slide || !el) return null
       if (op.preview) {
-        if (!session.transformPreviewSnapshot)
-          session.transformPreviewSnapshot = await snapshot()
+        if (!session.transformPreviewSnapshot) session.transformPreviewSnapshot = await snapshot()
       } else if (!session.transformPreviewSnapshot) {
         await pushHistory()
       } else {
@@ -801,16 +799,7 @@ export function createSlidesWebController(
       if (!slide) return null
       const selected = await host.pickFile({
         multiple: false,
-        accept: [
-          ...IMAGE_MIMES,
-          '.png',
-          '.jpg',
-          '.jpeg',
-          '.gif',
-          '.bmp',
-          '.webp',
-          '.svg',
-        ],
+        accept: [...IMAGE_MIMES, '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'],
         mode: 'file',
       })
       if (!selected?.[0]) return null
