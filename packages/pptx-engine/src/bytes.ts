@@ -9,6 +9,12 @@ export function decodeUtf8(bytes: Uint8Array): string {
   return utf8Decoder.decode(bytes)
 }
 
+export function encodeAscii(value: string): Uint8Array {
+  const bytes = new Uint8Array(value.length)
+  for (let i = 0; i < value.length; i++) bytes[i] = value.charCodeAt(i) & 0x7f
+  return bytes
+}
+
 export function decodeBase64(value: string): Uint8Array {
   if (typeof atob === 'function') {
     const binary = atob(value)
@@ -40,14 +46,25 @@ export function encodeBase64(bytes: Uint8Array): string {
   throw new Error('Base64 encoding is unavailable in this runtime.')
 }
 
+export function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const length = parts.reduce((sum, part) => sum + part.length, 0)
+  const output = new Uint8Array(length)
+  let offset = 0
+  for (const part of parts) {
+    output.set(part, offset)
+    offset += part.length
+  }
+  return output
+}
+
+export function writeUint32Be(target: Uint8Array, offset: number, value: number): void {
+  new DataView(target.buffer, target.byteOffset, target.byteLength).setUint32(offset, value >>> 0, false)
+}
+
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const subtle = globalThis.crypto?.subtle
-  if (subtle) {
-    const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-    const digest = new Uint8Array(await subtle.digest('SHA-256', data))
-    return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
-  }
-
-  const { createHash } = await import('node:crypto')
-  return createHash('sha256').update(bytes).digest('hex')
+  if (!subtle) throw new Error('Web Crypto SHA-256 is unavailable in this runtime.')
+  const data = new Uint8Array(bytes)
+  const digest = new Uint8Array(await subtle.digest('SHA-256', data))
+  return [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
 }
