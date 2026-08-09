@@ -43,6 +43,8 @@ jobs:
             apps/slides/vite.web.config.ts \
             packages/office-host-api/src/index.ts \
             packages/pptx-engine/src
+      - name: Show byte migration diagnostics
+        run: python .github/scripts/debug-ppt-web.py
       - name: Slides typecheck
         run: npm run typecheck -w @genoffice/slides
       - name: PPTX engine typecheck
