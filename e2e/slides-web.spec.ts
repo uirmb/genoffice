@@ -86,23 +86,6 @@ async function replaceFirstElementText(frame: Frame, text: string): Promise<void
   )
 }
 
-async function addTextBox(frame: Frame, text: string): Promise<void> {
-  await frame.evaluate(async (nextText) => {
-    const api = (window as any).slidesApi
-    const result = await api.addElement({
-      slideIndex: 0,
-      kind: 'textbox',
-      xPx: 120,
-      yPx: 100,
-      wPx: 420,
-      hPx: 80,
-      fitWidthPx: 960,
-      text: nextText,
-    })
-    if (!result) throw new Error('Slides Web addElement returned null')
-  }, text)
-}
-
 async function clickFileCommand(frame: Frame, selector: string): Promise<void> {
   await frame.locator('.ribbon-tab-file').click()
   await frame.locator(selector).click()
