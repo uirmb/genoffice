@@ -88,6 +88,27 @@ for file in (ROOT / 'packages/pptx-engine/src').glob('*.ts'):
     if fixed != text:
         file.write_text(fixed, encoding='utf-8')
 
+# The legacy Buffer wrappers sometimes span nested XML replacement calls. The
+# generated code is deterministic, so remove the three remaining legacy utf8
+# arguments explicitly and restore the one base64 part decode precisely.
+for relative in [
+    'packages/pptx-engine/src/builtin-layouts.ts',
+    'packages/pptx-engine/src/index.ts',
+    'packages/pptx-engine/src/layout.ts',
+]:
+    path_obj = ROOT / relative
+    text = path_obj.read_text(encoding='utf-8')
+    text = text.replace("        ),\n        'utf8',\n      ),", "        ),\n      ),")
+    path_obj.write_text(text, encoding='utf-8')
+
+path_obj = ROOT / 'packages/pptx-engine/src/slide-transfer.ts'
+text = path_obj.read_text(encoding='utf-8')
+text = text.replace(
+    "archive.entries.set(targetPath, new Uint8Array(encodeUtf8(base64, 'base64')))",
+    "archive.entries.set(targetPath, decodeBase64(base64))",
+)
+path_obj.write_text(text, encoding='utf-8')
+
 # App lifecycle labels belong to App(), whose i18n hook returns only lang.
 path = 'apps/slides/src/renderer/App.tsx'
 text = read(path)
