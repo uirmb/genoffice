@@ -95,16 +95,15 @@ describe('Slides Web host adapter', () => {
 
     const blank = await controller.slidesApi.newBlank(960)
     expect(blank.slides).toHaveLength(1)
+    const editablePlaceholder = blank.slides[0]?.nodes.find(
+      (node: any) => node.placeholder && (node.type === 'text' || node.type === 'shape'),
+    )
+    expect(editablePlaceholder).toBeTruthy()
 
-    const added = await controller.slidesApi.addElement({
+    const added = await controller.slidesApi.editText({
       slideIndex: 0,
-      kind: 'textbox',
-      xPx: 100,
-      yPx: 100,
-      wPx: 400,
-      hPx: 80,
-      fitWidthPx: 960,
-      text: '新建 PPT Web',
+      sourceId: editablePlaceholder!.sourceId,
+      paragraphs: [{ runs: [{ text: '新建 PPT Web' }] }],
     })
     expect(added).not.toBeNull()
     expect(host.setDirty).toHaveBeenCalledWith(true)

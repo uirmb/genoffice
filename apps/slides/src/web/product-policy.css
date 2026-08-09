@@ -4,6 +4,7 @@ html.office-web .autosave-toggle {
 
 html.office-web:not(.office-ai-enabled) .ai-dock,
 html.office-web:not(.office-ai-enabled) .ai-rail,
+html.office-web:not(.office-ai-enabled) .stage-ai-bar,
 html.office-web:not(.office-ai-enabled) .ai-entry,
 html.office-web:not(.office-ai-enabled) .ribbon-ai-group,
 html.office-web:not(.office-ai-enabled) [data-web-ai] {

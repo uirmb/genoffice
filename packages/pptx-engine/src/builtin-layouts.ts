@@ -216,12 +216,11 @@ export function ensureBuiltinLayout(
   const rid = `rId${maxRid + 1}`
   archive.entries.set(
     masterRelsPath,
-    Buffer.from(
+    encodeUtf8(
       masterRels.replace(
         '</Relationships>',
         `<Relationship Id="${rid}" Type="${LAYOUT_REL_TYPE}" Target="../slideLayouts/${layoutPath.slice('ppt/slideLayouts/'.length)}"/></Relationships>`,
       ),
-      'utf8',
     ),
   )
 
@@ -233,6 +232,6 @@ export function ensureBuiltinLayout(
   const nextMaster = masterXml.includes('</p:sldLayoutIdLst>')
     ? masterXml.replace('</p:sldLayoutIdLst>', `${idTag}</p:sldLayoutIdLst>`)
     : masterXml.replace(/(<p:clrMap\b[^>]*\/>)/, `$1<p:sldLayoutIdLst>${idTag}</p:sldLayoutIdLst>`)
-  archive.entries.set(masterPath, Buffer.from(nextMaster))
+  archive.entries.set(masterPath, encodeUtf8(nextMaster))
   return layoutPath
 }

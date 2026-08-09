@@ -452,7 +452,25 @@ export function createSlidesWebController(
     },
     newBlank: async (fitWidthPx: number) => {
       const bytes = await createBlankPptx()
-      return replaceOpenedFromBytes(bytesToArrayBuffer(bytes), fitWidthPx, null)
+      const result = await replaceOpenedFromBytes(bytesToArrayBuffer(bytes), fitWidthPx, null)
+      if (!session) return result
+
+      // PowerPoint starts a new presentation with an editable Title Slide rather
+      // than a physically empty canvas. Keep createBlankPptx() unchanged for the
+      // desktop/engine callers, and apply the standard layout only at the Web
+      // product boundary. The placeholders stay true OOXML placeholders and save
+      // normally once the Host assigns the first real file identity.
+      const titleLayoutPath = ensureBuiltinLayout(
+        session.opened.archive,
+        session.opened.deck.size,
+        'titleSlide',
+      )
+      if (!titleLayoutPath) return result
+      if (!setSlideLayout(session.opened, 0, titleLayoutPath)) return result
+
+      // Applying the default template is initialization, not a user edit.
+      setDirtyState(false)
+      return openResult() ?? result
     },
     getRenderSlides: async () =>
       session ? buildAllSlides(session.opened, session.fitWidthPx) : null,

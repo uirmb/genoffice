@@ -136,6 +136,7 @@ test.describe('Slides Web', () => {
     await expect(page.locator('.autosave-toggle')).toBeHidden()
     await expect(page.locator('.ai-dock')).toBeHidden()
     await expect(page.locator('.ai-rail')).toBeHidden()
+    await expect(page.locator('.stage-ai-bar')).toBeHidden()
     await expect(page.locator('text=GenOffice Slides Web failed to start')).toHaveCount(0)
 
     // Background activity must never turn a blank browser presentation into a download.
@@ -155,7 +156,8 @@ test.describe('Slides Web', () => {
     await expect
       .poll(async () => JSON.parse(await slideJson(frame)).length, { timeout: 30_000 })
       .toBe(1)
-    await addTextBox(frame, 'App Center 新建演示文稿第一次保存')
+    // A new PPT now contains standard title placeholders and is immediately editable.
+    await replaceFirstElementText(frame, 'App Center 新建演示文稿第一次保存')
     await expect(page.locator('#dirty-state')).toHaveText('dirty')
 
     page.once('dialog', async (dialog) => {
