@@ -60,7 +60,9 @@ describe('Docs Web host lifecycle actions', () => {
     expect(opened).not.toBeNull()
 
     const historyBytes = bytesOf('history snapshot')
-    expect(await controller.desktopApi.saveHistoryVersion?.(initialFile.name, historyBytes)).toEqual({
+    expect(
+      await controller.desktopApi.saveHistoryVersion?.(initialFile.name, historyBytes),
+    ).toEqual({
       ok: true,
       error: undefined,
     })
