@@ -649,8 +649,7 @@ function TableToggleBtn({
   onClick: () => void
   offClick: () => void
 }) {
-  const { t, lang } = useI18n()
-  const webLabels = slidesWebLifecycleLabels(lang)
+  const { t } = useI18n()
   return (
     <button
       className={`rb-icon ${on ? 'active' : ''}`}
