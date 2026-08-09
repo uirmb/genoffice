@@ -54,6 +54,17 @@ test.describe('Docs Web', () => {
     await expect(editorFrame.locator('.ribbon-group:has(.ai-entry)')).toBeHidden()
     await expect(editorFrame.locator('.ai-dock')).toBeHidden()
 
+    // The embedded Web product owns a complete host-facing File menu. The
+    // platform decides how Open/history/export/close are ultimately handled.
+    await editorFrame.locator('.ribbon-tab-file').click()
+    await expect(editorFrame.locator('.file-menu-open')).toBeVisible()
+    await expect(editorFrame.locator('.file-menu-save')).toBeVisible()
+    await expect(editorFrame.locator('.file-menu-save-as')).toBeVisible()
+    await expect(editorFrame.locator('.file-menu-save-history')).toBeVisible()
+    await expect(editorFrame.locator('.file-menu-export-docx')).toBeVisible()
+    await expect(editorFrame.locator('.file-menu-exit')).toBeVisible()
+    await editorFrame.locator('.ribbon-tab-file').click()
+
     const editedText = 'Word Web iframe 保存验证中文'
     await editor.click()
     await editor.press('Control+End')
@@ -76,7 +87,7 @@ test.describe('Docs Web', () => {
       await dialog.accept('Word-Web-另存为验证.docx')
     })
     await editorFrame.locator('.ribbon-tab-file').click()
-    await editorFrame.locator('.file-menu > button').nth(2).click()
+    await editorFrame.locator('.file-menu-save-as').click()
     await expect(page.locator('#host-state')).toHaveText('saved', { timeout: 30_000 })
     await expect(page.locator('#file-name')).toHaveText('Word-Web-另存为验证.docx')
     await expect(page.locator('#dirty-state')).toHaveText('clean')
