@@ -1,7 +1,7 @@
 export type OfficeDocumentKind = 'docx' | 'pptx' | 'xlsx'
 export type OfficeEditorMode = 'view' | 'edit'
 export type OfficeSaveMode = 'save' | 'saveAs'
-export type OfficeExportFormat = 'docx' | 'pptx'
+export type OfficeExportFormat = 'docx' | 'pptx' | 'xlsx'
 export type OfficeAutoSavePolicy = 'disabled' | 'host' | 'editor'
 
 export interface OfficeHostCapabilities {
@@ -12,6 +12,7 @@ export interface OfficeHostCapabilities {
   saveHistoryVersion: boolean
   exportDocx: boolean
   exportPptx: boolean
+  exportXlsx: boolean
   close: boolean
   autoSave: OfficeAutoSavePolicy
   download: boolean
@@ -28,6 +29,7 @@ export const DEFAULT_STANDALONE_OFFICE_CAPABILITIES: OfficeHostCapabilities = {
   saveHistoryVersion: false,
   exportDocx: true,
   exportPptx: true,
+  exportXlsx: true,
   close: false,
   autoSave: 'disabled',
   download: true,
@@ -44,6 +46,7 @@ export const DEFAULT_EMBEDDED_OFFICE_CAPABILITIES: OfficeHostCapabilities = {
   saveHistoryVersion: true,
   exportDocx: true,
   exportPptx: true,
+  exportXlsx: true,
   close: true,
   autoSave: 'host',
   download: false,
