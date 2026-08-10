@@ -16,9 +16,12 @@ async function bootstrapWeb(): Promise<void> {
   const health = await getXlsxEngineHealth()
   if (!health.ok) throw new Error('XLSX Engine Service reported an unhealthy state.')
 
-  // The renderer stays shared with Electron. Browser-specific differences live
-  // behind DesktopApi and, later, the office:* Host bridge.
-  window.desktopApi = createSheetsWebDesktopApi()
+  // Electron exposes this property as readonly through preload typings. Web
+  // installs the same contract before importing the shared renderer.
+  Object.defineProperty(window, 'desktopApi', {
+    configurable: true,
+    value: createSheetsWebDesktopApi(),
+  })
   document.documentElement.classList.add('office-web')
   document.documentElement.dataset.xlsxSessionStore = health.sessionStore
 
