@@ -35,6 +35,7 @@ let dirty = false
 let mode: OfficeEditorMode = 'edit'
 let locale = 'zh-CN'
 let requestCounter = 0
+let versionCounter = 0
 const files = new Map<string, OfficeFile>()
 
 function requestId(prefix: string): string {
@@ -61,6 +62,7 @@ function sendNew(): void {
   if (!editorReady) return
   currentFile = null
   dirty = false
+  versionCounter = 0
   send({
     protocol: OFFICE_PROTOCOL_VERSION,
     type: 'office:new',
@@ -128,9 +130,14 @@ async function toOfficeFile(file: File): Promise<OfficeFile> {
     name: file.name,
     mimeType: file.type || XLSX_MIME,
     size: bytes.byteLength,
-    version: String(file.lastModified),
+    version: 'v1',
     bytes,
   }
+}
+
+function normalizeXlsxName(value: string): string {
+  const name = value.trim()
+  return /\.xlsx$/i.test(name) ? name : `${name}.xlsx`
 }
 
 async function handleEditorMessage(message: EditorToHostMessage): Promise<void> {
@@ -211,20 +218,54 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
       })
       break
     }
-    case 'office:save-document':
-      // Full XLSX save bytes are wired in the next engine slice. Fail closed
-      // instead of pretending persistence succeeded.
+    case 'office:save-document': {
+      const saveAs = message.payload.mode === 'saveAs'
+      let name = currentFile?.name ?? message.payload.file.name ?? 'Untitled.xlsx'
+      if (saveAs) {
+        const requested = window.prompt('另存为文件名', name)
+        if (requested === null || !requested.trim()) {
+          send({
+            protocol: OFFICE_PROTOCOL_VERSION,
+            type: 'office:save-document-result',
+            requestId: message.requestId,
+            payload: { ok: false, code: 'CANCELLED', error: '已取消另存为。' },
+          })
+          break
+        }
+        name = normalizeXlsxName(requested)
+      }
+
+      versionCounter += 1
+      const bytes = message.payload.bytes.slice(0)
+      const id = saveAs || !currentFile ? `xlsx:${crypto.randomUUID()}` : currentFile.id
+      currentFile = {
+        id,
+        name,
+        mimeType: XLSX_MIME,
+        size: bytes.byteLength,
+        version: `v${versionCounter}`,
+        bytes,
+      }
+      files.set(id, currentFile)
+      dirty = false
       send({
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:save-document-result',
         requestId: message.requestId,
         payload: {
-          ok: false,
-          code: 'SAVE_FAILED',
-          error: 'Excel Web save transport is not enabled yet.',
+          ok: true,
+          file: {
+            id,
+            name,
+            mimeType: XLSX_MIME,
+            size: bytes.byteLength,
+            version: currentFile.version,
+          },
         },
       })
+      render()
       break
+    }
     case 'office:state-result':
       dirty = message.payload.dirty
       mode = message.payload.mode
@@ -253,6 +294,7 @@ picker.addEventListener('change', async () => {
   currentFile = await toOfficeFile(browserFile)
   files.set(currentFile.id, currentFile)
   dirty = false
+  versionCounter = 1
   render()
   sendInit()
 })
