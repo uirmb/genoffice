@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "electron-vite dev",
     "dev:renderer": "vite --config vite.renderer.config.ts",
+    "dev:web": "vite --config vite.web.config.ts",
     "build": "npm run native:build && electron-vite build",
+    "build:web": "vite build --config vite.web.config.ts",
     "native:build": "cargo build --release --manifest-path native/xlsx-engine/Cargo.toml --config native/xlsx-engine/.cargo/config.toml",
     "native:test": "cargo test --manifest-path native/xlsx-engine/Cargo.toml --config native/xlsx-engine/.cargo/config.toml",
     "typecheck": "tsc --noEmit",
