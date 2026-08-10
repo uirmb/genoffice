@@ -2,23 +2,31 @@ use std::{
     collections::HashMap,
     fs,
     net::SocketAddr,
-    path::PathBuf,
+    path::{Path as FsPath, PathBuf},
     sync::Arc,
 };
 
 use axum::{
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{DefaultBodyLimit, Path, Query, State},
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
+    response::Response,
     routing::{delete, get, post},
     Json, Router,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
-use xlsx_sidecar::{CellRange, WorkbookSessions};
+use xlsx_sidecar::{
+    archive::{archive_manifest, read_entries_to_dir, save_archive, scan_entries_for_text, EntryContent},
+    CellRange, WorkbookSessions,
+};
+
+const XLSX_MIME: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +60,7 @@ impl SessionStore for MemorySessionStore {
 struct EngineState {
     workbooks: WorkbookSessions,
     files: HashMap<String, PathBuf>,
+    metadata: HashMap<String, Value>,
 }
 
 impl Default for EngineState {
@@ -59,6 +68,7 @@ impl Default for EngineState {
         Self {
             workbooks: WorkbookSessions::new(),
             files: HashMap::new(),
+            metadata: HashMap::new(),
         }
     }
 }
@@ -88,6 +98,38 @@ struct ReadRangeRequest {
     range: CellRange,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveEntriesRequest {
+    entries: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveScanRequest {
+    entries: Vec<String>,
+    needle: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveContentRequest {
+    name: String,
+    content_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveSaveRequest {
+    name: Option<String>,
+    #[serde(default)]
+    replacements: Vec<ArchiveContentRequest>,
+    #[serde(default)]
+    removals: Vec<String>,
+    #[serde(default)]
+    additions: Vec<ArchiveContentRequest>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HealthResponse {
@@ -101,6 +143,25 @@ struct HealthResponse {
 struct CreateSessionResponse {
     session_id: String,
     source: SessionSource,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveReadEntry {
+    name: String,
+    content_base64: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveReadResponse {
+    entries: Vec<ArchiveReadEntry>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchiveScanResponse {
+    matches: Vec<String>,
 }
 
 type ApiError = (StatusCode, String);
@@ -149,10 +210,7 @@ async fn open_workbook(
     bytes: Bytes,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let name = safe_workbook_name(query.name.as_deref().unwrap_or("workbook.xlsx"));
-    let upload_id = Uuid::new_v4();
-    let directory = std::env::temp_dir()
-        .join("genoffice-xlsx-engine")
-        .join(upload_id.to_string());
+    let directory = workbook_directory();
     fs::create_dir_all(&directory).map_err(internal_error)?;
     let path = directory.join(&name);
     fs::write(&path, &bytes).map_err(internal_error)?;
@@ -167,22 +225,24 @@ async fn open_workbook(
         }
     };
     let session_id = metadata.session_id.clone();
+    let value = web_metadata_value(metadata, &name, &sha256)?;
     engine.files.insert(session_id.clone(), path);
-
-    let mut value = serde_json::to_value(metadata).map_err(internal_error)?;
-    let object = value
-        .as_object_mut()
-        .ok_or_else(|| internal_error("Workbook metadata was not an object."))?;
-    // Electron uses the local absolute path for CELL("filename"). In Web mode
-    // this would reveal the server's temporary filesystem, so the browser only
-    // receives Host-facing identity and workbook metadata.
-    object.remove("path");
-    object.insert("name".into(), Value::String(name));
-    object.insert("sha256".into(), Value::String(sha256));
-    object.insert("readOnly".into(), Value::Bool(false));
-    object.insert("needsSaveAs".into(), Value::Bool(false));
+    engine.metadata.insert(session_id, value.clone());
 
     Ok((StatusCode::CREATED, Json(value)))
+}
+
+async fn get_session_metadata(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let engine = state.engine.lock().await;
+    let metadata = engine
+        .metadata
+        .get(&session_id)
+        .cloned()
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Unknown workbook session.".to_string()))?;
+    Ok(Json(metadata))
 }
 
 async fn read_range(
@@ -196,6 +256,114 @@ async fn read_range(
         .read_range(&session_id, &request.sheet_id, &request.range)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     Ok(Json(serde_json::to_value(result).map_err(internal_error)?))
+}
+
+async fn archive_manifest_for_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let path = session_path(&state, &session_id).await?;
+    let entries = archive_manifest(&path)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    Ok(Json(serde_json::json!({ "entries": entries })))
+}
+
+async fn archive_read_for_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<ArchiveEntriesRequest>,
+) -> Result<Json<ArchiveReadResponse>, ApiError> {
+    let path = session_path(&state, &session_id).await?;
+    let directory = scratch_directory("read");
+    fs::create_dir_all(&directory).map_err(internal_error)?;
+
+    let result = (|| -> Result<Vec<ArchiveReadEntry>, ApiError> {
+        let extracted = read_entries_to_dir(&path, &request.entries, &directory)
+            .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+        extracted
+            .into_iter()
+            .map(|entry| {
+                let content = fs::read(entry.path).map_err(internal_error)?;
+                Ok(ArchiveReadEntry {
+                    name: entry.name,
+                    content_base64: BASE64.encode(content),
+                })
+            })
+            .collect()
+    })();
+
+    let _ = fs::remove_dir_all(&directory);
+    Ok(Json(ArchiveReadResponse { entries: result? }))
+}
+
+async fn archive_scan_for_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<ArchiveScanRequest>,
+) -> Result<Json<ArchiveScanResponse>, ApiError> {
+    let path = session_path(&state, &session_id).await?;
+    let matches = scan_entries_for_text(&path, &request.entries, &request.needle)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    Ok(Json(ArchiveScanResponse { matches }))
+}
+
+async fn archive_save_for_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<ArchiveSaveRequest>,
+) -> Result<Response, ApiError> {
+    let source_path = session_path(&state, &session_id).await?;
+    let name = safe_workbook_name(request.name.as_deref().unwrap_or("workbook.xlsx"));
+    let directory = workbook_directory();
+    let content_directory = directory.join("patch");
+    fs::create_dir_all(&content_directory).map_err(internal_error)?;
+    let target_path = directory.join(&name);
+
+    let save_result = (|| -> Result<(), ApiError> {
+        let replacements = write_archive_content(&content_directory, "replace", &request.replacements)?;
+        let additions = write_archive_content(&content_directory, "add", &request.additions)?;
+        save_archive(
+            &source_path,
+            &target_path,
+            &replacements,
+            &request.removals,
+            &additions,
+        )
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&content_directory);
+    save_result?;
+
+    let bytes = fs::read(&target_path).map_err(internal_error)?;
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+
+    let mut engine = state.engine.lock().await;
+    let metadata = engine
+        .workbooks
+        .open(&target_path)
+        .map_err(|error| (StatusCode::UNPROCESSABLE_ENTITY, error.to_string()))?;
+    let saved_session_id = metadata.session_id.clone();
+    let value = web_metadata_value(metadata, &name, &sha256)?;
+    engine.files.insert(saved_session_id.clone(), target_path);
+    engine.metadata.insert(saved_session_id.clone(), value);
+    drop(engine);
+
+    let mut response = Response::new(Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(XLSX_MIME),
+    );
+    response.headers_mut().insert(
+        "x-xlsx-session",
+        HeaderValue::from_str(&saved_session_id).map_err(internal_error)?,
+    );
+    response.headers_mut().insert(
+        "x-xlsx-name",
+        HeaderValue::from_str(&name).map_err(internal_error)?,
+    );
+    Ok(response)
 }
 
 async fn delete_session(
@@ -215,6 +383,7 @@ async fn delete_session(
 
     let mut engine = state.engine.lock().await;
     let path = engine.files.remove(&session_id);
+    engine.metadata.remove(&session_id);
     let closed = engine.workbooks.close(&session_id).is_ok();
     drop(engine);
 
@@ -229,6 +398,65 @@ async fn delete_session(
     } else {
         StatusCode::NOT_FOUND
     }
+}
+
+async fn session_path(state: &AppState, session_id: &str) -> Result<PathBuf, ApiError> {
+    let engine = state.engine.lock().await;
+    engine
+        .files
+        .get(session_id)
+        .cloned()
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Unknown workbook session.".to_string()))
+}
+
+fn write_archive_content(
+    directory: &FsPath,
+    prefix: &str,
+    items: &[ArchiveContentRequest],
+) -> Result<Vec<EntryContent>, ApiError> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let content = BASE64
+                .decode(&item.content_base64)
+                .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+            let path = directory.join(format!("{prefix}-{index}.bin"));
+            fs::write(&path, content).map_err(internal_error)?;
+            Ok(EntryContent {
+                name: item.name.clone(),
+                content_path: path,
+            })
+        })
+        .collect()
+}
+
+fn workbook_directory() -> PathBuf {
+    std::env::temp_dir()
+        .join("genoffice-xlsx-engine")
+        .join(Uuid::new_v4().to_string())
+}
+
+fn scratch_directory(kind: &str) -> PathBuf {
+    std::env::temp_dir()
+        .join("genoffice-xlsx-engine-scratch")
+        .join(format!("{kind}-{}", Uuid::new_v4()))
+}
+
+fn web_metadata_value<T: Serialize>(metadata: T, name: &str, sha256: &str) -> Result<Value, ApiError> {
+    let mut value = serde_json::to_value(metadata).map_err(internal_error)?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| internal_error("Workbook metadata was not an object."))?;
+    // Electron uses the local absolute path for CELL("filename"). In Web mode
+    // this would reveal the server's temporary filesystem, so the browser only
+    // receives Host-facing identity and workbook metadata.
+    object.remove("path");
+    object.insert("name".into(), Value::String(name.to_string()));
+    object.insert("sha256".into(), Value::String(sha256.to_string()));
+    object.insert("readOnly".into(), Value::Bool(false));
+    object.insert("needsSaveAs".into(), Value::Bool(false));
+    Ok(value)
 }
 
 fn safe_workbook_name(input: &str) -> String {
@@ -267,8 +495,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", get(health))
         .route("/v1/sessions", post(create_session))
         .route("/v1/workbooks", post(open_workbook))
+        .route("/v1/sessions/{session_id}", get(get_session_metadata).delete(delete_session))
         .route("/v1/sessions/{session_id}/ranges", post(read_range))
-        .route("/v1/sessions/{session_id}", delete(delete_session))
+        .route(
+            "/v1/sessions/{session_id}/archive/manifest",
+            get(archive_manifest_for_session),
+        )
+        .route(
+            "/v1/sessions/{session_id}/archive/read",
+            post(archive_read_for_session),
+        )
+        .route(
+            "/v1/sessions/{session_id}/archive/scan",
+            post(archive_scan_for_session),
+        )
+        .route(
+            "/v1/sessions/{session_id}/archive/save",
+            post(archive_save_for_session),
+        )
         // Do not impose an application-specific XLSX body limit here. Deployment
         // policy belongs to the reverse proxy/operator, not the engine contract.
         .layer(DefaultBodyLimit::disable())
