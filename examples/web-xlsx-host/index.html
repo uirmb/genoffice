@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GenOffice Excel Web Host Demo</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="toolbar">
+        <div class="brand">
+          <strong>GenOffice Excel Web</strong>
+          <span>iframe Host Demo</span>
+        </div>
+        <div class="actions">
+          <button id="new-button" type="button">新建空白</button>
+          <label class="button primary" for="xlsx-picker">打开 XLSX</label>
+          <input id="xlsx-picker" type="file" accept=".xlsx" hidden />
+          <button id="save-button" type="button" disabled>保存</button>
+          <button id="mode-button" type="button" disabled>切换为预览</button>
+          <button id="locale-button" type="button" disabled>切换 English</button>
+        </div>
+        <div class="status">
+          <span id="file-name">新建工作簿</span>
+          <span id="dirty-state" class="pill">clean</span>
+          <span id="host-state" class="pill">loading</span>
+        </div>
+      </header>
+      <section class="editor-shell">
+        <iframe id="office-frame" title="GenOffice Sheets Web"></iframe>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
