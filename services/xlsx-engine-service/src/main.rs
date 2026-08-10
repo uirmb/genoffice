@@ -14,7 +14,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
@@ -186,7 +186,7 @@ async fn read_range(
     Path(session_id): Path<String>,
     Json(request): Json<ReadRangeRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let engine = state.engine.lock().await;
+    let mut engine = state.engine.lock().await;
     let result = engine
         .workbooks
         .read_range(&session_id, &request.sheet_id, &request.range)
