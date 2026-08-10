@@ -96,8 +96,8 @@ function officeDescriptor(file: OfficeFile | null, workbook: WorkbookFile): Offi
       id: file.id,
       name: file.name,
       mimeType: file.mimeType || XLSX_MIME,
-      size: file.size,
-      version: file.version,
+      ...(file.size === undefined ? {} : { size: file.size }),
+      ...(file.version === undefined ? {} : { version: file.version }),
     }
   }
   return {
@@ -296,7 +296,7 @@ export function createSheetsWebDesktopController(
       saving = true
       const previousSessionId = activeWorkbook.sessionId
       try {
-        const saved = await saveWorkbookRequestViaEngine(request, activeWorkbook.name)
+        const saved = await saveWorkbookRequestViaEngine(request, activeWorkbook, activeWorkbook.name)
         const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook)
         const result = await host.saveDocument({
           file: descriptor,
@@ -363,8 +363,6 @@ export function createSheetsWebDesktopController(
     },
     onCloseSaveRequest: () => noopUnsubscribe(),
     reportCloseSaveResult: () => undefined,
-    // Web blank workbooks are real Rust-backed XLSX sessions, so the renderer
-    // opens them through the same lazy-workbook path as uploaded files.
     consumeNewBlankWorkbook: async () => false,
     hasQueuedWorkbook: async () => pendingWorkbook !== null,
 
