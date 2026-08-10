@@ -19,6 +19,24 @@ export interface XlsxEngineSession {
   source: 'blank' | 'uploaded'
 }
 
+export interface XlsxArchiveEntry {
+  name: string
+  crc32: number
+  compressedSize: number
+  uncompressedSize: number
+}
+
+export interface XlsxArchiveMutation {
+  replacements: ReadonlyMap<string, string | Uint8Array>
+  removals: readonly string[]
+  additions: ReadonlyMap<string, string | Uint8Array>
+}
+
+export interface SavedXlsxWorkbook {
+  file: WorkbookFile
+  bytes: ArrayBuffer
+}
+
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
@@ -29,12 +47,48 @@ async function readJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T
 }
 
+async function assertOk(response: Response): Promise<Response> {
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(
+      `XLSX engine request failed (${response.status})${detail ? `: ${detail}` : ''}`,
+    )
+  }
+  return response
+}
+
 function sessionHeaders(sessionId: string): HeadersInit {
   return {
     Accept: 'application/json',
     'Content-Type': 'application/json',
     'X-Xlsx-Session': sessionId,
   }
+}
+
+function bytesToBase64(value: string | Uint8Array): string {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return btoa(binary)
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
+}
+
+function archiveContent(items: ReadonlyMap<string, string | Uint8Array>) {
+  return [...items].map(([name, content]) => ({
+    name,
+    contentBase64: bytesToBase64(content),
+  }))
 }
 
 export async function getXlsxEngineHealth(): Promise<XlsxEngineHealth> {
@@ -56,6 +110,17 @@ export async function createBlankXlsxSession(): Promise<XlsxEngineSession> {
   return readJson<XlsxEngineSession>(response)
 }
 
+export async function createBlankXlsxWorkbook(name = 'Untitled.xlsx'): Promise<WorkbookFile> {
+  const response = await fetch(
+    `${ENGINE_BASE}/v1/workbooks/blank?name=${encodeURIComponent(name)}`,
+    {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    },
+  )
+  return workbookFileSchema.parse(await readJson<unknown>(response))
+}
+
 export async function openXlsxWorkbookBytes(name: string, bytes: ArrayBuffer): Promise<WorkbookFile> {
   const response = await fetch(
     `${ENGINE_BASE}/v1/workbooks?name=${encodeURIComponent(name || 'workbook.xlsx')}`,
@@ -75,6 +140,16 @@ export async function openXlsxWorkbook(file: File): Promise<WorkbookFile> {
   return openXlsxWorkbookBytes(file.name, await file.arrayBuffer())
 }
 
+export async function getXlsxWorkbookMetadata(sessionId: string): Promise<WorkbookFile> {
+  const response = await fetch(`${ENGINE_BASE}/v1/sessions/${encodeURIComponent(sessionId)}`, {
+    headers: {
+      Accept: 'application/json',
+      'X-Xlsx-Session': sessionId,
+    },
+  })
+  return workbookFileSchema.parse(await readJson<unknown>(response))
+}
+
 export async function readXlsxWorkbookRange(
   request: WorkbookRangeRequest,
 ): Promise<WorkbookRangeResult> {
@@ -90,6 +165,82 @@ export async function readXlsxWorkbookRange(
     },
   )
   return workbookRangeResultSchema.parse(await readJson<unknown>(response))
+}
+
+export async function getXlsxArchiveManifest(sessionId: string): Promise<XlsxArchiveEntry[]> {
+  const response = await fetch(
+    `${ENGINE_BASE}/v1/sessions/${encodeURIComponent(sessionId)}/archive/manifest`,
+    {
+      headers: {
+        Accept: 'application/json',
+        'X-Xlsx-Session': sessionId,
+      },
+    },
+  )
+  const body = await readJson<{ entries: XlsxArchiveEntry[] }>(response)
+  return body.entries
+}
+
+export async function readXlsxArchiveEntries(
+  sessionId: string,
+  entries: readonly string[],
+): Promise<Map<string, Uint8Array>> {
+  const response = await fetch(
+    `${ENGINE_BASE}/v1/sessions/${encodeURIComponent(sessionId)}/archive/read`,
+    {
+      method: 'POST',
+      headers: sessionHeaders(sessionId),
+      body: JSON.stringify({ entries }),
+    },
+  )
+  const body = await readJson<{
+    entries: { name: string; contentBase64: string }[]
+  }>(response)
+  return new Map(body.entries.map((entry) => [entry.name, base64ToBytes(entry.contentBase64)]))
+}
+
+export async function scanXlsxArchiveEntries(
+  sessionId: string,
+  entries: readonly string[],
+  needle: string,
+): Promise<string[]> {
+  const response = await fetch(
+    `${ENGINE_BASE}/v1/sessions/${encodeURIComponent(sessionId)}/archive/scan`,
+    {
+      method: 'POST',
+      headers: sessionHeaders(sessionId),
+      body: JSON.stringify({ entries, needle }),
+    },
+  )
+  const body = await readJson<{ matches: string[] }>(response)
+  return body.matches
+}
+
+export async function saveXlsxArchiveMutation(
+  sessionId: string,
+  name: string,
+  mutation: XlsxArchiveMutation,
+): Promise<SavedXlsxWorkbook> {
+  const response = await assertOk(
+    await fetch(
+      `${ENGINE_BASE}/v1/sessions/${encodeURIComponent(sessionId)}/archive/save`,
+      {
+        method: 'POST',
+        headers: sessionHeaders(sessionId),
+        body: JSON.stringify({
+          name,
+          replacements: archiveContent(mutation.replacements),
+          removals: mutation.removals,
+          additions: archiveContent(mutation.additions),
+        }),
+      },
+    ),
+  )
+  const savedSessionId = response.headers.get('x-xlsx-session')
+  if (!savedSessionId) throw new Error('XLSX engine save response did not include a session id.')
+  const bytes = await response.arrayBuffer()
+  const file = await getXlsxWorkbookMetadata(savedSessionId)
+  return { file, bytes }
 }
 
 export async function deleteXlsxSession(sessionId: string): Promise<void> {
