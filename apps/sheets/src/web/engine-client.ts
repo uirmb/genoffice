@@ -1,3 +1,11 @@
+import {
+  workbookFileSchema,
+  workbookRangeResultSchema,
+  type WorkbookFile,
+  type WorkbookRangeRequest,
+  type WorkbookRangeResult,
+} from '../shared/desktop-api'
+
 const ENGINE_BASE = '/xlsx-engine'
 
 export interface XlsxEngineHealth {
@@ -21,6 +29,14 @@ async function readJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T
 }
 
+function sessionHeaders(sessionId: string): HeadersInit {
+  return {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    'X-Xlsx-Session': sessionId,
+  }
+}
+
 export async function getXlsxEngineHealth(): Promise<XlsxEngineHealth> {
   const response = await fetch(`${ENGINE_BASE}/health`, {
     headers: { Accept: 'application/json' },
@@ -38,6 +54,38 @@ export async function createBlankXlsxSession(): Promise<XlsxEngineSession> {
     body: JSON.stringify({ source: 'blank' }),
   })
   return readJson<XlsxEngineSession>(response)
+}
+
+export async function openXlsxWorkbook(file: File): Promise<WorkbookFile> {
+  const response = await fetch(
+    `${ENGINE_BASE}/v1/workbooks?name=${encodeURIComponent(file.name || 'workbook.xlsx')}`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      },
+      body: await file.arrayBuffer(),
+    },
+  )
+  return workbookFileSchema.parse(await readJson<unknown>(response))
+}
+
+export async function readXlsxWorkbookRange(
+  request: WorkbookRangeRequest,
+): Promise<WorkbookRangeResult> {
+  const response = await fetch(
+    `${ENGINE_BASE}/v1/sessions/${encodeURIComponent(request.sessionId)}/ranges`,
+    {
+      method: 'POST',
+      headers: sessionHeaders(request.sessionId),
+      body: JSON.stringify({
+        sheetId: request.sheetId,
+        range: request.range,
+      }),
+    },
+  )
+  return workbookRangeResultSchema.parse(await readJson<unknown>(response))
 }
 
 export async function deleteXlsxSession(sessionId: string): Promise<void> {
