@@ -148,6 +148,46 @@ describe('Slides Web host adapter', () => {
     controller.destroy()
   })
 
+  it('correlates the parent window close request through the guarded Slides lifecycle', async () => {
+    const { controller, requestClose, send, emit } = createHarness()
+    const requested = vi.fn()
+    const off = controller.slidesApi.onHostCloseRequest?.(requested)
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:request-close',
+      requestId: 'window-close-1',
+      payload: { reason: 'window-close' },
+    })
+    expect(requested).toHaveBeenCalledTimes(1)
+
+    await controller.slidesApi.requestHostClose?.()
+    expect(send).toHaveBeenCalledWith({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:close-request',
+      requestId: 'window-close-1',
+      payload: { reason: 'window-close' },
+    })
+    expect(requestClose).not.toHaveBeenCalled()
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:request-close',
+      requestId: 'window-close-2',
+      payload: { reason: 'window-close' },
+    })
+    controller.slidesApi.cancelHostCloseRequest?.()
+    expect(send).toHaveBeenCalledWith({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:close-cancelled',
+      requestId: 'window-close-2',
+      payload: { reason: 'user-cancelled' },
+    })
+
+    off?.()
+    controller.destroy()
+  })
+
   it('delegates history, PPTX export, and close to the Host without replacing the current file identity', async () => {
     const { controller, saveHistoryVersion, exportDocument, requestClose, emit } = createHarness()
     const pendingOpen = controller.slidesApi.consumePendingOpen(960)

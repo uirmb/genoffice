@@ -1277,6 +1277,10 @@ export interface SlidesApi {
   saveHistoryVersion?: () => Promise<{ ok: boolean; error?: string }>
   exportPptx?: () => Promise<{ ok: boolean; error?: string }>
   requestHostClose?: () => Promise<void>
+  /** The parent window's × button asked this editor to run the same guarded exit flow. */
+  onHostCloseRequest?: (handler: () => void) => () => void
+  /** The guarded exit dialog was cancelled; release the parent's pending close state. */
+  cancelHostCloseRequest?: () => void
   /** The close guard chose "Save": the main process asks the renderer to run the full save flow */
   onCloseSaveRequest: (handler: () => void) => () => void
   reportCloseSaveResult: (ok: boolean) => void

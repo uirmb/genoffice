@@ -745,6 +745,17 @@ export function App() {
     setExitConfirmOpen(true)
   }, [dirty])
 
+  useEffect(() => {
+    return window.slidesApi.onHostCloseRequest?.(() => {
+      void requestExit()
+    })
+  }, [requestExit])
+
+  const cancelExit = useCallback(() => {
+    setExitConfirmOpen(false)
+    window.slidesApi.cancelHostCloseRequest?.()
+  }, [])
+
   const saveAndExit = useCallback(async () => {
     setExitSaving(true)
     try {
@@ -3404,12 +3415,12 @@ export function App() {
       )}
 
       {exitConfirmOpen && (
-        <div className="modal-backdrop" onClick={() => !exitSaving && setExitConfirmOpen(false)}>
+        <div className="modal-backdrop" onClick={() => !exitSaving && cancelExit()}>
           <div className="modal" onClick={(event) => event.stopPropagation()}>
             <h2>{webLabels.exitTitle}</h2>
             <p>{webLabels.exitMessage}</p>
             <div className="modal-actions">
-              <button disabled={exitSaving} onClick={() => setExitConfirmOpen(false)}>
+              <button disabled={exitSaving} onClick={cancelExit}>
                 {webLabels.cancel}
               </button>
               <button

@@ -196,12 +196,14 @@ export function createSlidesWebController(
   let initialOpenResolve: ((result: OpenResult | null) => void) | null = null
   let lastFitWidthPx = 960
   const pendingSaveRequestIds = new Set<string>()
+  let pendingHostCloseRequest: { requestId: string; reason: 'window-close' } | null = null
 
   const languageHandlers = new Set<(lang: Lang) => void>()
   const modeHandlers = new Set<(mode: 'view' | 'edit') => void>()
   const menuHandlers = new Set<(command: MenuCommand) => void>()
   const openedHandlers = new Set<(result: OpenResult) => void>()
   const renamedHandlers = new Set<(path: string) => void>()
+  const hostCloseRequestHandlers = new Set<() => void>()
 
   const setDirtyState = (next: boolean) => {
     if (dirty === next) return
@@ -959,7 +961,36 @@ export function createSlidesWebController(
     saveAs: (defaultName: string) => persist('saveAs', defaultName),
     saveHistoryVersion,
     exportPptx,
-    requestHostClose: async () => host.requestClose?.(),
+    requestHostClose: async () => {
+      if (bridge && pendingHostCloseRequest) {
+        const request = pendingHostCloseRequest
+        pendingHostCloseRequest = null
+        bridge.send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:close-request',
+          requestId: request.requestId,
+          payload: { reason: request.reason },
+        })
+        return
+      }
+      await host.requestClose?.()
+    },
+    onHostCloseRequest: (handler: () => void) => {
+      hostCloseRequestHandlers.add(handler)
+      if (pendingHostCloseRequest) queueMicrotask(handler)
+      return () => hostCloseRequestHandlers.delete(handler)
+    },
+    cancelHostCloseRequest: () => {
+      if (!bridge || !pendingHostCloseRequest) return
+      const request = pendingHostCloseRequest
+      pendingHostCloseRequest = null
+      bridge.send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:close-cancelled',
+        requestId: request.requestId,
+        payload: { reason: 'user-cancelled' },
+      })
+    },
     isDirty: async () => dirty,
     getRecentFiles: async () => [],
     onMenuCommand: (handler: (command: MenuCommand) => void) => {
@@ -1079,6 +1110,15 @@ export function createSlidesWebController(
       case 'office:set-mode':
         setMode(message.payload.mode)
         break
+      case 'office:request-close': {
+        if (pendingHostCloseRequest) break
+        pendingHostCloseRequest = {
+          requestId: message.requestId,
+          reason: message.payload.reason,
+        }
+        for (const handler of hostCloseRequestHandlers) handler()
+        break
+      }
       case 'office:save': {
         pendingSaveRequestIds.add(message.requestId)
         for (const handler of menuHandlers) handler('save')
@@ -1121,6 +1161,8 @@ export function createSlidesWebController(
       menuHandlers.clear()
       openedHandlers.clear()
       renamedHandlers.clear()
+      hostCloseRequestHandlers.clear()
+      pendingHostCloseRequest = null
       pendingSaveRequestIds.clear()
       session = null
       currentFile = null

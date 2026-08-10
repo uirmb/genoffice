@@ -75,6 +75,12 @@ export type HostToEditorMessage =
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:request-close'
+      requestId: string
+      payload: { reason: 'window-close' }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:query-state'
       requestId: string
     }
@@ -178,7 +184,14 @@ export type EditorToHostMessage =
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:close-request'
-      payload: { reason: 'file-menu' }
+      requestId?: string
+      payload: { reason: 'file-menu' | 'window-close' }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:close-cancelled'
+      requestId: string
+      payload: { reason: 'user-cancelled' }
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
