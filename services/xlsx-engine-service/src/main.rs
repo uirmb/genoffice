@@ -11,10 +11,11 @@ use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, HeaderValue, StatusCode},
     response::Response,
-    routing::{delete, get, post},
+    routing::{get, post},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use ironcalc::{base::Model, export::save_to_xlsx};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -183,8 +184,9 @@ async fn create_session(
         _ => SessionSource::Blank,
     };
 
-    // Keep identifiers opaque to browser clients. A future sharded store can
-    // change placement without changing the Sheets Web or UC Excel contract.
+    // This lightweight endpoint only reserves an opaque application session.
+    // Real workbook editing sessions are created by /v1/workbooks or
+    // /v1/workbooks/blank and are backed by xlsx-sidecar WorkbookSessions.
     let session_id = format!("xls_{}", Uuid::new_v4().simple());
     let session = WorkbookSession {
         session_id: session_id.clone(),
@@ -204,6 +206,23 @@ async fn create_session(
     )
 }
 
+async fn create_blank_workbook(
+    State(state): State<AppState>,
+    Query(query): Query<OpenWorkbookQuery>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let name = safe_workbook_name(query.name.as_deref().unwrap_or("Untitled.xlsx"));
+    let directory = workbook_directory();
+    fs::create_dir_all(&directory).map_err(internal_error)?;
+    let path = directory.join(&name);
+
+    let mut model = Model::new_empty("Untitled", "en", "UTC", "en")
+        .map_err(internal_error)?;
+    model.evaluate();
+    save_to_xlsx(&model, path.to_string_lossy().as_ref()).map_err(internal_error)?;
+
+    register_workbook_path(&state, path, name).await
+}
+
 async fn open_workbook(
     State(state): State<AppState>,
     Query(query): Query<OpenWorkbookQuery>,
@@ -214,13 +233,23 @@ async fn open_workbook(
     fs::create_dir_all(&directory).map_err(internal_error)?;
     let path = directory.join(&name);
     fs::write(&path, &bytes).map_err(internal_error)?;
+    register_workbook_path(&state, path, name).await
+}
 
+async fn register_workbook_path(
+    state: &AppState,
+    path: PathBuf,
+    name: String,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let bytes = fs::read(&path).map_err(internal_error)?;
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let mut engine = state.engine.lock().await;
     let metadata = match engine.workbooks.open(&path) {
         Ok(metadata) => metadata,
         Err(error) => {
-            let _ = fs::remove_dir_all(&directory);
+            if let Some(parent) = path.parent() {
+                let _ = fs::remove_dir_all(parent);
+            }
             return Err((StatusCode::UNPROCESSABLE_ENTITY, error.to_string()));
         }
     };
@@ -228,7 +257,6 @@ async fn open_workbook(
     let value = web_metadata_value(metadata, &name, &sha256)?;
     engine.files.insert(session_id.clone(), path);
     engine.metadata.insert(session_id, value.clone());
-
     Ok((StatusCode::CREATED, Json(value)))
 }
 
@@ -359,10 +387,6 @@ async fn archive_save_for_session(
         "x-xlsx-session",
         HeaderValue::from_str(&saved_session_id).map_err(internal_error)?,
     );
-    response.headers_mut().insert(
-        "x-xlsx-name",
-        HeaderValue::from_str(&name).map_err(internal_error)?,
-    );
     Ok(response)
 }
 
@@ -448,9 +472,6 @@ fn web_metadata_value<T: Serialize>(metadata: T, name: &str, sha256: &str) -> Re
     let object = value
         .as_object_mut()
         .ok_or_else(|| internal_error("Workbook metadata was not an object."))?;
-    // Electron uses the local absolute path for CELL("filename"). In Web mode
-    // this would reveal the server's temporary filesystem, so the browser only
-    // receives Host-facing identity and workbook metadata.
     object.remove("path");
     object.insert("name".into(), Value::String(name.to_string()));
     object.insert("sha256".into(), Value::String(sha256.to_string()));
@@ -495,6 +516,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", get(health))
         .route("/v1/sessions", post(create_session))
         .route("/v1/workbooks", post(open_workbook))
+        .route("/v1/workbooks/blank", post(create_blank_workbook))
         .route("/v1/sessions/{session_id}", get(get_session_metadata).delete(delete_session))
         .route("/v1/sessions/{session_id}/ranges", post(read_range))
         .route(
@@ -513,8 +535,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/v1/sessions/{session_id}/archive/save",
             post(archive_save_for_session),
         )
-        // Do not impose an application-specific XLSX body limit here. Deployment
-        // policy belongs to the reverse proxy/operator, not the engine contract.
         .layer(DefaultBodyLimit::disable())
         .with_state(state);
 
