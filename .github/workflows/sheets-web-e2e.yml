@@ -58,6 +58,14 @@ jobs:
           SESSION_ID=$(node -e "const v=JSON.parse(process.argv[1]); if(!v.sessionId) process.exit(1); process.stdout.write(v.sessionId)" "$SESSION_JSON")
           curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
 
+      - name: Verify real blank XLSX workbook
+        run: |
+          BLANK=$(curl --fail --silent -X POST \
+            'http://127.0.0.1:7301/v1/workbooks/blank?name=Untitled.xlsx')
+          echo "$BLANK" >/tmp/blank-meta.json
+          SESSION_ID=$(node -e "const v=require('/tmp/blank-meta.json'); if(!v.sessionId||!v.sheets?.length) process.exit(1); process.stdout.write(v.sessionId)")
+          curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
+
       - name: Verify real XLSX open and lazy range
         run: |
           python3 - <<'PY'
@@ -120,10 +128,64 @@ jobs:
             "http://127.0.0.1:7301/v1/sessions/$SESSION_ID/ranges")
 
           node -e "const v=JSON.parse(process.argv[1]); const a=v.cells?.find(c=>c.row===0&&c.column===0); const b=v.cells?.find(c=>c.row===0&&c.column===1); if(a?.value!=='Web Excel E2E'||b?.value!==42) { console.error(v); process.exit(1) }" "$RANGE"
+          echo "$SESSION_ID" >/tmp/source-session-id
+          echo "$SHEET_ID" >/tmp/source-sheet-id
+
+      - name: Verify XLSX archive save round-trip
+        run: |
+          SESSION_ID=$(cat /tmp/source-session-id)
+          SHEET_ID=$(cat /tmp/source-sheet-id)
+          READ=$(curl --fail --silent \
+            -H 'content-type: application/json' \
+            -H "X-Xlsx-Session: $SESSION_ID" \
+            -d '{"entries":["xl/worksheets/sheet1.xml"]}' \
+            "http://127.0.0.1:7301/v1/sessions/$SESSION_ID/archive/read")
+          node - <<'NODE' "$READ"
+          const input = JSON.parse(process.argv[2])
+          const entry = input.entries.find((item) => item.name === 'xl/worksheets/sheet1.xml')
+          if (!entry) process.exit(1)
+          const xml = Buffer.from(entry.contentBase64, 'base64').toString('utf8')
+          const saved = xml.replace('Web Excel E2E', 'Web Excel Saved')
+          const payload = {
+            name: 'saved.xlsx',
+            replacements: [{
+              name: 'xl/worksheets/sheet1.xml',
+              contentBase64: Buffer.from(saved).toString('base64'),
+            }],
+            removals: [],
+            additions: [],
+          }
+          require('fs').writeFileSync('/tmp/save-payload.json', JSON.stringify(payload))
+          NODE
+
+          curl --fail --silent \
+            -D /tmp/save-headers.txt \
+            -o /tmp/saved.xlsx \
+            -H 'content-type: application/json' \
+            -H "X-Xlsx-Session: $SESSION_ID" \
+            --data-binary @/tmp/save-payload.json \
+            "http://127.0.0.1:7301/v1/sessions/$SESSION_ID/archive/save"
+
+          SAVED_SESSION=$(awk 'BEGIN{IGNORECASE=1} /^x-xlsx-session:/ {gsub("\r", "", $2); print $2}' /tmp/save-headers.txt)
+          test -n "$SAVED_SESSION"
+          SAVED_META=$(curl --fail --silent \
+            -H "X-Xlsx-Session: $SAVED_SESSION" \
+            "http://127.0.0.1:7301/v1/sessions/$SAVED_SESSION")
+          SAVED_SHEET=$(node -e "const v=JSON.parse(process.argv[1]); if(!v.sheets?.[0]?.id) process.exit(1); process.stdout.write(v.sheets[0].id)" "$SAVED_META")
+          SAVED_RANGE=$(curl --fail --silent \
+            -H 'content-type: application/json' \
+            -H "X-Xlsx-Session: $SAVED_SESSION" \
+            -d "{\"sheetId\":\"$SAVED_SHEET\",\"range\":{\"startRow\":0,\"endRow\":0,\"startColumn\":0,\"endColumn\":1}}" \
+            "http://127.0.0.1:7301/v1/sessions/$SAVED_SESSION/ranges")
+          node -e "const v=JSON.parse(process.argv[1]); const a=v.cells?.find(c=>c.row===0&&c.column===0); if(a?.value!=='Web Excel Saved') { console.error(v); process.exit(1) }" "$SAVED_RANGE"
+          curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SAVED_SESSION" >/dev/null
           curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
 
       - name: Build Sheets Web
         run: npm run build:web:sheets
+
+      - name: Build XLSX Host Demo
+        run: npm run build:web-xlsx-host
 
       - name: Upload logs on failure
         if: failure()
