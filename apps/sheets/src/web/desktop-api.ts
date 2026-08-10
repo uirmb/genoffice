@@ -77,7 +77,7 @@ export function createSheetsWebDesktopApi(): DesktopApi {
 
     // AI is platform-disabled in the Web Office product policy. Keep a valid
     // bridge surface so the existing renderer does not need Web-only forks.
-    getAiSettings: async () => ({ provider: '', providers: {} }) as AiSettings,
+    getAiSettings: async () => ({ provider: '', providers: {} }) as unknown as AiSettings,
     setAiSettings: async () => undefined,
     aiChat: async (): Promise<AiChatResponse> => unavailable('aiChat'),
     aiStream: async () => unavailable('aiStream'),
