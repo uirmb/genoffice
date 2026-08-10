@@ -21,6 +21,7 @@ import type {
   WorkbookSaveRequest,
   WorkbookSaveResult,
 } from '../shared/desktop-api'
+import { deleteXlsxSession, openXlsxWorkbook, readXlsxWorkbookRange } from './engine-client'
 
 function unavailable(name: string): never {
   throw new Error(`${name} is not available in Sheets Web yet.`)
@@ -30,17 +31,57 @@ function noopUnsubscribe(): () => void {
   return () => undefined
 }
 
+function pickLocalXlsx(): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    input.style.display = 'none'
+    document.body.append(input)
+
+    let settled = false
+    const finish = (file: File | null) => {
+      if (settled) return
+      settled = true
+      input.remove()
+      resolve(file)
+    }
+
+    input.addEventListener(
+      'change',
+      () => {
+        const file = input.files?.[0] ?? null
+        finish(file && /\.xlsx$/i.test(file.name) ? file : null)
+      },
+      { once: true },
+    )
+    window.addEventListener(
+      'focus',
+      () => {
+        window.setTimeout(() => {
+          if (!input.files?.length) finish(null)
+        }, 250)
+      },
+      { once: true },
+    )
+    input.click()
+  })
+}
+
 export function createSheetsWebDesktopApi(): DesktopApi {
   return {
     getLanguage: async () => 'zh',
     onLanguageChanged: () => noopUnsubscribe(),
 
-    // Workbook transport is intentionally isolated behind DesktopApi so the
-    // existing React + Univer renderer can run unchanged. These methods are
-    // replaced incrementally with xlsx-engine-service calls in the next slice.
-    selectWorkbook: async (): Promise<WorkbookFile | null> => null,
-    readWorkbookRange: async (_request: WorkbookRangeRequest): Promise<WorkbookRangeResult> =>
-      unavailable('readWorkbookRange'),
+    // Standalone Web uses a browser picker only as a development fallback.
+    // Embedded UC Excel will replace the file source with office:pick-file while
+    // keeping the same Rust workbook transport and renderer contract.
+    selectWorkbook: async (): Promise<WorkbookFile | null> => {
+      const file = await pickLocalXlsx()
+      return file ? openXlsxWorkbook(file) : null
+    },
+    readWorkbookRange: async (request: WorkbookRangeRequest): Promise<WorkbookRangeResult> =>
+      readXlsxWorkbookRange(request),
     readWorkbookFormulas: async (
       _request: WorkbookFormulaCellsRequest,
     ): Promise<WorkbookFormulaCellsResult> => unavailable('readWorkbookFormulas'),
@@ -62,7 +103,7 @@ export function createSheetsWebDesktopApi(): DesktopApi {
     writeWorkbookRecovery: async () => ({ ok: true }),
     autoRenameWorkbook: async () => ({ renamed: false }),
     exportPdf: async (): Promise<WorkbookExportPdfResult> => ({ canceled: true }),
-    closeWorkbook: async () => undefined,
+    closeWorkbook: deleteXlsxSession,
     openExternal: async (url: string) => {
       if (/^https?:\/\//.test(url)) window.open(url, '_blank', 'noopener,noreferrer')
     },
