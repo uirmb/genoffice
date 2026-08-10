@@ -56,19 +56,23 @@ export async function createBlankXlsxSession(): Promise<XlsxEngineSession> {
   return readJson<XlsxEngineSession>(response)
 }
 
-export async function openXlsxWorkbook(file: File): Promise<WorkbookFile> {
+export async function openXlsxWorkbookBytes(name: string, bytes: ArrayBuffer): Promise<WorkbookFile> {
   const response = await fetch(
-    `${ENGINE_BASE}/v1/workbooks?name=${encodeURIComponent(file.name || 'workbook.xlsx')}`,
+    `${ENGINE_BASE}/v1/workbooks?name=${encodeURIComponent(name || 'workbook.xlsx')}`,
     {
       method: 'POST',
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       },
-      body: await file.arrayBuffer(),
+      body: bytes,
     },
   )
   return workbookFileSchema.parse(await readJson<unknown>(response))
+}
+
+export async function openXlsxWorkbook(file: File): Promise<WorkbookFile> {
+  return openXlsxWorkbookBytes(file.name, await file.arrayBuffer())
 }
 
 export async function readXlsxWorkbookRange(
