@@ -535,6 +535,13 @@ export function save(ctx: FileActionContext, saveAs: boolean, auto = false): Pro
 async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean): Promise<boolean> {
   const { doc, editor } = ctx
   if (!doc || !editor) return false
+  // Electron can silently land an untitled document in its default folder for
+  // crash recovery. A browser cannot do that without turning an internal
+  // recovery/autosave tick into a visible download. Web runtimes explicitly
+  // opt out; manual Save/Save As (auto=false) remains unchanged.
+  if (auto && !doc.filePath && window.desktop.canAutoPersistPathlessDocument?.() === false) {
+    return false
+  }
   ctx.saveInFlightRef.current = true
   ctx.saveIncompleteRef.current = false
   try {

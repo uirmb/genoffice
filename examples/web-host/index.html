@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GenOffice Web Host Demo</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="toolbar">
+        <div class="brand">
+          <strong>GenOffice Word Web</strong>
+          <span>iframe Host Demo</span>
+        </div>
+        <div class="actions">
+          <label class="button primary" for="docx-picker">打开 DOCX</label>
+          <input id="docx-picker" type="file" accept=".docx" hidden />
+          <button id="save-button" type="button" disabled>保存</button>
+          <button id="download-button" type="button" disabled>下载当前 DOCX</button>
+          <button id="mode-button" type="button" disabled>切换为只读</button>
+        </div>
+        <div class="status">
+          <span id="file-name">未选择文档</span>
+          <span id="dirty-state" class="pill">clean</span>
+          <span id="host-state" class="pill">loading</span>
+        </div>
+      </header>
+
+      <section class="editor-shell">
+        <iframe id="office-frame" title="GenOffice Docs Web"></iframe>
+      </section>
+    </main>
+
+    <div id="picker-dialog" class="picker-backdrop" hidden>
+      <div class="picker-card" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+        <h2 id="picker-title">系统文件选择</h2>
+        <p id="picker-description">编辑器正在请求选择一个文件。</p>
+        <div class="picker-actions">
+          <label class="button primary" for="asset-picker">选择本地文件模拟系统文件</label>
+          <input id="asset-picker" type="file" hidden />
+          <button id="picker-cancel" type="button">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

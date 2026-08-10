@@ -94,6 +94,7 @@ import {
   type ContextMenuState,
 } from './components/ContextMenu'
 import { PromptModal } from './components/PromptModal'
+import { ExitConfirmModal } from './components/ExitConfirmModal'
 import { t, useI18n } from './i18n/locale'
 import {
   getActiveSubEditor,
@@ -127,6 +128,7 @@ import {
   type PendingNumbering,
 } from './doc-state'
 import {
+  buildDocBytes,
   exportPdf as exportPdfImpl,
   loadFile as loadFileImpl,
   newFile as newFileImpl,
@@ -438,6 +440,7 @@ export function App() {
   const [showNav, setShowNav] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('print')
   const [readMode, setReadMode] = useState(false)
+  const [hostEditorMode, setHostEditorMode] = useState<'view' | 'edit'>('edit')
   const [showGrid, setShowGrid] = useState(false)
   const [splitView, setSplitView] = useState(false)
   const [showPagePreview, setShowPagePreview] = useState(false)
@@ -610,6 +613,24 @@ export function App() {
     localStorage.setItem('aidocs.autoSave', autoSave ? '1' : '0')
   }, [autoSave])
 
+  // Web/iframe hosts can force a true view-only mode without changing desktop behavior.
+  useEffect(() => {
+    let active = true
+    const initialMode = window.desktop.getHostEditorMode?.()
+    if (initialMode) {
+      void initialMode.then((nextMode) => {
+        if (active) setHostEditorMode(nextMode)
+      })
+    }
+    const offMode = window.desktop.onHostEditorModeChanged?.((nextMode) => {
+      setHostEditorMode(nextMode)
+    })
+    return () => {
+      active = false
+      offMode?.()
+    }
+  }, [])
+
   // Pinch-to-zoom: Chromium delivers trackpad pinch as a wheel event
   // with ctrlKey set. Also support ⌘+scroll. Must be non-passive to preventDefault.
   useEffect(() => {
@@ -625,17 +646,17 @@ export function App() {
 
   const isProtected = !!protection?.enforced && protection.edit === 'readOnly'
 
-  // Read Mode / Restrict Editing: the document becomes read-only; Esc leaves Read Mode
+  // Read Mode / Restrict Editing / parent view mode: the document becomes read-only.
   useEffect(() => {
     if (!editor) return
-    editor.setEditable(!readMode && !isProtected)
+    editor.setEditable(hostEditorMode === 'edit' && !readMode && !isProtected)
     if (!readMode) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setReadMode(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [editor, readMode, isProtected])
+  }, [editor, readMode, isProtected, hostEditorMode])
 
   // Track Changes: the recorder plugin reads its toggle from extension storage
   useEffect(() => {
@@ -888,6 +909,68 @@ export function App() {
     (saveAs: boolean, auto = false) => saveImpl(fileCtxRef.current, saveAs, auto),
     [],
   )
+
+  const [showExitConfirm, setShowExitConfirm] = useState(false)
+  const [exitSaving, setExitSaving] = useState(false)
+
+  const currentDocBuffer = useCallback(async (): Promise<ArrayBuffer | null> => {
+    const bytes = await buildDocBytes(fileCtxRef.current)
+    if (!bytes) return null
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  }, [])
+
+  const saveHistoryVersion = useCallback(async () => {
+    const current = fileCtxRef.current.doc
+    if (!current?.filePath || !window.desktop.saveHistoryVersion) return
+    const buffer = await currentDocBuffer()
+    if (!buffer) return
+    await window.desktop.saveHistoryVersion(current.fileName, buffer)
+  }, [currentDocBuffer])
+
+  const exportDocx = useCallback(async () => {
+    const current = fileCtxRef.current.doc
+    if (!current || !window.desktop.exportDocx) return
+    const buffer = await currentDocBuffer()
+    if (!buffer) return
+    await window.desktop.exportDocx(current.fileName, buffer)
+  }, [currentDocBuffer])
+
+  const requestExit = useCallback(() => {
+    if (!window.desktop.requestHostClose) return
+    if (isDocDirty(fileCtxRef.current)) {
+      setShowExitConfirm(true)
+      return
+    }
+    void window.desktop.requestHostClose()
+  }, [])
+
+  useEffect(() => {
+    return window.desktop.onHostCloseRequest?.(requestExit)
+  }, [requestExit])
+
+  const cancelExit = useCallback(() => {
+    setShowExitConfirm(false)
+    window.desktop.cancelHostCloseRequest?.()
+  }, [])
+
+  const discardAndExit = useCallback(() => {
+    setShowExitConfirm(false)
+    void window.desktop.requestHostClose?.()
+  }, [])
+
+  const saveAndExit = useCallback(async () => {
+    if (exitSaving) return
+    setExitSaving(true)
+    try {
+      const ok = await save(false)
+      if (ok && !isDocDirty(fileCtxRef.current)) {
+        setShowExitConfirm(false)
+        await window.desktop.requestHostClose?.()
+      }
+    } finally {
+      setExitSaving(false)
+    }
+  }, [exitSaving, save])
 
   // inserting a section break needs one save for the new section to take effect; the
   // flag is consumed in the render after state commit, guaranteeing the save closure
@@ -2078,6 +2161,10 @@ export function App() {
   const anyDirtyRef = useRef(false)
   const hasUnsavedChanges = isDocDirty(fileCtxRef.current)
   anyDirtyRef.current = hasUnsavedChanges
+  const hostDirty = !!doc && (hasUnsavedChanges || dirtyRef.current)
+  useEffect(() => {
+    window.desktop.reportDirtyChange?.(hostDirty)
+  }, [hostDirty])
 
   // close guard: the main process queries dirty state before closing a tab/window; choosing "Save" runs a full save and reports back
   useEffect(() => {
@@ -2617,52 +2704,59 @@ export function App() {
         <style>{`.editor-scroll .doc-page { column-count: ${colFlow.cols}; column-gap: ${colFlow.gapPx}px; column-fill: balance; }
 .editor-scroll .doc-page.measuring-columns { column-count: auto; width: ${colFlow.colWidthPx + twipsToPx(canvasSection?.marginLeft ?? section?.marginLeft ?? 0) + twipsToPx(canvasSection?.marginRight ?? section?.marginRight ?? 0)}px; }`}</style>
       )}
-      <Ribbon
-        quickActions={quickActions}
-        editor={editor}
-        formatState={formatState}
-        hasDoc={!!doc}
-        blocks={doc?.parsed.blocks ?? EMPTY_BLOCKS}
-        styles={ribbonStyles}
-        docDefaults={doc?.parsed.docDefaults}
-        showAi={showAi}
-        section={sections[activeSection]?.settings ?? section}
-        activeSection={sections.length > 1 ? activeSection : null}
-        pageColor={pageColor}
-        watermark={watermark}
-        themeFonts={themeFonts}
-        themeColors={themeColors}
-        inkTool={inkTool}
-        inkPen={inkPen}
-        inkHighlighter={inkHighlighter}
-        inkCount={inkAnnotations.length}
-        sources={sources}
-        zoom={Math.round(zoom)}
-        darkCanvas={darkCanvas}
-        tabRequest={ribbonTabRequest}
-        header={header}
-        footer={footer}
-        titlePg={titlePg}
-        evenOddHf={evenOddHf}
-        showMarks={showMarks}
-        showRuler={showRuler}
-        showNav={showNav}
-        commentCount={comments.length}
-        canComment={!editor.state.selection.empty}
-        trackChanges={trackChanges}
-        revisionDisplay={revisionDisplay}
-        revisionCount={revisionCount}
-        isProtected={isProtected}
-        filePath={doc?.filePath ?? null}
-        viewMode={viewMode}
-        readMode={readMode}
-        showGrid={showGrid}
-        splitView={splitView}
-        {...ribbonActions}
-      />
+      {hostEditorMode === 'edit' && (
+        <Ribbon
+          quickActions={quickActions}
+          editor={editor}
+          formatState={formatState}
+          hasDoc={!!doc}
+          blocks={doc?.parsed.blocks ?? EMPTY_BLOCKS}
+          styles={ribbonStyles}
+          docDefaults={doc?.parsed.docDefaults}
+          showAi={showAi}
+          section={sections[activeSection]?.settings ?? section}
+          activeSection={sections.length > 1 ? activeSection : null}
+          pageColor={pageColor}
+          watermark={watermark}
+          themeFonts={themeFonts}
+          themeColors={themeColors}
+          inkTool={inkTool}
+          inkPen={inkPen}
+          inkHighlighter={inkHighlighter}
+          inkCount={inkAnnotations.length}
+          sources={sources}
+          zoom={Math.round(zoom)}
+          darkCanvas={darkCanvas}
+          tabRequest={ribbonTabRequest}
+          header={header}
+          footer={footer}
+          titlePg={titlePg}
+          evenOddHf={evenOddHf}
+          showMarks={showMarks}
+          showRuler={showRuler}
+          showNav={showNav}
+          commentCount={comments.length}
+          canComment={!editor.state.selection.empty}
+          trackChanges={trackChanges}
+          revisionDisplay={revisionDisplay}
+          revisionCount={revisionCount}
+          isProtected={isProtected}
+          filePath={doc?.filePath ?? null}
+          viewMode={viewMode}
+          readMode={readMode}
+          showGrid={showGrid}
+          splitView={splitView}
+          onSaveHistoryVersion={
+            window.desktop.saveHistoryVersion ? () => void saveHistoryVersion() : undefined
+          }
+          onExportDocx={window.desktop.exportDocx ? () => void exportDocx() : undefined}
+          onExit={window.desktop.requestHostClose ? requestExit : undefined}
+          {...ribbonActions}
+        />
+      )}
 
       <div className="app-main">
-        {doc && (
+        {doc && hostEditorMode === 'edit' && (
           <div className={`ai-dock${showAi ? '' : ' collapsed'}`}>
             {/* always mounted: collapse must not drop state or in-flight runs */}
             <AiPanel
@@ -2692,7 +2786,7 @@ export function App() {
                   <div
                     className={docZoomClass}
                     onClick={onDocClick}
-                    onContextMenu={onDocContextMenu}
+                    onContextMenu={hostEditorMode === 'edit' ? onDocContextMenu : undefined}
                     style={docZoomStyle}
                   >
                     {showRuler && section && (
@@ -2963,6 +3057,15 @@ export function App() {
           </footer>
         </div>
       </div>
+
+      {showExitConfirm && (
+        <ExitConfirmModal
+          saving={exitSaving}
+          onSave={() => void saveAndExit()}
+          onDiscard={discardAndExit}
+          onCancel={cancelExit}
+        />
+      )}
 
       {showLinkModal && <LinkInsertModal editor={editor} onClose={() => setShowLinkModal(false)} />}
       {showEquationModal && editor && (

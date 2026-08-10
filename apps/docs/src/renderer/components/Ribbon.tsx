@@ -123,6 +123,9 @@ interface RibbonProps {
   onOpen: () => void
   onSave: () => void
   onSaveAs: () => void
+  onSaveHistoryVersion?: () => void
+  onExportDocx?: () => void
+  onExit?: () => void
   showAi: boolean
   onToggleAi: () => void
   section: SectionSettings | null
@@ -585,6 +588,9 @@ function RibbonInner({
   onOpen,
   onSave,
   onSaveAs,
+  onSaveHistoryVersion,
+  onExportDocx,
+  onExit,
   showAi,
   onToggleAi,
   section,
@@ -1369,6 +1375,7 @@ function RibbonInner({
             {dropdown === 'file' && (
               <div className="file-menu">
                 <button
+                  className="file-menu-open"
                   onClick={() => {
                     setDropdown(null)
                     onOpen()
@@ -1377,6 +1384,7 @@ function RibbonInner({
                   {t('ribbonOpen')} <span className="file-menu-key">Ctrl+O</span>
                 </button>
                 <button
+                  className="file-menu-save"
                   disabled={!hasDoc}
                   onClick={() => {
                     setDropdown(null)
@@ -1386,6 +1394,7 @@ function RibbonInner({
                   {t('ribbonSave')} <span className="file-menu-key">Ctrl+S</span>
                 </button>
                 <button
+                  className="file-menu-save-as"
                   disabled={!hasDoc}
                   onClick={() => {
                     setDropdown(null)
@@ -1394,6 +1403,41 @@ function RibbonInner({
                 >
                   {t('ribbonSaveAs')} <span className="file-menu-key">Ctrl+Shift+S</span>
                 </button>
+                {onSaveHistoryVersion && (
+                  <button
+                    className="file-menu-save-history"
+                    disabled={!hasDoc || !filePath}
+                    onClick={() => {
+                      setDropdown(null)
+                      onSaveHistoryVersion()
+                    }}
+                  >
+                    {t('ribbonSaveHistoryVersion')}
+                  </button>
+                )}
+                {onExportDocx && (
+                  <button
+                    className="file-menu-export-docx"
+                    disabled={!hasDoc}
+                    onClick={() => {
+                      setDropdown(null)
+                      onExportDocx()
+                    }}
+                  >
+                    {t('ribbonExportDocx')}
+                  </button>
+                )}
+                {onExit && (
+                  <button
+                    className="file-menu-exit"
+                    onClick={() => {
+                      setDropdown(null)
+                      onExit()
+                    }}
+                  >
+                    {t('ribbonExit')}
+                  </button>
+                )}
               </div>
             )}
           </div>
