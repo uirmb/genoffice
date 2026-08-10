@@ -1,0 +1,70 @@
+name: Sheets Web E2E
+
+on:
+  pull_request:
+    branches: [main, agent/ppt-web-foundation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sheets-web-foundation:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck Sheets
+        run: npm run typecheck -w @genoffice/sheets
+
+      - name: Build XLSX Engine Service
+        run: npm run build:xlsx-engine
+
+      - name: Start XLSX Engine Service
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine.log 2>&1 &
+          echo $! > /tmp/xlsx-engine.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7301/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/xlsx-engine.log
+          exit 1
+
+      - name: Verify session lifecycle
+        run: |
+          SESSION_JSON=$(curl --fail --silent \
+            -H 'content-type: application/json' \
+            -d '{"source":"blank"}' \
+            http://127.0.0.1:7301/v1/sessions)
+          echo "$SESSION_JSON"
+          SESSION_ID=$(node -e "const v=JSON.parse(process.argv[1]); if(!v.sessionId) process.exit(1); process.stdout.write(v.sessionId)" "$SESSION_JSON")
+          curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
+
+      - name: Build Sheets Web
+        run: npm run build:web:sheets
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sheets-web-foundation-artifacts
+          path: /tmp/xlsx-engine.log
+          retention-days: 7
