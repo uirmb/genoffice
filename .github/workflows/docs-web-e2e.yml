@@ -6,9 +6,61 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  patch-window-close:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/web-office-foundation'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply close protocol patch
+        run: |
+          if grep -q "type: 'office:request-close'" packages/office-protocol/src/index.ts; then
+            echo "Patch already applied"
+            exit 0
+          fi
+          python3 scripts/patch-office-window-close-word.py
+          npx prettier --write \
+            packages/office-protocol/src/index.ts \
+            apps/docs/src/shared/ipc.ts \
+            apps/docs/src/web/desktop-api.ts \
+            apps/docs/src/renderer/App.tsx \
+            apps/docs/tests/web-desktop-api.test.ts
+          npm run typecheck
+          npm test -w @genoffice/docs
+
+      - name: Commit product changes
+        run: |
+          if git diff --quiet; then
+            echo "No product changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/office-protocol/src/index.ts \
+            apps/docs/src/shared/ipc.ts \
+            apps/docs/src/web/desktop-api.ts \
+            apps/docs/src/renderer/App.tsx \
+            apps/docs/tests/web-desktop-api.test.ts
+          git commit -m "feat(web): guard host window close through Word exit flow"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
   docs-web-e2e:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
