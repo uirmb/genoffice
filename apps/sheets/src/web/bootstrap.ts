@@ -1,5 +1,6 @@
 import { getXlsxEngineHealth } from './engine-client'
 import { createSheetsWebDesktopApi } from './desktop-api'
+import './product-policy.css'
 
 function renderBootstrapError(error: unknown): void {
   const root = document.getElementById('root')
