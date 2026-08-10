@@ -251,6 +251,45 @@ describe('Docs web desktop adapter', () => {
     destroy()
   })
 
+  it('routes the parent window close request through the guarded editor lifecycle', async () => {
+    const { controller, send, emit, destroy } = createHarness()
+    const requested = vi.fn()
+    const off = controller.desktopApi.onHostCloseRequest?.(requested)
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:request-close',
+      requestId: 'window-close-1',
+      payload: { reason: 'window-close' },
+    })
+    expect(requested).toHaveBeenCalledTimes(1)
+
+    await controller.desktopApi.requestHostClose?.()
+    expect(send).toHaveBeenCalledWith({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:close-request',
+      requestId: 'window-close-1',
+      payload: { reason: 'window-close' },
+    })
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:request-close',
+      requestId: 'window-close-2',
+      payload: { reason: 'window-close' },
+    })
+    controller.desktopApi.cancelHostCloseRequest?.()
+    expect(send).toHaveBeenCalledWith({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:close-cancelled',
+      requestId: 'window-close-2',
+      payload: { reason: 'user-cancelled' },
+    })
+
+    off?.()
+    destroy()
+  })
+
   it('maps host version conflicts to the existing external-modified save contract', async () => {
     const { controller, emit, initialFile, destroy } = createHarness(async () => ({
       ok: false,

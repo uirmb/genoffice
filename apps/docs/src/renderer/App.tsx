@@ -944,6 +944,15 @@ export function App() {
     void window.desktop.requestHostClose()
   }, [])
 
+  useEffect(() => {
+    return window.desktop.onHostCloseRequest?.(requestExit)
+  }, [requestExit])
+
+  const cancelExit = useCallback(() => {
+    setShowExitConfirm(false)
+    window.desktop.cancelHostCloseRequest?.()
+  }, [])
+
   const discardAndExit = useCallback(() => {
     setShowExitConfirm(false)
     void window.desktop.requestHostClose?.()
@@ -3054,7 +3063,7 @@ export function App() {
           saving={exitSaving}
           onSave={() => void saveAndExit()}
           onDiscard={discardAndExit}
-          onCancel={() => setShowExitConfirm(false)}
+          onCancel={cancelExit}
         />
       )}
 
