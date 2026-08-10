@@ -173,6 +173,10 @@ async fn open_workbook(
     let object = value
         .as_object_mut()
         .ok_or_else(|| internal_error("Workbook metadata was not an object."))?;
+    // Electron uses the local absolute path for CELL("filename"). In Web mode
+    // this would reveal the server's temporary filesystem, so the browser only
+    // receives Host-facing identity and workbook metadata.
+    object.remove("path");
     object.insert("name".into(), Value::String(name));
     object.insert("sha256".into(), Value::String(sha256));
     object.insert("readOnly".into(), Value::Bool(false));
