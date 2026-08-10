@@ -1,6 +1,7 @@
-import type { WorkbookSaveRequest } from '../shared/desktop-api'
+import type { WorkbookFile, WorkbookSaveRequest } from '../shared/desktop-api'
 import {
   planCellEditsToXlsx,
+  type CellEdit,
   type EntrySource,
   type MutationPlan,
 } from '../gateway/xlsx-gateway'
@@ -60,44 +61,77 @@ function mergeAdditions(plan: MutationPlan): Map<string, string | Uint8Array> {
   return additions
 }
 
+function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
+  return (
+    request.structuralOps.length > 0 ||
+    request.chartEdits.length > 0 ||
+    request.visualEdits.length > 0 ||
+    request.visualAdditions.length > 0 ||
+    request.tableAdditions.length > 0 ||
+    request.pivotAdditions.length > 0 ||
+    request.sheetOps.length > 0 ||
+    request.filterStates.length > 0 ||
+    request.hyperlinkEdits.length > 0 ||
+    request.cfStates.length > 0 ||
+    request.dvStates.length > 0 ||
+    request.pageSetupStates.length > 0 ||
+    request.noteStates.length > 0 ||
+    request.pivotCacheRefreshPaths.length > 0 ||
+    request.pivotRefreshUpdates.length > 0 ||
+    request.sheetProtections.length > 0 ||
+    request.sparklineAdditions.length > 0 ||
+    request.formulaValues.length > 0 ||
+    request.definedNamesState !== null
+  )
+}
+
+function toPlannerCellEdits(
+  request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
+): CellEdit[] {
+  const names = new Map(workbook.sheets.map((sheet) => [sheet.id, sheet.name]))
+  const sheetName = (sheetId: string): string => {
+    const name = names.get(sheetId)
+    if (!name) throw new Error(`Unknown worksheet ${sheetId}.`)
+    return name
+  }
+
+  return request.edits.map((edit) => ({
+    sheetName: sheetName(edit.sheetId),
+    row: edit.row,
+    column: edit.column,
+    writeValue: edit.writeValue,
+    cell: {
+      value: edit.value,
+      ...(edit.formula === undefined ? {} : { formula: edit.formula }),
+    },
+    ...(edit.style === undefined ? {} : { style: edit.style }),
+    ...(edit.rich === undefined ? {} : { rich: edit.rich }),
+    ...(edit.styleReset === undefined ? {} : { styleReset: edit.styleReset }),
+  }))
+}
+
 /**
  * Browser preservation-save path. The same mutation planner used by Electron
  * reads package parts through the Rust session API; Rust only reassembles the
  * planned replacement/add/remove sets and returns standard XLSX bytes.
+ *
+ * The first Web milestone intentionally enables the common cell-edit path
+ * before the higher-level journal families. Unsupported advanced journals fail
+ * closed rather than producing a partially saved workbook.
  */
 export async function saveWorkbookRequestViaEngine(
   request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
   name: string,
 ): Promise<SavedXlsxWorkbook & { touchedEntries: readonly string[] }> {
-  if (request.sheetOps.length > 0) {
-    throw new Error('Sheet management saves are not enabled in Sheets Web yet.')
+  if (hasUnsupportedAdvancedEdits(request)) {
+    throw new Error('This workbook contains edits that are not enabled in Sheets Web save yet.')
   }
 
   const manifest = await getXlsxArchiveManifest(request.sessionId)
   const source = createEngineEntrySource(request.sessionId, manifest)
-  const plan = await planCellEditsToXlsx(
-    source,
-    request.edits,
-    request.structuralOps,
-    request.chartEdits,
-    undefined,
-    request.filterStates,
-    request.hyperlinkEdits,
-    request.cfStates,
-    request.dvStates,
-    request.sheetProtections,
-    request.definedNamesState,
-    request.visualAdditions,
-    request.pageSetupStates,
-    request.noteStates,
-    request.tableAdditions,
-    request.pivotAdditions,
-    request.pivotCacheRefreshPaths,
-    request.pivotRefreshUpdates,
-    request.visualEdits,
-    request.sparklineAdditions,
-    request.formulaValues,
-  )
+  const plan = await planCellEditsToXlsx(source, toPlannerCellEdits(request, workbook))
 
   const saved = await saveXlsxArchiveMutation(request.sessionId, name, {
     replacements: plan.replaced,
