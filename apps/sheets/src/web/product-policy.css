@@ -1,0 +1,17 @@
+html.office-web .autosave-toggle,
+html.office-web .copilot,
+html.office-web .ai-entry {
+  display: none !important;
+}
+
+html.office-web .sheet-body,
+html.office-web .app-shell.copilot-collapsed .sheet-body {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+/* Browser Web Office has no native titlebar controls to reserve space for. */
+html.office-web .ribbon-tabs-win,
+html.office-web .ribbon-tabs-mac {
+  padding-right: 10px;
+  padding-left: 10px;
+}
