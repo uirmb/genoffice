@@ -58,6 +58,70 @@ jobs:
           SESSION_ID=$(node -e "const v=JSON.parse(process.argv[1]); if(!v.sessionId) process.exit(1); process.stdout.write(v.sessionId)" "$SESSION_JSON")
           curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
 
+      - name: Verify real XLSX open and lazy range
+        run: |
+          python3 - <<'PY'
+          from zipfile import ZipFile, ZIP_DEFLATED
+
+          parts = {
+            '[Content_Types].xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+            <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+            <Default Extension="xml" ContentType="application/xml"/>
+            <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+            <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+            <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+          </Types>''',
+            '_rels/.rels': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+          </Relationships>''',
+            'xl/workbook.xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+            <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+          </workbook>''',
+            'xl/_rels/workbook.xml.rels': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+            <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+          </Relationships>''',
+            'xl/styles.xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+            <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+            <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+            <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+            <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+          </styleSheet>''',
+            'xl/worksheets/sheet1.xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <dimension ref="A1:B1"/>
+            <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Web Excel E2E</t></is></c><c r="B1"><v>42</v></c></row></sheetData>
+          </worksheet>''',
+          }
+
+          with ZipFile('/tmp/web-excel-e2e.xlsx', 'w', ZIP_DEFLATED) as archive:
+              for name, content in parts.items():
+                  archive.writestr(name, content)
+          PY
+
+          META=$(curl --fail --silent \
+            --data-binary @/tmp/web-excel-e2e.xlsx \
+            'http://127.0.0.1:7301/v1/workbooks?name=web-excel-e2e.xlsx')
+          echo "$META" > /tmp/workbook-meta.json
+
+          SESSION_ID=$(node -e "const v=require('/tmp/workbook-meta.json'); if(!v.sessionId||!v.sheets?.[0]?.id) process.exit(1); process.stdout.write(v.sessionId)")
+          SHEET_ID=$(node -e "const v=require('/tmp/workbook-meta.json'); process.stdout.write(v.sheets[0].id)")
+
+          RANGE=$(curl --fail --silent \
+            -H 'content-type: application/json' \
+            -H "X-Xlsx-Session: $SESSION_ID" \
+            -d "{\"sheetId\":\"$SHEET_ID\",\"range\":{\"startRow\":0,\"endRow\":0,\"startColumn\":0,\"endColumn\":1}}" \
+            "http://127.0.0.1:7301/v1/sessions/$SESSION_ID/ranges")
+
+          node -e "const v=JSON.parse(process.argv[1]); const a=v.cells?.find(c=>c.row===0&&c.column===0); const b=v.cells?.find(c=>c.row===0&&c.column===1); if(a?.value!=='Web Excel E2E'||b?.value!==42) { console.error(v); process.exit(1) }" "$RANGE"
+          curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
+
       - name: Build Sheets Web
         run: npm run build:web:sheets
 
