@@ -59,8 +59,8 @@ export interface OfficeFileDescriptor {
   id: string
   name: string
   mimeType: string
-  size?: number
-  version?: string | null
+  size?: number | undefined
+  version?: string | null | undefined
 }
 
 export interface OfficeFile extends OfficeFileDescriptor {
@@ -70,29 +70,35 @@ export interface OfficeFile extends OfficeFileDescriptor {
 export interface SaveDocumentInput {
   file: OfficeFileDescriptor
   bytes: ArrayBuffer
-  baseVersion?: string | null
-  mode?: OfficeSaveMode
+  baseVersion?: string | null | undefined
+  mode?: OfficeSaveMode | undefined
   /** First persistence of a blank editor document; the Host should choose/create its destination. */
-  newDocument?: boolean
+  newDocument?: boolean | undefined
 }
 
 export interface SaveDocumentResult {
   ok: boolean
-  file?: OfficeFileDescriptor
-  error?: string
-  code?: 'VERSION_CONFLICT' | 'PERMISSION_DENIED' | 'NOT_FOUND' | 'SAVE_FAILED' | 'CANCELLED'
+  file?: OfficeFileDescriptor | undefined
+  error?: string | undefined
+  code?:
+    | 'VERSION_CONFLICT'
+    | 'PERMISSION_DENIED'
+    | 'NOT_FOUND'
+    | 'SAVE_FAILED'
+    | 'CANCELLED'
+    | undefined
 }
 
 export interface SaveHistoryVersionInput {
   file: OfficeFileDescriptor
   bytes: ArrayBuffer
-  baseVersion?: string | null
+  baseVersion?: string | null | undefined
 }
 
 export interface SaveHistoryVersionResult {
   ok: boolean
-  error?: string
-  code?: 'PERMISSION_DENIED' | 'NOT_FOUND' | 'SAVE_FAILED' | 'CANCELLED'
+  error?: string | undefined
+  code?: 'PERMISSION_DENIED' | 'NOT_FOUND' | 'SAVE_FAILED' | 'CANCELLED' | undefined
 }
 
 export interface ExportDocumentInput {
@@ -103,21 +109,21 @@ export interface ExportDocumentInput {
 
 export interface ExportDocumentResult {
   ok: boolean
-  error?: string
-  code?: 'PERMISSION_DENIED' | 'SAVE_FAILED' | 'CANCELLED'
+  error?: string | undefined
+  code?: 'PERMISSION_DENIED' | 'SAVE_FAILED' | 'CANCELLED' | undefined
 }
 
 export interface PickFileOptions {
-  multiple?: boolean
-  accept?: string[]
-  mode?: 'file' | 'folder'
+  multiple?: boolean | undefined
+  accept?: string[] | undefined
+  mode?: 'file' | 'folder' | undefined
 }
 
 export interface SelectedOfficeFile extends OfficeFileDescriptor {
   transport: 'buffer' | 'token'
-  bytes?: ArrayBuffer
-  token?: string
-  url?: string
+  bytes?: ArrayBuffer | undefined
+  token?: string | undefined
+  url?: string | undefined
 }
 
 export interface OfficeHostApi {
