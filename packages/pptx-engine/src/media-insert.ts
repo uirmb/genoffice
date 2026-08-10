@@ -11,7 +11,7 @@
  * no am3d extension XML is written (the schema is complex and easily triggers
  * repair); shows as the poster image in PowerPoint.
  */
-import { deflateSync } from 'node:zlib'
+import { concatBytes, encodeAscii, encodeUtf8, writeUint32Be } from './bytes'
 import type { EmuRect, Slide } from './types'
 import { escapeXmlAttr } from './xml-utils'
 import { relsPathFor } from './zip'
@@ -60,37 +60,70 @@ function crc32(buf: Uint8Array): number {
   return (c ^ -1) >>> 0
 }
 
-function pngChunk(type: string, data: Uint8Array): Buffer {
-  const head = Buffer.alloc(8)
-  head.writeUInt32BE(data.length, 0)
-  head.write(type, 4, 'ascii')
-  const crcBuf = Buffer.alloc(4)
-  crcBuf.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, 'ascii'), data])), 0)
-  return Buffer.concat([head, data, crcBuf])
+function adler32(data: Uint8Array): number {
+  let a = 1
+  let b = 0
+  for (const value of data) {
+    a = (a + value) % 65521
+    b = (b + a) % 65521
+  }
+  return ((b << 16) | a) >>> 0
+}
+
+/** Minimal zlib stream using uncompressed DEFLATE blocks (browser + Node, sync). */
+function deflateStored(data: Uint8Array): Uint8Array {
+  const parts: Uint8Array[] = [new Uint8Array([0x78, 0x01])]
+  for (let offset = 0; offset < data.length; offset += 65535) {
+    const block = data.subarray(offset, Math.min(offset + 65535, data.length))
+    const final = offset + block.length >= data.length
+    const header = new Uint8Array(5)
+    header[0] = final ? 1 : 0
+    const len = block.length
+    header[1] = len & 0xff
+    header[2] = (len >>> 8) & 0xff
+    const nlen = ~len & 0xffff
+    header[3] = nlen & 0xff
+    header[4] = (nlen >>> 8) & 0xff
+    parts.push(header, block)
+  }
+  const checksum = new Uint8Array(4)
+  writeUint32Be(checksum, 0, adler32(data))
+  parts.push(checksum)
+  return concatBytes(parts)
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const typeBytes = encodeAscii(type)
+  const head = new Uint8Array(8)
+  writeUint32Be(head, 0, data.length)
+  head.set(typeBytes, 4)
+  const crcBuf = new Uint8Array(4)
+  writeUint32Be(crcBuf, 0, crc32(concatBytes([typeBytes, data])))
+  return concatBytes([head, data, crcBuf])
 }
 
 /** Generate a w×h solid-color PNG (RGB, no alpha). Used as a poster frame placeholder. */
-export function solidPng(w: number, h: number, rgb: [number, number, number]): Buffer {
-  const ihdr = Buffer.alloc(13)
-  ihdr.writeUInt32BE(w, 0)
-  ihdr.writeUInt32BE(h, 4)
-  ihdr[8] = 8 // bit depth
-  ihdr[9] = 2 // color type RGB
-  const raw = Buffer.alloc(h * (1 + w * 3))
+export function solidPng(w: number, h: number, rgb: [number, number, number]): Uint8Array {
+  const ihdr = new Uint8Array(13)
+  writeUint32Be(ihdr, 0, w)
+  writeUint32Be(ihdr, 4, h)
+  ihdr[8] = 8
+  ihdr[9] = 2
+  const raw = new Uint8Array(h * (1 + w * 3))
   for (let y = 0; y < h; y++) {
     const row = y * (1 + w * 3)
-    raw[row] = 0 // filter none
+    raw[row] = 0
     for (let x = 0; x < w; x++) {
       raw[row + 1 + x * 3] = rgb[0]
       raw[row + 2 + x * 3] = rgb[1]
       raw[row + 3 + x * 3] = rgb[2]
     }
   }
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  return concatBytes([
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', deflateSync(raw)),
-    pngChunk('IEND', Buffer.alloc(0)),
+    pngChunk('IDAT', deflateStored(raw)),
+    pngChunk('IEND', new Uint8Array()),
   ])
 }
 
@@ -101,7 +134,7 @@ function ensureDefaultContentType(opened: OpenedPptx, ext: string, mime: string)
   const ct = opened.archive.readText(ctPath)
   if (ct && !new RegExp(`<Default Extension="${ext}"`).test(ct)) {
     const dflt = `<Default Extension="${ext}" ContentType="${mime}"/>`
-    opened.archive.entries.set(ctPath, Buffer.from(ct.replace('</Types>', `${dflt}</Types>`), 'utf8'))
+    opened.archive.entries.set(ctPath, encodeUtf8(ct.replace('</Types>', `${dflt}</Types>`)))
   }
 }
 
@@ -139,7 +172,7 @@ function appendRels(
       `<Relationship Id="${rid}" Type="${rel.type}" Target="${escapeXmlAttr(rel.target)}"${mode}/></Relationships>`,
     )
   }
-  opened.archive.entries.set(relsPath, Buffer.from(xml, 'utf8'))
+  opened.archive.entries.set(relsPath, encodeUtf8(xml))
   return rids
 }
 

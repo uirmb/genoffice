@@ -8,6 +8,7 @@
  * them to the model and rebuilds the RenderSlide.
  */
 import type { RenderSlide } from '@genoffice/pptx-render'
+import type { Lang } from '@genoffice/i18n'
 import type { SlideComment, SectionInfo } from '@genoffice/pptx-engine'
 import type {
   AiSettings,
@@ -981,15 +982,14 @@ export type MenuCommand =
 
 export interface SlidesApi {
   /** current UI language (persisted by the shell in app-settings.json) */
-  getLanguage: () => Promise<
-    'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar'
-  >
+  getLanguage: () => Promise<Lang>
   /** language switched from the shell home page */
-  onLanguageChanged: (
-    handler: (
-      lang: 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar',
-    ) => void,
-  ) => () => void
+  onLanguageChanged: (handler: (lang: Lang) => void) => () => void
+  /** Optional Web Host-enforced editor mode. */
+  getHostEditorMode?: () => Promise<'view' | 'edit'>
+  onHostEditorModeChanged?: (handler: (mode: 'view' | 'edit') => void) => () => void
+  /** Web Host dirty-state mirror. */
+  reportDirtyChange?: (dirty: boolean) => void
   openPptx: (fitWidthPx: number) => Promise<OpenResult | null>
   openPptxPath: (path: string, fitWidthPx: number) => Promise<OpenResult | null>
   consumePendingOpen: (fitWidthPx: number) => Promise<OpenResult | null>
@@ -1273,6 +1273,14 @@ export interface SlidesApi {
   saveAs: (
     defaultName: string,
   ) => Promise<{ ok: boolean; path?: string; error?: string; slides?: RenderSlide[] }>
+  /** Web Host lifecycle extensions; absent in the legacy Electron preload. */
+  saveHistoryVersion?: () => Promise<{ ok: boolean; error?: string }>
+  exportPptx?: () => Promise<{ ok: boolean; error?: string }>
+  requestHostClose?: () => Promise<void>
+  /** The parent window's × button asked this editor to run the same guarded exit flow. */
+  onHostCloseRequest?: (handler: () => void) => () => void
+  /** The guarded exit dialog was cancelled; release the parent's pending close state. */
+  cancelHostCloseRequest?: () => void
   /** The close guard chose "Save": the main process asks the renderer to run the full save flow */
   onCloseSaveRequest: (handler: () => void) => () => void
   reportCloseSaveResult: (ok: boolean) => void

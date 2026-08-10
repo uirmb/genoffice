@@ -4,6 +4,7 @@
  * Phase 1 scope: openPptx (parsing) + savePptx's "no changes = byte identical"
  * path (proving fidelity). Element-level patch regeneration is left for Phase 3.
  */
+import { encodeUtf8 } from './bytes'
 import JSZip from 'jszip'
 import { PackageArchive, relsPathFor, resolveTarget } from './zip'
 import { parseTheme, type Theme } from './theme'
@@ -567,7 +568,7 @@ export function commitSaved(opened: OpenedPptx): void {
     }
     slide.originalXml = xml
     delete slide.structureDirty
-    archive.entries.set(slide.path, Buffer.from(xml, 'utf8'))
+    archive.entries.set(slide.path, encodeUtf8(xml))
   }
 }
 
@@ -809,7 +810,7 @@ function registerNewSlide(opened: OpenedPptx, sourceIndex: number, newPath: stri
   const ct = archive.readText(ctPath)
   if (ct) {
     const override = `<Override PartName="/${newPath}" ContentType="${SLIDE_CONTENT_TYPE}"/>`
-    archive.entries.set(ctPath, Buffer.from(ct.replace('</Types>', `${override}</Types>`), 'utf8'))
+    archive.entries.set(ctPath, encodeUtf8(ct.replace('</Types>', `${override}</Types>`)))
   }
 
   const presRelsPath = 'ppt/_rels/presentation.xml.rels'
@@ -823,7 +824,7 @@ function registerNewSlide(opened: OpenedPptx, sourceIndex: number, newPath: stri
   const relXml = `<Relationship Id="${newRid}" Type="${SLIDE_REL_TYPE}" Target="${newPath.slice('ppt/'.length)}"/>`
   archive.entries.set(
     presRelsPath,
-    Buffer.from(presRels.replace('</Relationships>', `${relXml}</Relationships>`), 'utf8'),
+    encodeUtf8(presRels.replace('</Relationships>', `${relXml}</Relationships>`)),
   )
 
   let maxSldId = 255
@@ -841,7 +842,7 @@ function registerNewSlide(opened: OpenedPptx, sourceIndex: number, newPath: stri
   const nextPres = srcTag
     ? pres.replace(srcTag, `${srcTag}${newSldId}`)
     : pres.replace('</p:sldIdLst>', `${newSldId}</p:sldIdLst>`)
-  archive.entries.set(presPath, Buffer.from(nextPres, 'utf8'))
+  archive.entries.set(presPath, encodeUtf8(nextPres))
 
   const slide = parseSlideFromArchive(archive, newPath)
   if (!slide) return null
@@ -866,12 +867,12 @@ export function duplicateSlide(
   if (!src) return null
 
   const newPath = nextSlidePath(archive)
-  archive.entries.set(newPath, Buffer.from(patchSlideXml(src), 'utf8'))
+  archive.entries.set(newPath, encodeUtf8(patchSlideXml(src)))
 
   const srcRels = archive.readText(relsPathFor(src.path))
   if (srcRels) {
     const cleaned = srcRels.replace(/<Relationship\s[^>]*\/notesSlide"[^>]*\/>/g, '')
-    archive.entries.set(relsPathFor(newPath), Buffer.from(cleaned, 'utf8'))
+    archive.entries.set(relsPathFor(newPath), encodeUtf8(cleaned))
   }
 
   const slide = registerNewSlide(opened, sourceIndex, newPath)
@@ -922,8 +923,8 @@ export function pasteSlide(
 
   const newPath = nextSlidePath(archive)
   const relsXml = materializeSlideBundle(archive, bundle, newPath, layoutPath)
-  archive.entries.set(newPath, Buffer.from(bundle.slideXml, 'utf8'))
-  archive.entries.set(relsPathFor(newPath), Buffer.from(relsXml, 'utf8'))
+  archive.entries.set(newPath, encodeUtf8(bundle.slideXml))
+  archive.entries.set(relsPathFor(newPath), encodeUtf8(relsXml))
 
   if (anchorIndex < 0) {
     // registerNewSlide can only insert after a slide, so land at 1 and move up
@@ -945,7 +946,7 @@ export function insertBlankSlide(opened: OpenedPptx, sourceIndex: number): Slide
   if (!src) return null
 
   const newPath = nextSlidePath(archive)
-  archive.entries.set(newPath, Buffer.from(BLANK_SLIDE_XML, 'utf8'))
+  archive.entries.set(newPath, encodeUtf8(BLANK_SLIDE_XML))
 
   // Both slides live under ppt/slides/, so the source layout relationship's relative Target can be reused directly
   const layout = [...archive.readRels(src.path).values()].find((r) =>
@@ -958,7 +959,7 @@ export function insertBlankSlide(opened: OpenedPptx, sourceIndex: number): Slide
       ? `<Relationship Id="rId1" Type="${layout.type}" Target="${escapeXmlAttr(layout.target)}"/>`
       : '') +
     '</Relationships>'
-  archive.entries.set(relsPathFor(newPath), Buffer.from(rels, 'utf8'))
+  archive.entries.set(relsPathFor(newPath), encodeUtf8(rels))
 
   return registerNewSlide(opened, sourceIndex, newPath)
 }
@@ -987,7 +988,7 @@ function ensureDefaultContentType(archive: PackageArchive, ext: string, contentT
   // Insert the Default after the root <Types …> open tag (after the first >)
   const def = `<Default Extension="${ext}" ContentType="${contentType}"/>`
   const at = ct.indexOf('>') + 1
-  archive.entries.set(ctPath, Buffer.from(ct.slice(0, at) + def + ct.slice(at), 'utf8'))
+  archive.entries.set(ctPath, encodeUtf8(ct.slice(0, at) + def + ct.slice(at)))
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -1079,13 +1080,13 @@ export async function mergeSlideFromPptx(
   }
 
   // Write the new slide XML + rels
-  archive.entries.set(newPath, Buffer.from(slideXml, 'utf8'))
+  archive.entries.set(newPath, encodeUtf8(slideXml))
   const relsXml =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n' +
     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
     newRelsLines.join('') +
     '</Relationships>'
-  archive.entries.set(relsPathFor(newPath), Buffer.from(relsXml, 'utf8'))
+  archive.entries.set(relsPathFor(newPath), encodeUtf8(relsXml))
 
   // Register with the package: Content_Types Override + new sldId/rId in presentation.xml(.rels), inserted at the end
   return registerNewSlide(target, deck.slides.length - 1, newPath)
@@ -1150,10 +1151,10 @@ export function deleteSlide(opened: OpenedPptx, index: number): boolean {
 
   const sldTag = new RegExp(`<p:sldId\\s[^>]*r:id="${rid}"[^>]*/>`).exec(pres)?.[0]
   if (!sldTag) return false
-  archive.entries.set(presPath, Buffer.from(pres.replace(sldTag, ''), 'utf8'))
+  archive.entries.set(presPath, encodeUtf8(pres.replace(sldTag, '')))
   const relTag = new RegExp(`<Relationship\\s[^>]*Id="${rid}"[^>]*/>`).exec(presRels)?.[0]
   if (relTag) {
-    archive.entries.set(presRelsPath, Buffer.from(presRels.replace(relTag, ''), 'utf8'))
+    archive.entries.set(presRelsPath, encodeUtf8(presRels.replace(relTag, '')))
   }
 
   const ctPath = '[Content_Types].xml'
@@ -1162,7 +1163,7 @@ export function deleteSlide(opened: OpenedPptx, index: number): boolean {
     const override = new RegExp(
       `<Override PartName="/${slide.path.replace(/[.\\/]/g, '\\$&')}"[^>]*/>`,
     ).exec(ct)?.[0]
-    if (override) archive.entries.set(ctPath, Buffer.from(ct.replace(override, ''), 'utf8'))
+    if (override) archive.entries.set(ctPath, encodeUtf8(ct.replace(override, '')))
   }
 
   archive.entries.delete(slide.path)
@@ -1205,7 +1206,7 @@ export function materializeSlide(opened: OpenedPptx, slideIndex: number): Slide 
   const { deck, archive } = opened
   const slide = deck.slides[slideIndex]
   if (!slide) return null
-  archive.entries.set(slide.path, Buffer.from(patchSlideXml(slide), 'utf8'))
+  archive.entries.set(slide.path, encodeUtf8(patchSlideXml(slide)))
   const fresh = parseSlideFromArchive(archive, slide.path)
   if (!fresh) return null
   deck.slides[slideIndex] = fresh
@@ -1375,7 +1376,7 @@ export function setSlideLayout(
       `<Relationship Id="rId${maxRid + 1}" Type="${LAYOUT_REL_TYPE}" Target="${escapeXmlAttr(relTarget)}"/></Relationships>`,
     )
   }
-  opened.archive.entries.set(relsPath, Buffer.from(next, 'utf8'))
+  opened.archive.entries.set(relsPath, encodeUtf8(next))
 
   const layoutPhs = parseLayoutPlaceholders(opened.archive.readText(layoutPath) ?? '')
   const taken = new Set<string>()
@@ -1445,7 +1446,7 @@ export function setSlideSize(opened: OpenedPptx, cx: number, cy: number): boolea
   const next = pres.replace(/<p:sldSz\b[^>]*?(\/?)>/, (tag) =>
     tag.replace(/\bcx="\d+"/, `cx="${cx}"`).replace(/\bcy="\d+"/, `cy="${cy}"`),
   )
-  archive.entries.set(presPath, Buffer.from(next, 'utf8'))
+  archive.entries.set(presPath, encodeUtf8(next))
   deck.size = { cx, cy }
 
   const sx = cx / old.cx
@@ -1479,7 +1480,7 @@ export function setSlideSize(opened: OpenedPptx, cx: number, cy: number): boolea
       el.dirtyTransform = true
       touched = true
     }
-    if (touched) archive.entries.set(part.partPath, Buffer.from(patchSlideXml(partSlide), 'utf8'))
+    if (touched) archive.entries.set(part.partPath, encodeUtf8(patchSlideXml(partSlide)))
   }
   deck.slides.forEach((_, i) => materializeSlide(opened, i))
   return true
@@ -1619,19 +1620,18 @@ export function ensureTableStylePart(
   const existing = archive.readText(path)
   const next = ensureTableStyleXml(existing, styleId, styleDefXml)
   if (existing === next) return
-  archive.entries.set(path, Buffer.from(next, 'utf8'))
+  archive.entries.set(path, encodeUtf8(next))
   if (existing) return
   const ctPath = '[Content_Types].xml'
   const ct = archive.readText(ctPath)
   if (ct && !ct.includes(`PartName="/${path}"`)) {
     archive.entries.set(
       ctPath,
-      Buffer.from(
+      encodeUtf8(
         ct.replace(
           '</Types>',
           `<Override PartName="/${path}" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/></Types>`,
         ),
-        'utf8',
       ),
     )
   }
@@ -1643,7 +1643,7 @@ export function ensureTableStylePart(
     const rel = `<Relationship Id="rId${maxRid + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles" Target="tableStyles.xml"/>`
     archive.entries.set(
       presRelsPath,
-      Buffer.from(presRels.replace('</Relationships>', rel + '</Relationships>'), 'utf8'),
+      Buffer.from(presRels.replace('</Relationships>', rel + '</Relationships>')),
     )
   }
 }
@@ -1794,7 +1794,7 @@ export function editChartElement(
     ...(pointColors.some((row) => row?.some((c) => c != null)) ? { pointColors } : {}),
   }
   const newXml = buildChartSpaceXmlWithColors(opts, colorScheme)
-  archive.entries.set(chartPath, Buffer.from(newXml, 'utf8'))
+  archive.entries.set(chartPath, encodeUtf8(newXml))
   slide.structureDirty = true
   return true
 }
@@ -2814,7 +2814,7 @@ export function pasteElements(
     return xml
   })
 
-  if (relsDirty) archive.entries.set(relsPath, Buffer.from(relsXml, 'utf8'))
+  if (relsDirty) archive.entries.set(relsPath, encodeUtf8(relsXml))
   return appendRawElements(opened, slideIndex, xmls)
 }
 

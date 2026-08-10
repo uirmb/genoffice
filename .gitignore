@@ -33,3 +33,6 @@ electron-builder.env
 __pycache__/
 /notes/
 /MEMORY.md
+
+# Browser build outputs
+**/dist-web/

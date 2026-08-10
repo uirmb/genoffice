@@ -76,6 +76,7 @@ import type {
 } from './action-context'
 import { FIT_WIDTH, PX_PER_INCH } from './app-constants'
 import * as fileActions from './file-actions'
+import { slidesWebLifecycleLabels } from './web-labels'
 import * as clipboardActions from './clipboard-actions'
 import * as insertActions from './insert-actions'
 import * as animationActions from './animation-actions'
@@ -266,6 +267,7 @@ function collectAligns(node: RenderNode, out: Set<ParaAlign>) {
 
 export function App() {
   const { lang } = useI18n()
+  const webLabels = slidesWebLifecycleLabels(lang)
   const [slides, setSlides] = useState<RenderSlide[]>([])
   const [path, setPath] = useState<string | null>(null)
   /** AiPanel reset key: incremented only on applyOpen (open/new file), not on draft path updates */
@@ -387,6 +389,10 @@ export function App() {
   const stageWrapRef = useRef<HTMLDivElement | null>(null)
   // ── View tab: view mode + display toggles ─────────────────────────────
   const [viewMode, setViewMode] = useState<SlidesViewMode>('normal')
+  const [hostEditorMode, setHostEditorMode] = useState<'view' | 'edit'>('edit')
+  const hostForcedReadingRef = useRef(false)
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false)
+  const [exitSaving, setExitSaving] = useState(false)
   const [masterItems, setMasterItems] = useState<MasterPartItem[] | null>(null)
   // ── Slide show: when non-null, covers the whole window (startAt is the start page index;
   //    customOrder = custom show playback sequence; rehearse = rehearsal timing mode) ────────
@@ -579,6 +585,36 @@ export function App() {
     [fitZoom],
   )
 
+  // Web Host mode is authoritative. View mode maps to the existing reading view,
+  // so the editing canvas and editing Ribbon are not reachable while the Host is read-only.
+  useEffect(() => {
+    let active = true
+    void window.slidesApi.getHostEditorMode?.().then((next) => {
+      if (active && next) setHostEditorMode(next)
+    })
+    const off = window.slidesApi.onHostEditorModeChanged?.((next) => setHostEditorMode(next))
+    return () => {
+      active = false
+      off?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (hostEditorMode === 'view') {
+      hostForcedReadingRef.current = true
+      if (viewMode !== 'reading') setViewMode('reading')
+      return
+    }
+    if (hostForcedReadingRef.current) {
+      hostForcedReadingRef.current = false
+      if (viewMode === 'reading') setViewMode('normal')
+    }
+  }, [hostEditorMode, viewMode])
+
+  useEffect(() => {
+    window.slidesApi.reportDirtyChange?.(dirty)
+  }, [dirty])
+
   const setSelectedId = useCallback((id: string | null, additive = false) => {
     setSelectedIds((prev) => {
       if (id == null) return []
@@ -682,6 +718,55 @@ export function App() {
   const saveAs = useCallback(() => fileActions.saveAs(ctxRef.current), [])
   const exportImages = useCallback(() => fileActions.exportImages(ctxRef.current), [])
   const exportPdf = useCallback(() => fileActions.exportPdf(ctxRef.current), [])
+  const saveHistoryVersion = useCallback(async () => {
+    await fileActions.flushActiveEdit(ctxRef.current)
+    await ctxRef.current.flushNotes()
+    const result = await window.slidesApi.saveHistoryVersion?.()
+    if (!result) return
+    setStatus(
+      result.ok ? webLabels.historySaved : `${webLabels.historyFailed}: ${result.error ?? ''}`,
+    )
+  }, [webLabels])
+
+  const exportPptx = useCallback(async () => {
+    await fileActions.flushActiveEdit(ctxRef.current)
+    await ctxRef.current.flushNotes()
+    const result = await window.slidesApi.exportPptx?.()
+    if (!result) return
+    setStatus(result.ok ? webLabels.exportDone : `${webLabels.exportFailed}: ${result.error ?? ''}`)
+  }, [webLabels])
+
+  const requestExit = useCallback(async () => {
+    const sessionDirty = await window.slidesApi.isDirty()
+    if (!dirty && !sessionDirty) {
+      await window.slidesApi.requestHostClose?.()
+      return
+    }
+    setExitConfirmOpen(true)
+  }, [dirty])
+
+  useEffect(() => {
+    return window.slidesApi.onHostCloseRequest?.(() => {
+      void requestExit()
+    })
+  }, [requestExit])
+
+  const cancelExit = useCallback(() => {
+    setExitConfirmOpen(false)
+    window.slidesApi.cancelHostCloseRequest?.()
+  }, [])
+
+  const saveAndExit = useCallback(async () => {
+    setExitSaving(true)
+    try {
+      const ok = await save(true)
+      if (!ok) return
+      setExitConfirmOpen(false)
+      await window.slidesApi.requestHostClose?.()
+    } finally {
+      setExitSaving(false)
+    }
+  }, [save])
 
   const [printDlgOpen, setPrintDlgOpen] = useState(false)
   const printSlides = useCallback(
@@ -2293,6 +2378,11 @@ export function App() {
         onUndo={() => void undo()}
         onRedo={() => void redo()}
         onSaveAs={() => void saveAs()}
+        onSaveHistoryVersion={
+          window.slidesApi.saveHistoryVersion ? () => void saveHistoryVersion() : undefined
+        }
+        onExportPptx={window.slidesApi.exportPptx ? () => void exportPptx() : undefined}
+        onExit={window.slidesApi.requestHostClose ? () => void requestExit() : undefined}
         onExportPdf={() => void exportPdf()}
         onPrint={() => setPrintDlgOpen(true)}
         onExportImages={() => void exportImages()}
@@ -3318,6 +3408,32 @@ export function App() {
               <button onClick={() => setPendingRehearse(null)}>{t('appRehearseDiscard')}</button>
               <button className="primary" onClick={() => void saveRehearseTimings()}>
                 {t('appRehearseSave')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {exitConfirmOpen && (
+        <div className="modal-backdrop" onClick={() => !exitSaving && cancelExit()}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <h2>{webLabels.exitTitle}</h2>
+            <p>{webLabels.exitMessage}</p>
+            <div className="modal-actions">
+              <button disabled={exitSaving} onClick={cancelExit}>
+                {webLabels.cancel}
+              </button>
+              <button
+                disabled={exitSaving}
+                onClick={() => {
+                  setExitConfirmOpen(false)
+                  void window.slidesApi.requestHostClose?.()
+                }}
+              >
+                {webLabels.discardAndExit}
+              </button>
+              <button className="primary" disabled={exitSaving} onClick={() => void saveAndExit()}>
+                {webLabels.saveAndExit}
               </button>
             </div>
           </div>
