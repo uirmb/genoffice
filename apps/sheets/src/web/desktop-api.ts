@@ -2,6 +2,7 @@ import type { AiChatResponse, AiSettings, AiStreamChunk, GenSparkAccountStatus }
 import type {
   OfficeEditorMode,
   OfficeFile,
+  OfficeFileDescriptor,
   OfficeHostApi,
   SelectedOfficeFile,
 } from '@genoffice/office-host-api'
@@ -12,7 +13,6 @@ import type {
   AttachmentImageResult,
   AttachmentReadResult,
   DesktopApi,
-  MenuAction,
   ScreenCaptureResult,
   ScreenSourcesResult,
   WorkbookExportPdfResult,
@@ -30,7 +30,13 @@ import type {
   WorkbookSaveRequest,
   WorkbookSaveResult,
 } from '../shared/desktop-api'
-import { deleteXlsxSession, openXlsxWorkbookBytes, readXlsxWorkbookRange } from './engine-client'
+import {
+  createBlankXlsxWorkbook,
+  deleteXlsxSession,
+  openXlsxWorkbookBytes,
+  readXlsxWorkbookRange,
+} from './engine-client'
+import { saveWorkbookRequestViaEngine } from './xlsx-save'
 
 type SheetsLanguage = Awaited<ReturnType<DesktopApi['getLanguage']>>
 type LanguageHandler = Parameters<DesktopApi['onLanguageChanged']>[0]
@@ -84,6 +90,24 @@ async function selectedToOfficeFile(
   return host.readFile(selected.id)
 }
 
+function officeDescriptor(file: OfficeFile | null, workbook: WorkbookFile): OfficeFileDescriptor {
+  if (file) {
+    return {
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType || XLSX_MIME,
+      size: file.size,
+      version: file.version,
+    }
+  }
+  return {
+    id: `new:${crypto.randomUUID()}`,
+    name: workbook.name,
+    mimeType: XLSX_MIME,
+    version: null,
+  }
+}
+
 export function createSheetsWebDesktopController(
   host: OfficeHostApi,
   bridge?: EditorIframeBridge,
@@ -91,9 +115,11 @@ export function createSheetsWebDesktopController(
   let currentLanguage = normalizeLanguage(document.documentElement.lang || navigator.language || 'en')
   let currentMode: OfficeEditorMode = 'edit'
   let currentTitle = 'Untitled.xlsx'
+  let currentOfficeFile: OfficeFile | null = null
+  let activeWorkbook: WorkbookFile | null = null
   let pendingWorkbook: WorkbookFile | null = null
-  let pendingNewBlank = false
   let pendingOpenSignal = false
+  let currentIsNewDocument = false
   let readyNotified = false
   let dirty = false
   let saving = false
@@ -118,13 +144,20 @@ export function createSheetsWebDesktopController(
     for (const handler of menuHandlers) handler('open')
   }
 
+  const setActiveWorkbook = (workbook: WorkbookFile): void => {
+    activeWorkbook = workbook
+    pendingWorkbook = workbook
+    currentTitle = workbook.name
+    host.setTitle(workbook.name)
+  }
+
   const setWorkbookFromOfficeFile = async (file: OfficeFile): Promise<void> => {
-    if (pendingWorkbook) {
-      await deleteXlsxSession(pendingWorkbook.sessionId).catch(() => undefined)
+    if (activeWorkbook) {
+      await deleteXlsxSession(activeWorkbook.sessionId).catch(() => undefined)
     }
-    pendingWorkbook = await openXlsxWorkbookBytes(file.name, file.bytes.slice(0))
-    currentTitle = file.name
-    host.setTitle(file.name)
+    currentOfficeFile = file
+    currentIsNewDocument = false
+    setActiveWorkbook(await openXlsxWorkbookBytes(file.name, file.bytes.slice(0)))
   }
 
   const pickWorkbook = async (): Promise<WorkbookFile | null> => {
@@ -141,10 +174,27 @@ export function createSheetsWebDesktopController(
     })
     if (!selected?.[0]) return null
     const file = await selectedToOfficeFile(host, selected[0])
+    if (activeWorkbook) {
+      await deleteXlsxSession(activeWorkbook.sessionId).catch(() => undefined)
+    }
+    currentOfficeFile = file
+    currentIsNewDocument = false
     const workbook = await openXlsxWorkbookBytes(file.name, file.bytes.slice(0))
+    activeWorkbook = workbook
     currentTitle = file.name
     host.setTitle(file.name)
     return workbook
+  }
+
+  const createNewWorkbook = async (): Promise<void> => {
+    if (activeWorkbook) {
+      await deleteXlsxSession(activeWorkbook.sessionId).catch(() => undefined)
+    }
+    const workbook = await createBlankXlsxWorkbook('Untitled.xlsx')
+    currentOfficeFile = null
+    currentIsNewDocument = true
+    setActiveWorkbook(workbook)
+    emitOpen()
   }
 
   const handleBridgeMessage = async (message: HostToEditorMessage): Promise<void> => {
@@ -163,9 +213,7 @@ export function createSheetsWebDesktopController(
       currentMode = message.payload.mode
       document.documentElement.dataset.officeMode = currentMode
       if (message.payload.locale) setLanguage(message.payload.locale)
-      pendingNewBlank = true
-      currentTitle = 'Untitled.xlsx'
-      host.setTitle(currentTitle)
+      await createNewWorkbook()
       return
     }
 
@@ -203,10 +251,11 @@ export function createSheetsWebDesktopController(
 
   const unsubscribeBridge = bridge?.subscribe((message) => {
     void handleBridgeMessage(message).catch((error) => {
+      const requestId = 'requestId' in message ? message.requestId : undefined
       bridge.send({
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:error',
-        requestId: 'requestId' in message ? message.requestId : undefined,
+        ...(requestId === undefined ? {} : { requestId }),
         payload: {
           code: 'SHEETS_WEB_HOST_ERROR',
           message: error instanceof Error ? error.message : String(error),
@@ -240,10 +289,51 @@ export function createSheetsWebDesktopController(
       sources: [],
     }),
     captureScreenSource: async (): Promise<ScreenCaptureResult | null> => null,
-    saveWorkbookEdits: async (_request: WorkbookSaveRequest): Promise<WorkbookSaveResult> => {
+    saveWorkbookEdits: async (request: WorkbookSaveRequest): Promise<WorkbookSaveResult> => {
+      if (currentMode !== 'edit') throw new Error('Workbook is read-only.')
+      if (!activeWorkbook) throw new Error('No active workbook session.')
+
       saving = true
+      const previousSessionId = activeWorkbook.sessionId
       try {
-        return { canceled: true }
+        const saved = await saveWorkbookRequestViaEngine(request, activeWorkbook.name)
+        const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook)
+        const result = await host.saveDocument({
+          file: descriptor,
+          bytes: saved.bytes.slice(0),
+          baseVersion: descriptor.version ?? null,
+          mode: request.mode === 'save-as' ? 'saveAs' : 'save',
+          newDocument: currentIsNewDocument,
+        })
+
+        if (!result.ok || !result.file) {
+          await deleteXlsxSession(saved.file.sessionId).catch(() => undefined)
+          return { canceled: true }
+        }
+
+        const nextWorkbook: WorkbookFile = {
+          ...saved.file,
+          name: result.file.name,
+        }
+        activeWorkbook = nextWorkbook
+        currentOfficeFile = {
+          ...result.file,
+          bytes: saved.bytes.slice(0),
+        }
+        currentTitle = result.file.name
+        currentIsNewDocument = false
+        dirty = false
+        host.setTitle(currentTitle)
+        host.setDirty(false)
+        if (previousSessionId !== nextWorkbook.sessionId) {
+          await deleteXlsxSession(previousSessionId).catch(() => undefined)
+        }
+
+        return {
+          canceled: false,
+          file: nextWorkbook,
+          touchedEntries: [...saved.touchedEntries],
+        }
       } finally {
         saving = false
       }
@@ -251,7 +341,10 @@ export function createSheetsWebDesktopController(
     writeWorkbookRecovery: async () => ({ ok: true }),
     autoRenameWorkbook: async () => ({ renamed: false }),
     exportPdf: async (): Promise<WorkbookExportPdfResult> => ({ canceled: true }),
-    closeWorkbook: deleteXlsxSession,
+    closeWorkbook: async (sessionId: string) => {
+      if (activeWorkbook?.sessionId === sessionId) activeWorkbook = null
+      await deleteXlsxSession(sessionId)
+    },
     openExternal: async (url: string) => {
       if (/^https?:\/\//.test(url)) window.open(url, '_blank', 'noopener,noreferrer')
     },
@@ -270,15 +363,11 @@ export function createSheetsWebDesktopController(
     },
     onCloseSaveRequest: () => noopUnsubscribe(),
     reportCloseSaveResult: () => undefined,
-    consumeNewBlankWorkbook: async () => {
-      const value = pendingNewBlank
-      pendingNewBlank = false
-      return value
-    },
+    // Web blank workbooks are real Rust-backed XLSX sessions, so the renderer
+    // opens them through the same lazy-workbook path as uploaded files.
+    consumeNewBlankWorkbook: async () => false,
     hasQueuedWorkbook: async () => pendingWorkbook !== null,
 
-    // AI is platform-disabled in the Web Office product policy. Keep a valid
-    // bridge surface so the existing renderer does not need Web-only forks.
     getAiSettings: async () => aiSettings,
     setAiSettings: async (settings) => {
       aiSettings = settings
@@ -321,7 +410,8 @@ export function createSheetsWebDesktopController(
       unsubscribeBridge?.()
       languageHandlers.clear()
       menuHandlers.clear()
-      if (pendingWorkbook) void deleteXlsxSession(pendingWorkbook.sessionId)
+      if (activeWorkbook) void deleteXlsxSession(activeWorkbook.sessionId)
+      activeWorkbook = null
       pendingWorkbook = null
     },
   }
