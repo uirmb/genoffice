@@ -22,6 +22,12 @@ jobs:
       - name: Build XLSX Engine Service
         run: cargo build --release --manifest-path services/xlsx-engine-service/Cargo.toml
 
+      - name: Verify heavy request admission timeout
+        run: |
+          cargo test --release \
+            --manifest-path services/xlsx-engine-service/Cargo.toml \
+            heavy_request_admission_times_out_before_work_starts
+
       - name: Reject invalid limit configuration
         run: |
           set +e
@@ -35,22 +41,46 @@ jobs:
           test "$STATUS" -ne 0
           grep -q 'XLSX_ENGINE_MAX_WORKBOOK_MB must be greater than zero' /tmp/xlsx-engine-invalid-limit.log
 
+      - name: Reject invalid admission configuration
+        run: |
+          set +e
+          XLSX_ENGINE_LISTEN=127.0.0.1:7394 \
+          XLSX_ENGINE_MAX_HEAVY_REQUESTS=0 \
+            ./services/xlsx-engine-service/target/release/xlsx-engine-service \
+            > /tmp/xlsx-engine-invalid-admission.log 2>&1
+          STATUS=$?
+          set -e
+          test "$STATUS" -ne 0
+          grep -q 'XLSX_ENGINE_MAX_HEAVY_REQUESTS must be greater than zero' /tmp/xlsx-engine-invalid-admission.log
+
+          set +e
+          XLSX_ENGINE_LISTEN=127.0.0.1:7394 \
+          XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS=0 \
+            ./services/xlsx-engine-service/target/release/xlsx-engine-service \
+            >> /tmp/xlsx-engine-invalid-admission.log 2>&1
+          STATUS=$?
+          set -e
+          test "$STATUS" -ne 0
+          grep -q 'XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS must be greater than zero' /tmp/xlsx-engine-invalid-admission.log
+
       - name: Start XLSX Engine Service with a 1MiB workbook limit
         env:
           XLSX_ENGINE_LISTEN: 127.0.0.1:7399
           XLSX_ENGINE_MAX_WORKBOOK_MB: 1
           XLSX_ENGINE_MAX_REQUEST_MB: 8
+          XLSX_ENGINE_MAX_HEAVY_REQUESTS: 2
+          XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS: 1
         run: |
           ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine-limit.log 2>&1 &
           echo $! > /tmp/xlsx-engine-limit.pid
           for i in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:7399/health >/dev/null; then
-              exit 0
+              break
             fi
             sleep 1
           done
-          cat /tmp/xlsx-engine-limit.log
-          exit 1
+          HEALTH=$(curl --fail --silent http://127.0.0.1:7399/health)
+          node -e "const v=JSON.parse(process.argv[1]); if(v.maxHeavyRequests!==2 || v.heavyQueueTimeoutSecs!==1 || v.availableHeavySlots!==2) process.exit(1)" "$HEALTH"
 
       - name: Reject oversized workbook with HTTP 413
         run: |
@@ -151,6 +181,7 @@ jobs:
           name: sheets-web-engine-limit-logs
           path: |
             /tmp/xlsx-engine-invalid-limit.log
+            /tmp/xlsx-engine-invalid-admission.log
             /tmp/xlsx-engine-limit.log
             /tmp/xlsx-engine-workspace.log
             /tmp/xlsx-engine-ttl.log
