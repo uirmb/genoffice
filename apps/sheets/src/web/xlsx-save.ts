@@ -29,6 +29,7 @@ type PlannerVisualAdditions = Parameters<typeof planCellEditsToXlsx>[11]
 type PlannerPageSetupStates = Parameters<typeof planCellEditsToXlsx>[12]
 type PlannerNoteStates = Parameters<typeof planCellEditsToXlsx>[13]
 type PlannerTableAdditions = NonNullable<Parameters<typeof planCellEditsToXlsx>[14]>
+type PlannerPivotAdditions = NonNullable<Parameters<typeof planCellEditsToXlsx>[15]>
 type PlannerSparklineAdditions = NonNullable<Parameters<typeof planCellEditsToXlsx>[19]>
 
 interface SheetPlanContext {
@@ -83,7 +84,7 @@ function mergeAdditions(plan: MutationPlan): Map<string, string | Uint8Array> {
 }
 
 function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
-  return request.pivotAdditions.length > 0 || request.pivotRefreshUpdates.length > 0
+  return request.pivotRefreshUpdates.length > 0
 }
 
 function originalSheetNames(workbook: WorkbookFile): Map<string, string> {
@@ -278,6 +279,17 @@ function toPlannerTableAdditions(
   }))
 }
 
+function toPlannerPivotAdditions(
+  request: WorkbookSaveRequest,
+  names: ReadonlyMap<string, string>,
+): PlannerPivotAdditions {
+  return request.pivotAdditions.map(({ sheetId, sourceSheetId, ...addition }) => ({
+    sheetName: requiredSheetName(names, sheetId),
+    sourceSheetName: requiredSheetName(names, sourceSheetId),
+    ...addition,
+  }))
+}
+
 function toPlannerSparklineAdditions(
   request: WorkbookSaveRequest,
   names: ReadonlyMap<string, string>,
@@ -445,7 +457,7 @@ export async function saveWorkbookRequestViaEngine(
     toPlannerPageSetupStates(request, sheetContext.plannerNames),
     toPlannerNoteStates(request, sheetContext.plannerNames),
     toPlannerTableAdditions(request, sheetContext.plannerNames),
-    [],
+    toPlannerPivotAdditions(request, sheetContext.plannerNames),
     request.pivotCacheRefreshPaths,
     [],
     request.visualEdits,
