@@ -75,6 +75,38 @@ jobs:
             'http://127.0.0.1:7399/v1/workbooks?name=small.xlsx')
           test "$STATUS" = '422'
 
+      - name: Start short-TTL XLSX Engine Service
+        env:
+          XLSX_ENGINE_LISTEN: 127.0.0.1:7397
+          XLSX_ENGINE_MAX_WORKBOOK_MB: 1
+          XLSX_ENGINE_MAX_REQUEST_MB: 8
+          XLSX_ENGINE_SESSION_TTL_SECS: 1
+          XLSX_ENGINE_CLEANUP_INTERVAL_SECS: 1
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine-ttl.log 2>&1 &
+          echo $! > /tmp/xlsx-engine-ttl.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7397/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/xlsx-engine-ttl.log
+          exit 1
+
+      - name: Expire abandoned workbook sessions
+        run: |
+          BLANK=$(curl --fail --silent -X POST \
+            'http://127.0.0.1:7397/v1/workbooks/blank?name=ttl.xlsx')
+          SESSION_ID=$(node -e "const v=JSON.parse(process.argv[1]); if(!v.sessionId) process.exit(1); process.stdout.write(v.sessionId)" "$BLANK")
+          sleep 3
+          STATUS=$(curl --silent \
+            --output /tmp/expired-session-response.txt \
+            --write-out '%{http_code}' \
+            "http://127.0.0.1:7397/v1/sessions/$SESSION_ID")
+          test "$STATUS" = '404'
+          grep -q 'Unknown workbook session' /tmp/expired-session-response.txt
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -83,6 +115,8 @@ jobs:
           path: |
             /tmp/xlsx-engine-invalid-limit.log
             /tmp/xlsx-engine-limit.log
+            /tmp/xlsx-engine-ttl.log
             /tmp/oversized-response.txt
             /tmp/small-response.txt
+            /tmp/expired-session-response.txt
           retention-days: 7
