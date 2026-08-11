@@ -17,6 +17,8 @@ import {
 
 const MAX_PATCH_ENTRY_BYTES = 256 * 1024 * 1024
 
+type PlannerStructuralOps = Parameters<typeof planCellEditsToXlsx>[2]
+type PlannerStructuralOp = PlannerStructuralOps[number]['ops'][number]
 type PlannerSheetPlan = NonNullable<Parameters<typeof planCellEditsToXlsx>[4]>
 type PlannerFilterStates = Parameters<typeof planCellEditsToXlsx>[5]
 type PlannerHyperlinkEdits = Parameters<typeof planCellEditsToXlsx>[6]
@@ -79,7 +81,6 @@ function mergeAdditions(plan: MutationPlan): Map<string, string | Uint8Array> {
 
 function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
   return (
-    request.structuralOps.length > 0 ||
     request.chartEdits.length > 0 ||
     request.visualEdits.length > 0 ||
     request.visualAdditions.length > 0 ||
@@ -178,13 +179,12 @@ function buildSheetPlanContext(
   }
 
   // An added-then-removed sheet never needs to enter the package.
-  for (const sheetId of removed) {
-    if (added.has(sheetId)) {
-      added.delete(sheetId)
-      finalNames.delete(sheetId)
-      hidden.delete(sheetId)
-      removed.delete(sheetId)
-    }
+  const canceledAdditionIds = [...removed].filter((sheetId) => added.has(sheetId))
+  for (const sheetId of canceledAdditionIds) {
+    added.delete(sheetId)
+    finalNames.delete(sheetId)
+    hidden.delete(sheetId)
+    removed.delete(sheetId)
   }
 
   const plannerNames = new Map(originalNames)
@@ -227,7 +227,10 @@ function buildSheetPlanContext(
     ...workbook.sheets.filter((sheet) => !removed.has(sheet.id)).map((sheet) => sheet.id),
     ...added.keys(),
   ])
-  if (order.length !== expectedIds.size || request.sheetOrder.some((sheetId) => !expectedIds.has(sheetId))) {
+  if (
+    order.length !== expectedIds.size ||
+    request.sheetOrder.some((sheetId) => !expectedIds.has(sheetId))
+  ) {
     throw new Error('Final sheet order does not match the saved worksheet set.')
   }
   if (new Set(request.sheetOrder).size !== request.sheetOrder.length) {
@@ -245,6 +248,21 @@ function buildSheetPlanContext(
       orderChanged,
     },
   }
+}
+
+function toPlannerStructuralOps(
+  request: WorkbookSaveRequest,
+  names: ReadonlyMap<string, string>,
+): PlannerStructuralOps {
+  const bySheet = new Map<string, PlannerStructuralOp[]>()
+  for (const structuralOp of request.structuralOps) {
+    const { sheetId, ...op } = structuralOp
+    const sheetName = requiredSheetName(names, sheetId)
+    const ops = bySheet.get(sheetName) ?? []
+    ops.push(op as PlannerStructuralOp)
+    bySheet.set(sheetName, ops)
+  }
+  return [...bySheet].map(([sheetName, ops]) => ({ sheetName, ops }))
 }
 
 function toPlannerCellEdits(
@@ -391,7 +409,7 @@ export async function saveWorkbookRequestViaEngine(
   const plan = await planCellEditsToXlsx(
     source,
     toPlannerCellEdits(request, sheetContext.plannerNames),
-    [],
+    toPlannerStructuralOps(request, sheetContext.plannerNames),
     [],
     sheetContext.plan,
     toPlannerFilterStates(request, sheetContext.plannerNames),
