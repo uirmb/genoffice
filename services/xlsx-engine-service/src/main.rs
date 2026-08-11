@@ -101,6 +101,12 @@ struct ReadRangeRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ReadFormulaCellsRequest {
+    sheet_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ArchiveEntriesRequest {
     entries: Vec<String>,
 }
@@ -282,6 +288,19 @@ async fn read_range(
     let result = engine
         .workbooks
         .read_range(&session_id, &request.sheet_id, &request.range)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    Ok(Json(serde_json::to_value(result).map_err(internal_error)?))
+}
+
+async fn read_formula_cells(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<ReadFormulaCellsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let mut engine = state.engine.lock().await;
+    let result = engine
+        .workbooks
+        .read_formula_cells(&session_id, &request.sheet_id)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     Ok(Json(serde_json::to_value(result).map_err(internal_error)?))
 }
@@ -519,6 +538,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/workbooks/blank", post(create_blank_workbook))
         .route("/v1/sessions/{session_id}", get(get_session_metadata).delete(delete_session))
         .route("/v1/sessions/{session_id}/ranges", post(read_range))
+        .route(
+            "/v1/sessions/{session_id}/formulas",
+            post(read_formula_cells),
+        )
         .route(
             "/v1/sessions/{session_id}/archive/manifest",
             get(archive_manifest_for_session),
