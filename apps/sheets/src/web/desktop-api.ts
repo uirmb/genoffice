@@ -34,6 +34,7 @@ import {
   createBlankXlsxWorkbook,
   deleteXlsxSession,
   openXlsxWorkbookBytes,
+  readXlsxWorkbookFormulaCells,
   readXlsxWorkbookRange,
 } from './engine-client'
 import { saveWorkbookRequestViaEngine } from './xlsx-save'
@@ -275,8 +276,8 @@ export function createSheetsWebDesktopController(
     readWorkbookRange: async (request: WorkbookRangeRequest): Promise<WorkbookRangeResult> =>
       readXlsxWorkbookRange(request),
     readWorkbookFormulas: async (
-      _request: WorkbookFormulaCellsRequest,
-    ): Promise<WorkbookFormulaCellsResult> => unavailable('readWorkbookFormulas'),
+      request: WorkbookFormulaCellsRequest,
+    ): Promise<WorkbookFormulaCellsResult> => readXlsxWorkbookFormulaCells(request),
     recalcWorkbook: async (_request: WorkbookRecalcRequest): Promise<WorkbookRecalcResult> =>
       unavailable('recalcWorkbook'),
     readWorkbookMedia: async (_request: WorkbookMediaRequest): Promise<WorkbookMediaResult> =>
