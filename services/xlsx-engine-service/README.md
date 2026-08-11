@@ -15,6 +15,7 @@ The Sheets Vite development and preview servers proxy same-origin browser calls 
 ## Current API
 
 - `GET /health`
+- `GET /metrics`
 - `POST /v1/sessions`
 - `POST /v1/workbooks`
 - `POST /v1/workbooks/blank`
@@ -55,6 +56,35 @@ Both values must be positive integers. A request that cannot obtain a slot withi
 The admission timeout is intentionally not an in-flight execution timeout. Most sidecar/archive operations are synchronous today; aborting only the HTTP future would not reliably stop the underlying file operation and could leave a half-finished save. Once a request receives a slot, it is allowed to finish atomically. A future hard execution deadline should be added only together with cooperative cancellation or an isolated worker-process boundary.
 
 `GET /health` reports `maxHeavyRequests`, `availableHeavySlots` and `heavyQueueTimeoutSecs` so a deployment can observe whether the configured pool is saturated.
+
+## Observability
+
+Every HTTP response carries `X-Request-Id`.
+
+- If a caller supplies a safe `X-Request-Id` containing only letters, digits, `-`, `_`, `.`, or `:` and no more than 128 characters, the service preserves it.
+- Otherwise the service generates an opaque `req_<uuid>` value.
+
+Each completed request writes one JSON line to stdout with only operational fields:
+
+```json
+{"event":"http_request","requestId":"req_...","method":"POST","path":"/v1/workbooks","status":201,"durationMs":42}
+```
+
+The log intentionally records the URL **path only**. It does not log query strings, workbook names, request bodies, file bytes, UC users, tenants, FsNode IDs, JWTs, or plugin permissions.
+
+Service startup also emits a JSON `service_started` event containing only listener and Engine limit configuration.
+
+`GET /metrics` exposes a small Prometheus-text-compatible operational surface:
+
+- `genoffice_xlsx_requests_total`
+- `genoffice_xlsx_server_errors_total`
+- `genoffice_xlsx_heavy_admission_rejects_total`
+- `genoffice_xlsx_heavy_slots`
+- `genoffice_xlsx_heavy_slots_available`
+- `genoffice_xlsx_workbook_sessions`
+- `genoffice_xlsx_lightweight_sessions`
+
+The endpoint intentionally has no user-, tenant-, workbook-name-, or file-level labels, keeping metric cardinality bounded and avoiding storage metadata leakage. Production ingress may restrict `/metrics` to the internal monitoring network while keeping `/health` available to the load balancer.
 
 ## Session expiry
 
@@ -97,4 +127,4 @@ The service boundary is intentionally prepared for later horizontal expansion wi
 
 The Rust service must remain independent of UC Web OS authentication and storage concepts: it does not receive tenant IDs, JWTs, CSRF tokens, FsNode IDs, or plugin permissions. UC owns files and authorization; the engine owns spreadsheet processing.
 
-The remaining single-node hardening work is production metrics/structured logging and, if required by real workloads, a cooperative/worker-process execution deadline. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
+The remaining single-node hardening work is primarily deployment tuning and, if required by real workloads, a cooperative/worker-process execution deadline. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
