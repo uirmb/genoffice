@@ -25,10 +25,18 @@ The Excel Web foundation now has a production-build Chromium round-trip covering
 - IronCalc recalculation;
 - recalculated formula cached-value persistence while preserving `<f>` formulas;
 - workbook image reads from the session archive with a 20MB preview limit;
+- filter state and row visibility preservation;
+- internal hyperlinks;
+- conditional formatting and data validation;
+- sheet protection;
+- page setup changes;
+- legacy notes/comments including comments/VML relationship creation;
 - host save state and download of the saved workbook;
 - reopen/read and downloaded-package verification after save.
 
-The remaining Sheets Web work is primarily higher-level save journal coverage (sheet/structure, filters, hyperlinks, conditional formatting, data validation, notes, protection, page setup, charts/visuals, tables, pivots, sparklines, defined names), plus the remaining platform-facing capabilities such as pivot definition reads, local-image insertion, export, and final UC Web OS host integration.
+The note writer also hardens third-party/minimal worksheets by adding the relationships namespace before inserting `legacyDrawing r:id`.
+
+The remaining Sheets Web work is primarily sheet management and structural row/column operations, then charts/visuals, tables, pivots, sparklines and defined names. Remaining platform-facing capabilities include pivot definition reads, local-image insertion, export, and final UC Web OS host integration.
 
 Development branches:
 
