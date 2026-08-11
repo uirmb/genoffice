@@ -43,6 +43,17 @@ The service keeps HTTP bodies bounded in production while leaving enough room fo
 
 The request limit intentionally exceeds the raw workbook limit because base64 content expands binary payloads by roughly one third and a preservation save can contain multiple replaced or added package parts.
 
+## Session expiry
+
+Workbook sessions are intentionally in-memory for the first single-node milestone, but abandoned browser sessions are no longer allowed to live forever.
+
+- `XLSX_ENGINE_SESSION_TTL_SECS` — idle workbook/session lifetime, default `3600` seconds.
+- `XLSX_ENGINE_CLEANUP_INTERVAL_SECS` — expired-session sweep interval, default `60` seconds.
+
+The cleanup interval must be less than or equal to the session TTL. Invalid or zero values fail service startup.
+
+Metadata reads, range/formula reads, recalculation and archive operations refresh a workbook session's last-access timestamp. A preservation save registers the newly produced workbook session with a fresh TTL. When a session expires, the service closes the native workbook session, removes metadata and recalculation cache entries, and deletes the session's temporary workbook directory. Explicit `DELETE /v1/sessions/:sessionId` performs the same cleanup immediately.
+
 ## Production deployment
 
 The first production topology is intentionally single-node:
@@ -59,4 +70,4 @@ The service boundary is intentionally prepared for later horizontal expansion wi
 
 The Rust service must remain independent of UC Web OS authentication and storage concepts: it does not receive tenant IDs, JWTs, CSRF tokens, FsNode IDs, or plugin permissions. UC owns files and authorization; the engine owns spreadsheet processing.
 
-The remaining single-node hardening work is session TTL/orphan cleanup and concurrency/time-budget controls. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
+The remaining single-node hardening work is crash/startup orphan-directory cleanup, concurrency/time-budget controls, and production metrics/structured logging. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
