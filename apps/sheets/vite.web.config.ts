@@ -7,6 +7,14 @@ const XLSX_GATEWAY_NODE_MODULES = new Map<string, readonly string[]>([
   ['node:path', ['dirname', 'join']],
 ])
 
+const xlsxEngineProxy = {
+  '/xlsx-engine': {
+    target: process.env.XLSX_ENGINE_URL || 'http://127.0.0.1:7301',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/xlsx-engine/, ''),
+  },
+}
+
 function xlsxGatewayBrowserBoundary(): Plugin {
   const prefix = '\0genoffice-sheets-web-node-stub:'
 
@@ -26,13 +34,12 @@ function xlsxGatewayBrowserBoundary(): Plugin {
       const message = JSON.stringify(
         `${source} is Electron-only XLSX file I/O and must not execute in Sheets Web.`,
       )
-      const declarations = exports
+      return exports
         .map(
           (name) =>
             `export function ${name}(..._args) { throw new Error(${message}) }`,
         )
         .join('\n')
-      return declarations
     },
   }
 }
@@ -43,13 +50,12 @@ export default defineConfig({
   server: {
     port: Number(process.env.SHEETS_WEB_PORT) || 5275,
     strictPort: true,
-    proxy: {
-      '/xlsx-engine': {
-        target: process.env.XLSX_ENGINE_URL || 'http://127.0.0.1:7301',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/xlsx-engine/, ''),
-      },
-    },
+    proxy: xlsxEngineProxy,
+  },
+  preview: {
+    port: Number(process.env.SHEETS_WEB_PORT) || 5275,
+    strictPort: true,
+    proxy: xlsxEngineProxy,
   },
   build: {
     outDir: '../../dist-web',
