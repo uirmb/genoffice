@@ -32,6 +32,17 @@ Workbook APIs are session-addressed. Browser clients treat `sessionId` as an opa
 
 The service directly reuses the existing `xlsx-sidecar` workbook sessions and IronCalc recalculation support. Browser preservation-save planning stays in the shared Sheets gateway, while this service owns workbook/session access and archive assembly.
 
+## Request limits
+
+The service keeps HTTP bodies bounded in production while leaving enough room for preservation saves, whose archive mutations carry base64-encoded package parts.
+
+- `XLSX_ENGINE_MAX_WORKBOOK_MB` — maximum raw `.xlsx` upload size, default `100` MiB.
+- `XLSX_ENGINE_MAX_REQUEST_MB` — maximum HTTP request body size, default `384` MiB.
+
+`XLSX_ENGINE_MAX_REQUEST_MB` must be greater than or equal to `XLSX_ENGINE_MAX_WORKBOOK_MB`. Invalid or zero values fail service startup rather than silently disabling the protection. Raw workbook uploads that exceed their configured limit return HTTP `413 Payload Too Large`.
+
+The request limit intentionally exceeds the raw workbook limit because base64 content expands binary payloads by roughly one third and a preservation save can contain multiple replaced or added package parts.
+
 ## Production deployment
 
 The first production topology is intentionally single-node:
