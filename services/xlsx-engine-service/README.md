@@ -10,15 +10,27 @@ npm run dev:xlsx-engine
 
 The default listener is `127.0.0.1:7301`. Override it with `XLSX_ENGINE_LISTEN`.
 
-The Sheets Vite development server proxies same-origin browser calls from `/xlsx-engine/*` to this service.
+The Sheets Vite development and preview servers proxy same-origin browser calls from `/xlsx-engine/*` to this service.
 
-## Initial API
+## Current API
 
 - `GET /health`
 - `POST /v1/sessions`
+- `POST /v1/workbooks`
+- `POST /v1/workbooks/blank`
+- `GET /v1/sessions/:sessionId`
 - `DELETE /v1/sessions/:sessionId`
+- `POST /v1/sessions/:sessionId/ranges`
+- `POST /v1/sessions/:sessionId/formulas`
+- `POST /v1/sessions/:sessionId/recalc`
+- `GET /v1/sessions/:sessionId/archive/manifest`
+- `POST /v1/sessions/:sessionId/archive/read`
+- `POST /v1/sessions/:sessionId/archive/scan`
+- `POST /v1/sessions/:sessionId/archive/save`
 
-All future workbook APIs are session-addressed. Browser clients must treat `sessionId` as an opaque string and may send it in `X-Xlsx-Session` as a future routing key.
+Workbook APIs are session-addressed. Browser clients treat `sessionId` as an opaque string and may send it in `X-Xlsx-Session` as a future routing key.
+
+The service directly reuses the existing `xlsx-sidecar` workbook sessions and IronCalc recalculation support. Browser preservation-save planning stays in the shared Sheets gateway, while this service owns workbook/session access and archive assembly.
 
 ## Production deployment
 
