@@ -1,7 +1,10 @@
 import {
   workbookFileSchema,
+  workbookFormulaCellsResultSchema,
   workbookRangeResultSchema,
   type WorkbookFile,
+  type WorkbookFormulaCellsRequest,
+  type WorkbookFormulaCellsResult,
   type WorkbookRangeRequest,
   type WorkbookRangeResult,
 } from '../shared/desktop-api'
@@ -165,6 +168,20 @@ export async function readXlsxWorkbookRange(
     },
   )
   return workbookRangeResultSchema.parse(await readJson<unknown>(response))
+}
+
+export async function readXlsxWorkbookFormulaCells(
+  request: WorkbookFormulaCellsRequest,
+): Promise<WorkbookFormulaCellsResult> {
+  const response = await fetch(
+    `${ENGINE_BASE}/v1/sessions/${encodeURIComponent(request.sessionId)}/formulas`,
+    {
+      method: 'POST',
+      headers: sessionHeaders(request.sessionId),
+      body: JSON.stringify({ sheetId: request.sheetId }),
+    },
+  )
+  return workbookFormulaCellsResultSchema.parse(await readJson<unknown>(response))
 }
 
 export async function getXlsxArchiveManifest(sessionId: string): Promise<XlsxArchiveEntry[]> {
