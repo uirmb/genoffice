@@ -75,7 +75,7 @@ const emptySaveRequest = {
 test.describe('UC Web OS XLSX Host', () => {
   test.skip(!hostUrl || !sheetsUrl, 'UC Host and Sheets Web preview URLs are required')
 
-  test('opens through UC selected-file RPC and saves selected/result files', async ({ page }) => {
+  test('opens, rejects stale normal save, and saves selected/result files', async ({ page }) => {
     const workbookBase64 = await createWorkbookBase64()
 
     await page.addInitScript(
@@ -105,6 +105,7 @@ test.describe('UC Web OS XLSX Host', () => {
             base64: string
           }>,
           lastWriteMode: 'selected' as 'selected' | 'result',
+          selectedVersion: 'source-v1',
         }
         ;(window as typeof window & { __ucMock?: typeof state }).__ucMock = state
 
@@ -150,7 +151,7 @@ test.describe('UC Web OS XLSX Host', () => {
                       : {
                           nodeId: 'node-source',
                           filename: params.filename,
-                          version: 'source-v1',
+                          version: state.selectedVersion,
                         }
                   break
                 case 'uc.fs.readSelectedFile':
@@ -180,10 +181,11 @@ test.describe('UC Web OS XLSX Host', () => {
                     nodeId,
                     base64: encodeBase64(bytes),
                   })
+                  if (state.lastWriteMode === 'selected') state.selectedVersion = 'source-v2'
                   result = {
                     nodeId,
                     filename: params.filename,
-                    version: state.lastWriteMode === 'result' ? 'copy-v1' : 'source-v2',
+                    version: state.lastWriteMode === 'result' ? 'copy-v1' : state.selectedVersion,
                   }
                   break
                 }
@@ -271,7 +273,7 @@ test.describe('UC Web OS XLSX Host', () => {
 
     const firstMock = await page.evaluate(() => {
       const state = (window as typeof window & { __ucMock: any }).__ucMock
-      return { calls: state.calls, saves: state.saves }
+      return { calls: state.calls, saves: state.saves, selectedVersion: state.selectedVersion }
     })
     expect(firstMock.calls.map((call: any) => call.method)).toEqual(
       expect.arrayContaining([
@@ -288,10 +290,48 @@ test.describe('UC Web OS XLSX Host', () => {
       writeMode: 'selected',
       nodeId: 'node-source',
     })
+    expect(firstMock.selectedVersion).toBe('source-v2')
 
     const firstSavedZip = await JSZip.loadAsync(Buffer.from(firstMock.saves[0].base64, 'base64'))
     const firstSheetXml = await firstSavedZip.file('xl/worksheets/sheet1.xml')?.async('text')
     expect(firstSheetXml).toContain('UC Saved')
+
+    await page.evaluate(() => {
+      ;(window as typeof window & { __ucMock: any }).__ucMock.selectedVersion = 'source-v3'
+    })
+
+    const staleSave = await editorFrame.locator('body').evaluate(
+      async (_body, payload) => {
+        const api = (window as typeof window & { desktopApi: any }).desktopApi
+        return api.saveWorkbookEdits({
+          ...payload.empty,
+          sessionId: payload.sessionId,
+          mode: 'save',
+          edits: [
+            {
+              sheetId: payload.sheetId,
+              row: 0,
+              column: 1,
+              writeValue: true,
+              value: 'Must Not Overwrite',
+            },
+          ],
+        })
+      },
+      {
+        sessionId: firstSave.file.sessionId,
+        sheetId,
+        empty: emptySaveRequest,
+      },
+    )
+    expect(staleSave.canceled).toBe(true)
+
+    const conflictMock = await page.evaluate(() => {
+      const state = (window as typeof window & { __ucMock: any }).__ucMock
+      return { calls: state.calls, saves: state.saves }
+    })
+    expect(conflictMock.saves).toHaveLength(1)
+    expect(conflictMock.calls.filter((call: any) => call.method === 'uc.fs.saveResultFile')).toHaveLength(1)
 
     const saveAs = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
@@ -331,5 +371,6 @@ test.describe('UC Web OS XLSX Host', () => {
     const copiedZip = await JSZip.loadAsync(Buffer.from(finalMock.saves[1].base64, 'base64'))
     const copiedSheetXml = await copiedZip.file('xl/worksheets/sheet1.xml')?.async('text')
     expect(copiedSheetXml).toContain('UC Saved')
+    expect(copiedSheetXml).not.toContain('Must Not Overwrite')
   })
 })
