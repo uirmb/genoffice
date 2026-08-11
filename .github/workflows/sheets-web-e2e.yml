@@ -187,6 +187,14 @@ jobs:
           curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SAVED_SESSION" >/dev/null
           curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
 
+      - name: Generate compatibility fixtures
+        run: npm run fixtures -w @genoffice/sheets
+
+      - name: Verify Rust-backed compatibility corpus
+        env:
+          XLSX_ENGINE_URL: http://127.0.0.1:7301
+        run: npm run compat:web-engine -w @genoffice/sheets
+
       - name: Build Sheets Web
         run: npm run build:web:sheets
 
@@ -234,6 +242,7 @@ jobs:
         with:
           name: sheets-web-foundation-artifacts
           path: |
+            apps/sheets/reports/web-engine-compatibility.json
             e2e/test-results
             e2e/playwright-report
             test-results
