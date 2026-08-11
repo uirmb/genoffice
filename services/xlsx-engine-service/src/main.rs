@@ -1,3 +1,5 @@
+mod observability;
+
 use std::{
     collections::HashMap,
     fs, io,
@@ -11,6 +13,7 @@ use axum::{
     body::{Body, Bytes},
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, HeaderValue, StatusCode},
+    middleware,
     response::Response,
     routing::{get, post},
     Json, Router,
@@ -94,6 +97,7 @@ impl Default for EngineState {
 struct AppState {
     sessions: Arc<MemorySessionStore>,
     engine: Arc<Mutex<EngineState>>,
+    metrics: Arc<observability::ServiceMetrics>,
     heavy_slots: Arc<Semaphore>,
     max_heavy_requests: usize,
     heavy_queue_timeout: Duration,
@@ -231,7 +235,12 @@ async fn acquire_heavy_permit_with(
 }
 
 async fn acquire_heavy_permit(state: &AppState) -> Result<OwnedSemaphorePermit, ApiError> {
-    acquire_heavy_permit_with(state.heavy_slots.clone(), state.heavy_queue_timeout).await
+    let result =
+        acquire_heavy_permit_with(state.heavy_slots.clone(), state.heavy_queue_timeout).await;
+    if matches!(&result, Err((status, _)) if *status == StatusCode::SERVICE_UNAVAILABLE) {
+        state.metrics.record_heavy_admission_reject();
+    }
+    result
 }
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -878,6 +887,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         sessions: Arc::new(MemorySessionStore::default()),
         engine: Arc::new(Mutex::new(EngineState::default())),
+        metrics: Arc::new(observability::ServiceMetrics::default()),
         heavy_slots: Arc::new(Semaphore::new(max_heavy_requests)),
         max_heavy_requests,
         heavy_queue_timeout,
@@ -891,6 +901,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(observability::metrics))
         .route("/v1/sessions", post(create_session))
         .route("/v1/workbooks", post(open_workbook))
         .route("/v1/workbooks/blank", post(create_blank_workbook))
@@ -921,15 +932,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(archive_save_for_session),
         )
         .layer(DefaultBodyLimit::max(max_request_bytes))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            observability::request_observability,
+        ))
         .with_state(state);
 
     println!(
-        "xlsx-engine-service listening on http://{address} (workbook max {}MB, request max {}MB, session ttl {}s, heavy slots {}, queue timeout {}s)",
-        max_workbook_bytes / (1024 * 1024),
-        max_request_bytes / (1024 * 1024),
-        session_ttl.as_secs(),
-        max_heavy_requests,
-        heavy_queue_timeout.as_secs()
+        "{}",
+        serde_json::json!({
+            "event": "service_started",
+            "service": "xlsx-engine-service",
+            "listen": address.to_string(),
+            "maxWorkbookMb": max_workbook_bytes / (1024 * 1024),
+            "maxRequestMb": max_request_bytes / (1024 * 1024),
+            "sessionTtlSecs": session_ttl.as_secs(),
+            "maxHeavyRequests": max_heavy_requests,
+            "heavyQueueTimeoutSecs": heavy_queue_timeout.as_secs(),
+        })
     );
 
     let result = axum::serve(listener, app)
