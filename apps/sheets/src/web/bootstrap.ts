@@ -5,6 +5,7 @@ import {
 } from '@genoffice/web-runtime'
 import { getXlsxEngineHealth } from './engine-client'
 import { createSheetsWebDesktopController } from './desktop-api'
+import { readLocalImageViaHost } from './local-image'
 import { readPivotDefinitionViaEngine } from './pivot-reader'
 import './product-policy.css'
 
@@ -48,7 +49,12 @@ async function bootstrapWeb(): Promise<void> {
   if (!host) throw new Error('Unable to initialize the Sheets web host runtime.')
 
   const controller = createSheetsWebDesktopController(host, embeddedRuntime?.bridge)
+
+  // Browser-only adapters stay behind the shared DesktopApi contract. Pivot
+  // parts come from the Rust session archive; image insertion delegates file
+  // selection to the Office Host so UC/Web OS can supply platform files.
   controller.desktopApi.readPivotDefinition = readPivotDefinitionViaEngine
+  controller.desktopApi.readLocalImage = (request) => readLocalImageViaHost(host, request)
 
   // Electron exposes this property as readonly through preload typings. Web
   // installs the same contract before importing the shared renderer.
