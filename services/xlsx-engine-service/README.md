@@ -54,6 +54,20 @@ The cleanup interval must be less than or equal to the session TTL. Invalid or z
 
 Metadata reads, range/formula reads, recalculation and archive operations refresh a workbook session's last-access timestamp. A preservation save registers the newly produced workbook session with a fresh TTL. When a session expires, the service closes the native workbook session, removes metadata and recalculation cache entries, and deletes the session's temporary workbook directory. Explicit `DELETE /v1/sessions/:sessionId` performs the same cleanup immediately.
 
+## Workspace isolation and crash recovery
+
+Workbook and scratch files live under an endpoint-specific workspace. The default base directory is the operating system temp directory plus `genoffice-xlsx-engine-v2`; it can be overridden with `XLSX_ENGINE_WORK_ROOT`.
+
+For example, `127.0.0.1:7301` uses a root similar to:
+
+```text
+<work-root>/127_0_0_1_7301/
+├─ workbooks/
+└─ scratch/
+```
+
+The service binds its TCP listener before touching this directory. Only after the endpoint is exclusively owned does startup remove leftovers from a previous crashed process and create a clean workspace. Different listen addresses/ports use different roots and are not deleted by each other. A graceful shutdown removes the current endpoint workspace immediately; an ungraceful process exit leaves it for the next successful owner of that endpoint to clean.
+
 ## Production deployment
 
 The first production topology is intentionally single-node:
@@ -70,4 +84,4 @@ The service boundary is intentionally prepared for later horizontal expansion wi
 
 The Rust service must remain independent of UC Web OS authentication and storage concepts: it does not receive tenant IDs, JWTs, CSRF tokens, FsNode IDs, or plugin permissions. UC owns files and authorization; the engine owns spreadsheet processing.
 
-The remaining single-node hardening work is crash/startup orphan-directory cleanup, concurrency/time-budget controls, and production metrics/structured logging. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
+The remaining single-node hardening work is concurrency/time-budget controls and production metrics/structured logging. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
