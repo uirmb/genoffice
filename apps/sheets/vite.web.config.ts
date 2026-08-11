@@ -17,6 +17,24 @@ const xlsxEngineProxy = {
 
 function xlsxGatewayBrowserBoundary(): Plugin {
   const prefix = '\0genoffice-sheets-web-node-stub:'
+  const imageBase64Needle = "Uint8Array.from(Buffer.from(image.base64, 'base64'))"
+  const imageBase64Replacement = '__genofficeDecodeBase64(image.base64)'
+  const imageBase64Helper = `
+function __genofficeDecodeBase64(input) {
+  const normalized = input.replace(/\\s+/g, '').replace(/-/g, '+').replace(/_/g, '/')
+  if (normalized.length % 4 === 1) throw new Error('Image payload is not valid base64.')
+  const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=')
+  let binary
+  try {
+    binary = atob(padded)
+  } catch {
+    throw new Error('Image payload is not valid base64.')
+  }
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return bytes
+}
+`
 
   return {
     name: 'genoffice-sheets-web-xlsx-gateway-browser-boundary',
@@ -40,6 +58,18 @@ function xlsxGatewayBrowserBoundary(): Plugin {
             `export function ${name}(..._args) { throw new Error(${message}) }`,
         )
         .join('\n')
+    },
+    transform(code, id) {
+      if (!id.replaceAll('\\', '/').endsWith('/src/gateway/xlsx-drawing-add.ts')) return null
+      if (!code.includes(imageBase64Needle)) {
+        throw new Error(
+          'Sheets Web image base64 boundary no longer matches xlsx-drawing-add.ts; review the browser adaptation.',
+        )
+      }
+      return {
+        code: `${code.replace(imageBase64Needle, imageBase64Replacement)}\n${imageBase64Helper}`,
+        map: null,
+      }
     },
   }
 }
