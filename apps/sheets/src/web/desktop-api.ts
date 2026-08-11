@@ -36,6 +36,7 @@ import {
   openXlsxWorkbookBytes,
   readXlsxWorkbookFormulaCells,
   readXlsxWorkbookRange,
+  recalcXlsxWorkbook,
 } from './engine-client'
 import { saveWorkbookRequestViaEngine } from './xlsx-save'
 
@@ -278,8 +279,10 @@ export function createSheetsWebDesktopController(
     readWorkbookFormulas: async (
       request: WorkbookFormulaCellsRequest,
     ): Promise<WorkbookFormulaCellsResult> => readXlsxWorkbookFormulaCells(request),
-    recalcWorkbook: async (_request: WorkbookRecalcRequest): Promise<WorkbookRecalcResult> =>
-      unavailable('recalcWorkbook'),
+    recalcWorkbook: async (request: WorkbookRecalcRequest): Promise<WorkbookRecalcResult> => {
+      if (!activeWorkbook) throw new Error('No active workbook session.')
+      return recalcXlsxWorkbook(request, activeWorkbook)
+    },
     readWorkbookMedia: async (_request: WorkbookMediaRequest): Promise<WorkbookMediaResult> =>
       unavailable('readWorkbookMedia'),
     readPivotDefinition: async (_request: WorkbookPivotRequest): Promise<WorkbookPivotDefinition> =>
