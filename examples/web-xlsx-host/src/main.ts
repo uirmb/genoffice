@@ -19,6 +19,7 @@ const frame = requireElement<HTMLIFrameElement>('office-frame')
 const picker = requireElement<HTMLInputElement>('xlsx-picker')
 const newButton = requireElement<HTMLButtonElement>('new-button')
 const saveButton = requireElement<HTMLButtonElement>('save-button')
+const downloadButton = requireElement<HTMLButtonElement>('download-button')
 const modeButton = requireElement<HTMLButtonElement>('mode-button')
 const localeButton = requireElement<HTMLButtonElement>('locale-button')
 const fileName = requireElement<HTMLSpanElement>('file-name')
@@ -36,6 +37,7 @@ let mode: OfficeEditorMode = 'edit'
 let locale = 'zh-CN'
 let requestCounter = 0
 let versionCounter = 0
+let hostStatus = 'loading'
 const files = new Map<string, OfficeFile>()
 
 function requestId(prefix: string): string {
@@ -47,11 +49,17 @@ function send(message: HostToEditorMessage): void {
   frame.contentWindow?.postMessage(message, sheetsOrigin)
 }
 
+function setHostState(value: string): void {
+  hostStatus = value
+  hostState.textContent = value
+}
+
 function render(): void {
   fileName.textContent = currentFile?.name ?? '新建工作簿'
   dirtyState.textContent = dirty ? 'dirty' : 'clean'
-  hostState.textContent = editorReady ? 'ready' : 'loading'
+  hostState.textContent = hostStatus
   saveButton.disabled = !editorReady || mode === 'view'
+  downloadButton.disabled = !currentFile
   modeButton.disabled = !editorReady
   localeButton.disabled = !editorReady
   modeButton.textContent = mode === 'edit' ? '切换为预览' : '切换为编辑'
@@ -63,6 +71,7 @@ function sendNew(): void {
   currentFile = null
   dirty = false
   versionCounter = 0
+  setHostState('opening')
   send({
     protocol: OFFICE_PROTOCOL_VERSION,
     type: 'office:new',
@@ -94,6 +103,7 @@ function sendNew(): void {
 
 function sendInit(): void {
   if (!editorReady || !currentFile) return
+  setHostState('opening')
   send({
     protocol: OFFICE_PROTOCOL_VERSION,
     type: 'office:init',
@@ -123,6 +133,17 @@ function sendInit(): void {
   })
 }
 
+function downloadCurrentFile(): void {
+  if (!currentFile) return
+  const blob = new Blob([currentFile.bytes], { type: currentFile.mimeType || XLSX_MIME })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = currentFile.name
+  anchor.click()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
 async function toOfficeFile(file: File): Promise<OfficeFile> {
   const bytes = await file.arrayBuffer()
   return {
@@ -145,6 +166,7 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
     case 'office:ready':
       if (message.payload.kind !== 'xlsx') return
       editorReady = true
+      setHostState('ready')
       render()
       sendNew()
       break
@@ -153,7 +175,8 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
       render()
       break
     case 'office:title-change':
-      fileName.textContent = message.payload.title
+      if (currentFile) currentFile = { ...currentFile, name: message.payload.title }
+      render()
       break
     case 'office:pick-file': {
       const input = document.createElement('input')
@@ -230,6 +253,8 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
             requestId: message.requestId,
             payload: { ok: false, code: 'CANCELLED', error: '已取消另存为。' },
           })
+          setHostState('ready')
+          render()
           break
         }
         name = normalizeXlsxName(requested)
@@ -263,16 +288,22 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
           },
         },
       })
+      setHostState('saved')
       render()
       break
     }
+    case 'office:save-result':
+      setHostState(message.payload.ok ? 'saved' : `save failed: ${message.payload.error ?? ''}`)
+      render()
+      break
     case 'office:state-result':
       dirty = message.payload.dirty
       mode = message.payload.mode
+      setHostState(message.payload.saving ? 'saving' : hostStatus)
       render()
       break
     case 'office:error':
-      hostState.textContent = `error: ${message.payload.message}`
+      setHostState(`error: ${message.payload.message}`)
       console.error('[GenOffice Excel Web]', message.payload)
       break
     default:
@@ -301,12 +332,16 @@ picker.addEventListener('change', async () => {
 
 saveButton.addEventListener('click', () => {
   if (!editorReady || mode === 'view') return
+  setHostState('saving')
+  render()
   send({
     protocol: OFFICE_PROTOCOL_VERSION,
     type: 'office:save',
     requestId: requestId('save'),
   })
 })
+
+downloadButton.addEventListener('click', downloadCurrentFile)
 
 modeButton.addEventListener('click', () => {
   mode = mode === 'edit' ? 'view' : 'edit'
