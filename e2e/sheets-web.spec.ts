@@ -56,7 +56,7 @@ async function createMinimalWorkbook(path: string): Promise<void> {
 test.describe('Sheets Web', () => {
   test.skip(!sheetsWebUrl, 'SHEETS_WEB_E2E_URL is only set by the Sheets Web browser CI step')
 
-  test('opens, reads formulas, recalculates, saves, rereads, and downloads a real XLSX through the iframe host', async ({
+  test('opens, reads formulas, recalculates, saves formula caches, rereads, and downloads a real XLSX through the iframe host', async ({
     page,
   }) => {
     test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
@@ -158,6 +158,13 @@ test.describe('Sheets Web', () => {
               writeValue: true,
               value: 'Browser Saved',
             },
+            {
+              sheetId: payload.sheetId,
+              row: 0,
+              column: 1,
+              writeValue: true,
+              value: 50,
+            },
           ],
           structuralOps: [],
           chartEdits: [],
@@ -173,7 +180,14 @@ test.describe('Sheets Web', () => {
           dvStates: [],
           pageSetupStates: [],
           noteStates: [],
-          formulaValues: [],
+          formulaValues: [
+            {
+              sheetId: payload.sheetId,
+              row: 0,
+              column: 2,
+              value: 100,
+            },
+          ],
           pivotCacheRefreshPaths: [],
           pivotRefreshUpdates: [],
           sheetProtections: [],
@@ -197,7 +211,7 @@ test.describe('Sheets Web', () => {
         return api.readWorkbookRange({
           sessionId: payload.sessionId,
           sheetId: payload.sheetId,
-          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 },
+          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
         })
       },
       { sessionId: saved.file.sessionId, sheetId: savedSheetId },
@@ -205,6 +219,10 @@ test.describe('Sheets Web', () => {
     expect(savedRange.cells.find((cell: any) => cell.row === 0 && cell.column === 0)?.value).toBe(
       'Browser Saved',
     )
+    expect(savedRange.cells.find((cell: any) => cell.row === 0 && cell.column === 1)?.value).toBe(50)
+    const savedFormula = savedRange.cells.find((cell: any) => cell.row === 0 && cell.column === 2)
+    expect(savedFormula?.formula).toBe('=B1*2')
+    expect(savedFormula?.value).toBe(100)
 
     const downloadPromise = page.waitForEvent('download')
     await page.locator('#download-button').click()
@@ -217,5 +235,6 @@ test.describe('Sheets Web', () => {
     const worksheetXml = await downloadedZip.file('xl/worksheets/sheet1.xml')?.async('text')
     expect(worksheetXml).toContain('Browser Saved')
     expect(worksheetXml).toContain('<f>B1*2</f>')
+    expect(worksheetXml).toMatch(/<c r="C1"[^>]*><f>B1\*2<\/f><v>100<\/v><\/c>/)
   })
 })
