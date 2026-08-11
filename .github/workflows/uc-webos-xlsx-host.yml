@@ -11,7 +11,7 @@ permissions:
 jobs:
   host-build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -23,11 +23,87 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Typecheck UC Web OS XLSX Host
         run: npx tsc -p examples/uc-webos-xlsx-host/tsconfig.json --noEmit
 
+      - name: Build XLSX Engine Service
+        run: npm run build:xlsx-engine
+
+      - name: Build Sheets Web
+        run: npm run build:web:sheets
+
       - name: Build UC Web OS XLSX Host
         run: npm run build:uc-webos-xlsx-host
+
+      - name: Start XLSX Engine Service
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/uc-xlsx-engine.log 2>&1 &
+          echo $! > /tmp/uc-xlsx-engine.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7301/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/uc-xlsx-engine.log
+          exit 1
+
+      - name: Start Sheets Web preview
+        run: |
+          npx vite preview --config vite.web.config.ts --host 127.0.0.1 --port 5275 > /tmp/uc-sheets-web.log 2>&1 &
+          echo $! > /tmp/uc-sheets-web.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5275/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/uc-sheets-web.log
+          exit 1
+        working-directory: apps/sheets
+
+      - name: Start UC Web OS XLSX Host preview
+        run: |
+          npx vite preview --config examples/uc-webos-xlsx-host/vite.config.ts --host 127.0.0.1 --port 8083 > /tmp/uc-xlsx-host.log 2>&1 &
+          echo $! > /tmp/uc-xlsx-host.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8083/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/uc-xlsx-host.log
+          exit 1
+
+      - name: Browser E2E (UC Web OS XLSX Host)
+        env:
+          SHEETS_WEB_E2E_URL: http://127.0.0.1:5275/
+          UC_WEBOS_XLSX_HOST_E2E_URL: http://127.0.0.1:8083/
+        run: |
+          set -o pipefail
+          npx playwright test e2e/uc-webos-xlsx-host.spec.ts --config e2e/playwright.config.ts 2>&1 | tee /tmp/uc-webos-xlsx-host-e2e.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: uc-webos-xlsx-host-artifacts
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+            test-results
+            playwright-report
+            /tmp/uc-xlsx-engine.log
+            /tmp/uc-sheets-web.log
+            /tmp/uc-xlsx-host.log
+            /tmp/uc-webos-xlsx-host-e2e.log
+          retention-days: 7
