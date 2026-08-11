@@ -80,8 +80,46 @@ const emptySaveRequest = {
   definedNamesState: null,
 }
 
-test.describe('Sheets Web image saves', () => {
+test.describe('Sheets Web Host file integration', () => {
   test.skip(!sheetsWebUrl, 'SHEETS_WEB_E2E_URL is only set by the Sheets Web browser CI step')
+
+  test('opens a workbook selected through the Host token/read-file flow', async ({ page }) => {
+    test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
+
+    const directory = await mkdtemp(join(tmpdir(), 'genoffice-sheets-web-host-open-'))
+    const workbookPath = join(directory, 'uc-webos-open.xlsx')
+    await createImageWorkbook(workbookPath)
+
+    await page.goto(hostUrl!)
+    const editorFrame = page.frameLocator('#office-frame')
+    await expect(editorFrame.locator('canvas').first()).toBeVisible({ timeout: 30_000 })
+
+    const fileChooserPromise = page.waitForEvent('filechooser')
+    const openResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        response.url().includes('/xlsx-engine/v1/workbooks?name=uc-webos-open.xlsx'),
+    )
+    const selectedWorkbookPromise = editorFrame.locator('body').evaluate(async () => {
+      const api = (window as typeof window & { desktopApi: any }).desktopApi
+      return api.selectWorkbook()
+    })
+    const fileChooser = await fileChooserPromise
+    await fileChooser.setFiles(workbookPath)
+
+    const opened = (await (await openResponsePromise).json()) as {
+      sessionId: string
+      name: string
+      sheets: Array<{ id: string; name: string }>
+    }
+    const selectedWorkbook = await selectedWorkbookPromise
+
+    expect(opened.name).toBe('uc-webos-open.xlsx')
+    expect(opened.sheets[0]?.name).toBe('Data')
+    expect(selectedWorkbook.sessionId).toBe(opened.sessionId)
+    expect(selectedWorkbook.name).toBe('uc-webos-open.xlsx')
+    expect(selectedWorkbook.sheets[0]?.name).toBe('Data')
+  })
 
   test('picks an image through the Host, inserts it, then moves the saved drawing anchor', async ({
     page,
