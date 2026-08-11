@@ -26,5 +26,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Typecheck UC Web OS XLSX Host
+        run: npx tsc -p examples/uc-webos-xlsx-host/tsconfig.json --noEmit
+
       - name: Build UC Web OS XLSX Host
         run: npm run build:uc-webos-xlsx-host
