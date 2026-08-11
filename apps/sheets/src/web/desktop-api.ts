@@ -45,6 +45,7 @@ import { saveWorkbookRequestViaEngine } from './xlsx-save'
 type SheetsLanguage = Awaited<ReturnType<DesktopApi['getLanguage']>>
 type LanguageHandler = Parameters<DesktopApi['onLanguageChanged']>[0]
 type MenuHandler = Parameters<DesktopApi['onMenuAction']>[0]
+type MenuAction = Parameters<MenuHandler>[0]
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
@@ -157,6 +158,31 @@ export function createSheetsWebDesktopController(
   const languageHandlers = new Set<LanguageHandler>()
   const menuHandlers = new Set<MenuHandler>()
 
+  const dispatchMenuAction = (action: MenuAction): void => {
+    for (const handler of menuHandlers) handler(action)
+  }
+
+  const handleWebFileShortcut = (event: KeyboardEvent): void => {
+    if (event.repeat || event.altKey || !(event.metaKey || event.ctrlKey)) return
+    const key = event.key.toLowerCase()
+    let action: MenuAction | null = null
+    if (key === 's') action = event.shiftKey ? 'save-as' : 'save'
+    else if (key === 'o' && !event.shiftKey) action = 'open'
+    if (!action) return
+
+    // Electron owns these accelerators in the desktop build. Sheets Web has no
+    // native application menu, so keep the browser from interpreting Ctrl/Cmd+S
+    // as "save this HTML page" and route all file commands through the same
+    // renderer menu-action path instead.
+    event.preventDefault()
+    if (action === 'open' && menuHandlers.size === 0) {
+      pendingOpenSignal = true
+      return
+    }
+    dispatchMenuAction(action)
+  }
+  window.addEventListener('keydown', handleWebFileShortcut)
+
   const setLanguage = (locale: string): void => {
     const next = normalizeLanguage(locale)
     if (next === currentLanguage) return
@@ -170,7 +196,7 @@ export function createSheetsWebDesktopController(
       return
     }
     pendingOpenSignal = false
-    for (const handler of menuHandlers) handler('open')
+    dispatchMenuAction('open')
   }
 
   const setActiveWorkbook = (workbook: WorkbookFile): void => {
@@ -274,7 +300,7 @@ export function createSheetsWebDesktopController(
     }
 
     if (message.type === 'office:save') {
-      for (const handler of menuHandlers) handler('save')
+      dispatchMenuAction('save')
     }
   }
 
@@ -455,6 +481,7 @@ export function createSheetsWebDesktopController(
     },
     destroy: () => {
       unsubscribeBridge?.()
+      window.removeEventListener('keydown', handleWebFileShortcut)
       languageHandlers.clear()
       menuHandlers.clear()
       if (activeWorkbook) void deleteXlsxSession(activeWorkbook.sessionId)
