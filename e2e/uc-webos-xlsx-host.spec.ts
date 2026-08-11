@@ -300,23 +300,28 @@ test.describe('UC Web OS XLSX Host', () => {
       ;(window as typeof window & { __ucMock: any }).__ucMock.selectedVersion = 'source-v3'
     })
 
-    const staleSave = await editorFrame.locator('body').evaluate(
+    const staleSaveError = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
         const api = (window as typeof window & { desktopApi: any }).desktopApi
-        return api.saveWorkbookEdits({
-          ...payload.empty,
-          sessionId: payload.sessionId,
-          mode: 'save',
-          edits: [
-            {
-              sheetId: payload.sheetId,
-              row: 0,
-              column: 1,
-              writeValue: true,
-              value: 'Must Not Overwrite',
-            },
-          ],
-        })
+        try {
+          await api.saveWorkbookEdits({
+            ...payload.empty,
+            sessionId: payload.sessionId,
+            mode: 'save',
+            edits: [
+              {
+                sheetId: payload.sheetId,
+                row: 0,
+                column: 1,
+                writeValue: true,
+                value: 'Must Not Overwrite',
+              },
+            ],
+          })
+          return null
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error)
+        }
       },
       {
         sessionId: firstSave.file.sessionId,
@@ -324,7 +329,7 @@ test.describe('UC Web OS XLSX Host', () => {
         empty: emptySaveRequest,
       },
     )
-    expect(staleSave.canceled).toBe(true)
+    expect(staleSaveError).toContain('VERSION_CONFLICT')
 
     const conflictMock = await page.evaluate(() => {
       const state = (window as typeof window & { __ucMock: any }).__ucMock
