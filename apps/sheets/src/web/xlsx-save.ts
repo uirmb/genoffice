@@ -30,6 +30,7 @@ type PlannerPageSetupStates = Parameters<typeof planCellEditsToXlsx>[12]
 type PlannerNoteStates = Parameters<typeof planCellEditsToXlsx>[13]
 type PlannerTableAdditions = NonNullable<Parameters<typeof planCellEditsToXlsx>[14]>
 type PlannerPivotAdditions = NonNullable<Parameters<typeof planCellEditsToXlsx>[15]>
+type PlannerPivotRefreshUpdates = NonNullable<Parameters<typeof planCellEditsToXlsx>[17]>
 type PlannerSparklineAdditions = NonNullable<Parameters<typeof planCellEditsToXlsx>[19]>
 
 interface SheetPlanContext {
@@ -81,10 +82,6 @@ function mergeAdditions(plan: MutationPlan): Map<string, string | Uint8Array> {
   for (const [path, content] of plan.added) additions.set(path, content)
   for (const [path, content] of plan.addedBinary) additions.set(path, content)
   return additions
-}
-
-function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
-  return request.pivotRefreshUpdates.length > 0
 }
 
 function originalSheetNames(workbook: WorkbookFile): Map<string, string> {
@@ -290,6 +287,29 @@ function toPlannerPivotAdditions(
   }))
 }
 
+function toPlannerPivotRefreshUpdates(
+  request: WorkbookSaveRequest,
+  names: ReadonlyMap<string, string>,
+): PlannerPivotRefreshUpdates {
+  return request.pivotRefreshUpdates.map(({ sheetId, relayout, ...update }) => {
+    const sheetName = requiredSheetName(names, sheetId)
+    if (!relayout) return { ...update, sheetName }
+
+    const { sheetId: relayoutSheetId, sourceSheetId, ...layout } = relayout
+    if (relayoutSheetId !== sheetId) {
+      throw new Error('Pivot relayout target worksheet does not match the refresh target worksheet.')
+    }
+    return {
+      ...update,
+      sheetName,
+      relayout: {
+        ...layout,
+        sourceSheetName: requiredSheetName(names, sourceSheetId),
+      },
+    }
+  })
+}
+
 function toPlannerSparklineAdditions(
   request: WorkbookSaveRequest,
   names: ReadonlyMap<string, string>,
@@ -424,20 +444,12 @@ function toPlannerFormulaValues(
  * Browser preservation-save path. The same mutation planner used by Electron
  * reads package parts through the Rust session API; Rust only reassembles the
  * planned replacement/add/remove sets and returns standard XLSX bytes.
- *
- * Web enables journal families only after they have direct preservation tests.
- * Unsupported high-complexity journals still fail closed rather than producing
- * a partially saved workbook.
  */
 export async function saveWorkbookRequestViaEngine(
   request: WorkbookSaveRequest,
   workbook: WorkbookFile,
   name: string,
 ): Promise<SavedXlsxWorkbook & { touchedEntries: readonly string[] }> {
-  if (hasUnsupportedAdvancedEdits(request)) {
-    throw new Error('This workbook contains edits that are not enabled in Sheets Web save yet.')
-  }
-
   const sheetContext = buildSheetPlanContext(request, workbook)
   const manifest = await getXlsxArchiveManifest(request.sessionId)
   const source = createEngineEntrySource(request.sessionId, manifest)
@@ -459,7 +471,7 @@ export async function saveWorkbookRequestViaEngine(
     toPlannerTableAdditions(request, sheetContext.plannerNames),
     toPlannerPivotAdditions(request, sheetContext.plannerNames),
     request.pivotCacheRefreshPaths,
-    [],
+    toPlannerPivotRefreshUpdates(request, sheetContext.plannerNames),
     request.visualEdits,
     toPlannerSparklineAdditions(request, sheetContext.plannerNames),
     toPlannerFormulaValues(request, sheetContext.plannerNames),
