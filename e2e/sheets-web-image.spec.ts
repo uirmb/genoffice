@@ -8,7 +8,7 @@ import JSZip from 'jszip'
 const sheetsWebUrl = process.env.SHEETS_WEB_E2E_URL
 const hostUrl = process.env.SHEETS_WEB_HOST_E2E_URL
 
-// Valid 1x1 PNG; the browser save path must preserve the exact binary bytes.
+// Valid 1x1 PNG; the Host picker and XLSX save path must preserve the exact bytes.
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlZ4xkAAAAASUVORK5CYII='
 
@@ -83,7 +83,9 @@ const emptySaveRequest = {
 test.describe('Sheets Web image saves', () => {
   test.skip(!sheetsWebUrl, 'SHEETS_WEB_E2E_URL is only set by the Sheets Web browser CI step')
 
-  test('inserts image bytes then moves the saved drawing anchor', async ({ page }) => {
+  test('picks an image through the Host, inserts it, then moves the saved drawing anchor', async ({
+    page,
+  }) => {
     test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
 
     const directory = await mkdtemp(join(tmpdir(), 'genoffice-sheets-web-image-'))
@@ -106,6 +108,21 @@ test.describe('Sheets Web image saves', () => {
     }
     const sheetId = opened.sheets[0]!.id
 
+    // Exercise the same office:pick-file bridge that UC/Web OS will implement.
+    const fileChooserPromise = page.waitForEvent('filechooser')
+    const imageResultPromise = editorFrame.locator('body').evaluate(async () => {
+      const api = (window as typeof window & { desktopApi: any }).desktopApi
+      return api.readLocalImage({ path: 'host-picker://insert-image' })
+    })
+    const fileChooser = await fileChooserPromise
+    await fileChooser.setFiles({
+      name: 'uc-webos-image.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(PNG_BASE64, 'base64'),
+    })
+    const pickedImage = await imageResultPromise
+    expect(pickedImage).toEqual({ mediaType: 'image/png', base64: PNG_BASE64 })
+
     const inserted = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
         const api = (window as typeof window & { desktopApi: any }).desktopApi
@@ -126,7 +143,7 @@ test.describe('Sheets Web image saves', () => {
                 toRowOffset: 0,
                 toColumnOffset: 0,
               },
-              image: { mediaType: 'image/png', base64: payload.pngBase64 },
+              image: payload.image,
             },
           ],
         })
@@ -134,7 +151,7 @@ test.describe('Sheets Web image saves', () => {
       {
         sessionId: opened.sessionId,
         sheetId,
-        pngBase64: PNG_BASE64,
+        image: pickedImage,
         empty: emptySaveRequest,
       },
     )
