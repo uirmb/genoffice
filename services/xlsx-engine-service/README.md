@@ -58,3 +58,5 @@ No Redis, database, object storage, or message queue is required for the first m
 The service boundary is intentionally prepared for later horizontal expansion without changing Sheets Web, UC Excel Host, or the `office:*` iframe protocol. Session placement and routing can be introduced behind the same API when multiple Rust instances are needed.
 
 The Rust service must remain independent of UC Web OS authentication and storage concepts: it does not receive tenant IDs, JWTs, CSRF tokens, FsNode IDs, or plugin permissions. UC owns files and authorization; the engine owns spreadsheet processing.
+
+The remaining single-node hardening work is session TTL/orphan cleanup and concurrency/time-budget controls. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
