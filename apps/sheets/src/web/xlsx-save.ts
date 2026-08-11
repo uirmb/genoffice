@@ -88,8 +88,7 @@ function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
     request.pivotAdditions.length > 0 ||
     request.pivotCacheRefreshPaths.length > 0 ||
     request.pivotRefreshUpdates.length > 0 ||
-    request.sparklineAdditions.length > 0 ||
-    request.definedNamesState !== null
+    request.sparklineAdditions.length > 0
   )
 }
 
@@ -417,7 +416,7 @@ export async function saveWorkbookRequestViaEngine(
     toPlannerCfStates(request, sheetContext.plannerNames),
     toPlannerDvStates(request, sheetContext.plannerNames),
     toPlannerSheetProtections(request, sheetContext.plannerNames),
-    null,
+    request.definedNamesState,
     [],
     toPlannerPageSetupStates(request, sheetContext.plannerNames),
     toPlannerNoteStates(request, sheetContext.plannerNames),
