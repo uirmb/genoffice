@@ -81,7 +81,6 @@ function mergeAdditions(plan: MutationPlan): Map<string, string | Uint8Array> {
 
 function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
   return (
-    request.chartEdits.length > 0 ||
     request.visualEdits.length > 0 ||
     request.visualAdditions.length > 0 ||
     request.tableAdditions.length > 0 ||
@@ -409,7 +408,7 @@ export async function saveWorkbookRequestViaEngine(
     source,
     toPlannerCellEdits(request, sheetContext.plannerNames),
     toPlannerStructuralOps(request, sheetContext.plannerNames),
-    [],
+    request.chartEdits,
     sheetContext.plan,
     toPlannerFilterStates(request, sheetContext.plannerNames),
     toPlannerHyperlinkEdits(request, sheetContext.plannerNames),
