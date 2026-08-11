@@ -83,11 +83,7 @@ function mergeAdditions(plan: MutationPlan): Map<string, string | Uint8Array> {
 }
 
 function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
-  return (
-    request.pivotAdditions.length > 0 ||
-    request.pivotCacheRefreshPaths.length > 0 ||
-    request.pivotRefreshUpdates.length > 0
-  )
+  return request.pivotAdditions.length > 0 || request.pivotRefreshUpdates.length > 0
 }
 
 function originalSheetNames(workbook: WorkbookFile): Map<string, string> {
@@ -450,7 +446,7 @@ export async function saveWorkbookRequestViaEngine(
     toPlannerNoteStates(request, sheetContext.plannerNames),
     toPlannerTableAdditions(request, sheetContext.plannerNames),
     [],
-    [],
+    request.pivotCacheRefreshPaths,
     [],
     request.visualEdits,
     toPlannerSparklineAdditions(request, sheetContext.plannerNames),
