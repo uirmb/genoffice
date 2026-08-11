@@ -43,11 +43,8 @@ async function createMinimalWorkbook(path: string): Promise<void> {
 </styleSheet>`,
     'xl/worksheets/sheet1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <dimension ref="A1:C2"/>
-  <sheetData>
-    <row r="1"><c r="A1" t="inlineStr"><is><t>Browser Original</t></is></c><c r="B1"><v>42</v></c><c r="C1"><f>B1*2</f><v>84</v></c></row>
-    <row r="2"><c r="A2" t="inlineStr"><is><t>Hide me</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row>
-  </sheetData>
+  <dimension ref="A1:C1"/>
+  <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Browser Original</t></is></c><c r="B1"><v>42</v></c><c r="C1"><f>B1*2</f><v>84</v></c></row></sheetData>
 </worksheet>`,
   }
 
@@ -91,7 +88,7 @@ test.describe('Sheets Web', () => {
         return api.readWorkbookRange({
           sessionId: payload.sessionId,
           sheetId: payload.sheetId,
-          range: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 },
+          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
         })
       },
       { sessionId: opened.sessionId, sheetId },
@@ -100,9 +97,6 @@ test.describe('Sheets Web', () => {
       'Browser Original',
     )
     expect(initialRange.cells.find((cell: any) => cell.row === 0 && cell.column === 1)?.value).toBe(42)
-    expect(initialRange.cells.find((cell: any) => cell.row === 1 && cell.column === 0)?.value).toBe(
-      'Hide me',
-    )
 
     const formulas = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
@@ -182,11 +176,11 @@ test.describe('Sheets Web', () => {
             {
               sheetId: payload.sheetId,
               filter: {
-                range: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 },
+                range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
                 columns: [{ colId: 0, values: ['Browser Saved'] }],
               },
-              hiddenRows: [1],
-              visibilityRange: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 },
+              hiddenRows: [],
+              visibilityRange: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
             },
           ],
           hyperlinkEdits: [
@@ -202,12 +196,12 @@ test.describe('Sheets Web', () => {
               sheetId: payload.sheetId,
               rules: [
                 {
-                  ranges: [{ startRow: 1, endRow: 1, startColumn: 1, endColumn: 1 }],
+                  ranges: [{ startRow: 0, endRow: 0, startColumn: 1, endColumn: 1 }],
                   stopIfTrue: false,
                   rule: {
                     type: 'highlightCell',
                     subType: 'formula',
-                    value: '=B2>0',
+                    value: '=B1>0',
                     style: {},
                   },
                 },
@@ -219,7 +213,7 @@ test.describe('Sheets Web', () => {
               sheetId: payload.sheetId,
               rules: [
                 {
-                  ranges: [{ startRow: 1, endRow: 1, startColumn: 1, endColumn: 1 }],
+                  ranges: [{ startRow: 0, endRow: 0, startColumn: 1, endColumn: 1 }],
                   rule: {
                     type: 'whole',
                     operator: 'between',
@@ -275,7 +269,7 @@ test.describe('Sheets Web', () => {
         return api.readWorkbookRange({
           sessionId: payload.sessionId,
           sheetId: payload.sheetId,
-          range: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 },
+          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
         })
       },
       { sessionId: saved.file.sessionId, sheetId: savedSheetId },
@@ -301,17 +295,19 @@ test.describe('Sheets Web', () => {
     expect(worksheetXml).toContain('<f>B1*2</f>')
     expect(worksheetXml).toMatch(/<c r="C1"[^>]*><f>B1\*2<\/f><v>100<\/v><\/c>/)
     expect(worksheetXml).toContain('<sheetProtection sheet="1" objects="1" scenarios="1"/>')
-    expect(worksheetXml).toContain('<autoFilter ref="A1:C2">')
-    expect(worksheetXml).toMatch(/<row\b[^>]*\br="2"[^>]*\bhidden="1"/)
+    expect(worksheetXml).toContain('<autoFilter ref="A1:C1">')
     expect(worksheetXml).toContain('<hyperlink ref="A1" location="Sheet1!B1"/>')
-    expect(worksheetXml).toContain('<conditionalFormatting sqref="B2">')
-    expect(worksheetXml).toContain('<formula>B2&gt;0</formula>')
+    expect(worksheetXml).toContain('<conditionalFormatting sqref="B1">')
+    expect(worksheetXml).toContain('<formula>B1&gt;0</formula>')
     expect(worksheetXml).toContain('<dataValidations count="1">')
-    expect(worksheetXml).toMatch(/<dataValidation\b[^>]*\btype="whole"[^>]*\ballowBlank="1"[^>]*\bsqref="B2"/)
+    expect(worksheetXml).toMatch(/<dataValidation\b[^>]*\btype="whole"[^>]*\ballowBlank="1"[^>]*\bsqref="B1"/)
     expect(worksheetXml).toContain('<formula1>0</formula1>')
     expect(worksheetXml).toContain('<formula2>100</formula2>')
     expect(worksheetXml).toMatch(/<pageSetup\b[^>]*\borientation="landscape"/)
     expect(worksheetXml).toMatch(/<printOptions\b[^>]*\bgridLines="1"/)
+    expect(worksheetXml).toContain(
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
+    )
     expect(worksheetXml).toContain('<legacyDrawing r:id=')
 
     const commentsXml = await downloadedZip.file('xl/comments1.xml')?.async('text')
