@@ -95,6 +95,14 @@ struct AppState {
     max_workbook_bytes: usize,
     session_ttl: Duration,
     cleanup_interval: Duration,
+    workbook_root: PathBuf,
+    scratch_root: PathBuf,
+}
+
+struct EngineWorkspace {
+    root: PathBuf,
+    workbook_root: PathBuf,
+    scratch_root: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -242,7 +250,7 @@ async fn create_blank_workbook(
     Query(query): Query<OpenWorkbookQuery>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let name = safe_workbook_name(query.name.as_deref().unwrap_or("Untitled.xlsx"));
-    let directory = workbook_directory();
+    let directory = workbook_directory(&state);
     fs::create_dir_all(&directory).map_err(internal_error)?;
     let path = directory.join(&name);
 
@@ -270,7 +278,7 @@ async fn open_workbook(
     }
 
     let name = safe_workbook_name(query.name.as_deref().unwrap_or("workbook.xlsx"));
-    let directory = workbook_directory();
+    let directory = workbook_directory(&state);
     fs::create_dir_all(&directory).map_err(internal_error)?;
     let path = directory.join(&name);
     fs::write(&path, &bytes).map_err(internal_error)?;
@@ -385,7 +393,7 @@ async fn archive_read_for_session(
     Json(request): Json<ArchiveEntriesRequest>,
 ) -> Result<Json<ArchiveReadResponse>, ApiError> {
     let path = session_path(&state, &session_id).await?;
-    let directory = scratch_directory("read");
+    let directory = scratch_directory(&state, "read");
     fs::create_dir_all(&directory).map_err(internal_error)?;
 
     let result = (|| -> Result<Vec<ArchiveReadEntry>, ApiError> {
@@ -425,7 +433,7 @@ async fn archive_save_for_session(
 ) -> Result<Response, ApiError> {
     let source_path = session_path(&state, &session_id).await?;
     let name = safe_workbook_name(request.name.as_deref().unwrap_or("workbook.xlsx"));
-    let directory = workbook_directory();
+    let directory = workbook_directory(&state);
     let content_directory = directory.join("patch");
     fs::create_dir_all(&content_directory).map_err(internal_error)?;
     let target_path = directory.join(&name);
@@ -600,15 +608,68 @@ fn write_archive_content(
         .collect()
 }
 
-fn workbook_directory() -> PathBuf {
-    std::env::temp_dir()
-        .join("genoffice-xlsx-engine")
+fn workspace_key(address: SocketAddr) -> String {
+    address
+        .to_string()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn prepare_workspace(address: SocketAddr) -> Result<EngineWorkspace, io::Error> {
+    let base = match std::env::var("XLSX_ENGINE_WORK_ROOT") {
+        Ok(path) if !path.trim().is_empty() => PathBuf::from(path),
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "XLSX_ENGINE_WORK_ROOT must not be empty.",
+            ))
+        }
+        Err(std::env::VarError::NotPresent) => {
+            std::env::temp_dir().join("genoffice-xlsx-engine-v2")
+        }
+        Err(error) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Unable to read XLSX_ENGINE_WORK_ROOT: {error}"),
+            ))
+        }
+    };
+    let root = base.join(workspace_key(address));
+
+    // main() binds the listener before reaching this function. Therefore no
+    // other healthy Engine can own this exact endpoint while we remove leftovers
+    // from a previous crashed process. Other ports/addresses use different roots.
+    if root.exists() {
+        fs::remove_dir_all(&root)?;
+    }
+    let workbook_root = root.join("workbooks");
+    let scratch_root = root.join("scratch");
+    fs::create_dir_all(&workbook_root)?;
+    fs::create_dir_all(&scratch_root)?;
+
+    Ok(EngineWorkspace {
+        root,
+        workbook_root,
+        scratch_root,
+    })
+}
+
+fn workbook_directory(state: &AppState) -> PathBuf {
+    state
+        .workbook_root
         .join(Uuid::new_v4().to_string())
 }
 
-fn scratch_directory(kind: &str) -> PathBuf {
-    std::env::temp_dir()
-        .join("genoffice-xlsx-engine-scratch")
+fn scratch_directory(state: &AppState, kind: &str) -> PathBuf {
+    state
+        .scratch_root
         .join(format!("{kind}-{}", Uuid::new_v4()))
 }
 
@@ -733,12 +794,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
+    // Bind first. Only after the endpoint is exclusively ours is it safe to
+    // remove this endpoint's workspace left by an ungraceful previous process.
+    let listener = tokio::net::TcpListener::bind(address).await?;
+    let workspace = prepare_workspace(address)?;
+    let workspace_root = workspace.root.clone();
+
     let state = AppState {
         sessions: Arc::new(MemorySessionStore::default()),
         engine: Arc::new(Mutex::new(EngineState::default())),
         max_workbook_bytes,
         session_ttl,
         cleanup_interval,
+        workbook_root: workspace.workbook_root,
+        scratch_root: workspace.scratch_root,
     };
     tokio::spawn(session_cleanup_loop(state.clone()));
 
@@ -776,7 +845,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(DefaultBodyLimit::max(max_request_bytes))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(address).await?;
     println!(
         "xlsx-engine-service listening on http://{address} (workbook max {}MB, request max {}MB, session ttl {}s)",
         max_workbook_bytes / (1024 * 1024),
@@ -784,10 +852,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         session_ttl.as_secs()
     );
 
-    axum::serve(listener, app)
+    let result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
 
+    // Graceful shutdown leaves no workspace. If the process is killed, the
+    // next process that successfully binds this endpoint removes it at startup.
+    let _ = fs::remove_dir_all(&workspace_root);
+    result?;
     Ok(())
 }
 
