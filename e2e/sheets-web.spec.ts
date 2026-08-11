@@ -509,7 +509,10 @@ test.describe('Sheets Web', () => {
     expect(downloadedZip.file('xl/worksheets/sheet2.xml')).toBeNull()
     const workbookXml = await downloadedZip.file('xl/workbook.xml')?.async('text')
     expect(workbookXml).toMatch(
-      /<sheets>\s*<sheet\b[^>]*name="Copy"[\s\S]*?<sheet\b[^>]*name="Renamed"[\s\S]*?<sheet\b[^>]*name="Added"[^>]*state="hidden"[^>]*\/>\s*<\/sheets>/,
+      /<sheets>\s*<sheet\b[^>]*name="Copy"[\s\S]*?<sheet\b[^>]*name="Renamed"[\s\S]*?<sheet\b[^>]*name="Added"[^>]*\/>\s*<\/sheets>/,
+    )
+    expect(workbookXml).toMatch(
+      /<sheet\b(?=[^>]*name="Added")(?=[^>]*state="hidden")[^>]*\/>/,
     )
     expect(workbookXml).not.toContain('name="RemoveMe"')
 
