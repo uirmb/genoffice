@@ -60,10 +60,19 @@ async function createMinimalWorkbook(path: string): Promise<void> {
   await writeFile(path, bytes)
 }
 
+async function worksheetContaining(zip: JSZip, needle: string): Promise<string | undefined> {
+  for (const [name, file] of Object.entries(zip.files)) {
+    if (!/^xl\/worksheets\/[^/]+\.xml$/.test(name) || file.dir) continue
+    const xml = await file.async('text')
+    if (xml.includes(needle)) return xml
+  }
+  return undefined
+}
+
 test.describe('Sheets Web', () => {
   test.skip(!sheetsWebUrl, 'SHEETS_WEB_E2E_URL is only set by the Sheets Web browser CI step')
 
-  test('preserves formulas, worksheet journals, and sheet management through the iframe host', async ({
+  test('preserves formulas, worksheet journals, sheet management, and structural edits', async ({
     page,
   }) => {
     test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
@@ -184,13 +193,66 @@ test.describe('Sheets Web', () => {
             },
             {
               sheetId: payload.copySheetId,
-              row: 1,
+              row: 0,
               column: 0,
               writeValue: true,
               value: 'Edited Copy',
             },
           ],
-          structuralOps: [],
+          structuralOps: [
+            { sheetId: payload.copySheetId, kind: 'insert-rows', index: 1, count: 1 },
+            { sheetId: payload.copySheetId, kind: 'move-rows', index: 0, count: 1, before: 2 },
+            { sheetId: payload.addedSheetId, kind: 'insert-rows', index: 0, count: 3 },
+            { sheetId: payload.addedSheetId, kind: 'remove-rows', index: 2, count: 1 },
+            { sheetId: payload.addedSheetId, kind: 'insert-cols', index: 0, count: 3 },
+            { sheetId: payload.addedSheetId, kind: 'remove-cols', index: 2, count: 1 },
+            { sheetId: payload.addedSheetId, kind: 'set-row-size', start: 0, end: 0, size: 24 },
+            { sheetId: payload.addedSheetId, kind: 'set-col-size', start: 0, end: 0, size: 18 },
+            {
+              sheetId: payload.addedSheetId,
+              kind: 'set-rows-hidden',
+              start: 1,
+              end: 1,
+              hidden: true,
+            },
+            {
+              sheetId: payload.addedSheetId,
+              kind: 'set-cols-hidden',
+              start: 1,
+              end: 1,
+              hidden: true,
+            },
+            {
+              sheetId: payload.addedSheetId,
+              kind: 'set-rows-outline',
+              start: 0,
+              end: 1,
+              level: 1,
+              collapsed: false,
+            },
+            {
+              sheetId: payload.addedSheetId,
+              kind: 'set-cols-outline',
+              start: 0,
+              end: 1,
+              level: 1,
+            },
+            {
+              sheetId: payload.addedSheetId,
+              kind: 'merge-cells',
+              range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 1 },
+            },
+            {
+              sheetId: payload.addedSheetId,
+              kind: 'merge-cells',
+              range: { startRow: 1, endRow: 1, startColumn: 0, endColumn: 1 },
+            },
+            {
+              sheetId: payload.addedSheetId,
+              kind: 'unmerge-cells',
+              range: { startRow: 1, endRow: 1, startColumn: 0, endColumn: 1 },
+            },
+          ],
           chartEdits: [],
           visualEdits: [],
           visualAdditions: [],
@@ -343,11 +405,16 @@ test.describe('Sheets Web', () => {
       { sessionId: saved.file.sessionId, sheetId: copySavedSheetId },
     )
     expect(copyRange.cells.find((cell: any) => cell.row === 0 && cell.column === 0)?.value).toBe(
-      'Browser Original',
-    )
-    expect(copyRange.cells.find((cell: any) => cell.row === 1 && cell.column === 0)?.value).toBe(
       'Edited Copy',
     )
+    expect(copyRange.cells.find((cell: any) => cell.row === 1 && cell.column === 0)?.value).toBe(
+      'Browser Original',
+    )
+    const movedCopyFormula = copyRange.cells.find(
+      (cell: any) => cell.row === 1 && cell.column === 2,
+    )
+    expect(movedCopyFormula?.formula).toBe('=B2*2')
+    expect(movedCopyFormula?.value).toBe(84)
 
     const addedRange = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
@@ -355,7 +422,7 @@ test.describe('Sheets Web', () => {
         return api.readWorkbookRange({
           sessionId: payload.sessionId,
           sheetId: payload.sheetId,
-          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 },
+          range: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 },
         })
       },
       { sessionId: saved.file.sessionId, sheetId: addedSavedSheetId },
@@ -363,6 +430,22 @@ test.describe('Sheets Web', () => {
     expect(addedRange.cells.find((cell: any) => cell.row === 0 && cell.column === 0)?.value).toBe(
       'Added Web Sheet',
     )
+    expect(addedRange.merges).toContainEqual({
+      startRow: 0,
+      endRow: 0,
+      startColumn: 0,
+      endColumn: 1,
+    })
+    expect(addedRange.merges).not.toContainEqual({
+      startRow: 1,
+      endRow: 1,
+      startColumn: 0,
+      endColumn: 1,
+    })
+    expect(addedRange.rows.find((row: any) => row.row === 0)?.height).toBe(24)
+    expect(addedRange.rows.find((row: any) => row.row === 0)?.outlineLevel).toBe(1)
+    expect(addedRange.rows.find((row: any) => row.row === 1)?.hidden).toBe(true)
+    expect(addedRange.rows.find((row: any) => row.row === 1)?.outlineLevel).toBe(1)
 
     const downloadPromise = page.waitForEvent('download')
     await page.locator('#download-button').click()
@@ -393,6 +476,23 @@ test.describe('Sheets Web', () => {
       'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
     )
     expect(worksheetXml).toContain('<legacyDrawing r:id=')
+
+    const copyWorksheetXml = await worksheetContaining(downloadedZip, 'Edited Copy')
+    expect(copyWorksheetXml).toContain('Browser Original')
+    expect(copyWorksheetXml).toContain('<c r="A2"')
+    expect(copyWorksheetXml).toContain('<f>B2*2</f>')
+
+    const addedWorksheetXml = await worksheetContaining(downloadedZip, 'Added Web Sheet')
+    expect(addedWorksheetXml).toMatch(/<row\b[^>]*\br="1"[^>]*\bht="24"/)
+    expect(addedWorksheetXml).toMatch(/<row\b[^>]*\br="1"[^>]*\boutlineLevel="1"/)
+    expect(addedWorksheetXml).toMatch(/<row\b[^>]*\br="2"[^>]*\bhidden="1"/)
+    expect(addedWorksheetXml).toMatch(/<row\b[^>]*\br="2"[^>]*\boutlineLevel="1"/)
+    expect(addedWorksheetXml).toMatch(/<col\b[^>]*\bmin="1"[^>]*\bmax="1"[^>]*\bwidth="18"/)
+    expect(addedWorksheetXml).toMatch(/<col\b[^>]*\bmin="2"[^>]*\bmax="2"[^>]*\bhidden="1"/)
+    expect(addedWorksheetXml).toContain('<mergeCell ref="A1:B1"/>')
+    expect(addedWorksheetXml).not.toContain('<mergeCell ref="A2:B2"/>')
+    expect(addedWorksheetXml).toMatch(/<sheetFormatPr\b[^>]*\boutlineLevelRow="1"/)
+    expect(addedWorksheetXml).toMatch(/<sheetFormatPr\b[^>]*\boutlineLevelCol="1"/)
 
     const commentsXml = await downloadedZip.file('xl/comments1.xml')?.async('text')
     expect(commentsXml).toContain('<author>GenOffice</author>')
