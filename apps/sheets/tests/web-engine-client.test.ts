@@ -1,7 +1,9 @@
+import type { OfficeHostApi } from '@genoffice/office-host-api'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { WorkbookFile } from '../src/shared/desktop-api'
 import { readXlsxWorkbookMedia } from '../src/web/engine-client'
+import { readLocalImageViaHost } from '../src/web/local-image'
 
 const sessionId = '00000000-0000-4000-8000-000000000001'
 const mediaPath = 'xl/media/image1.png'
@@ -135,5 +137,96 @@ describe('Sheets Web XLSX media client', () => {
       readXlsxWorkbookMedia({ sessionId, visualId: 'image-1' }, workbook()),
     ).rejects.toThrow('20MB preview limit')
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Sheets Web Host image adapter', () => {
+  it('resolves a token-backed platform file through OfficeHostApi.readFile', async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const pickFile = vi.fn().mockResolvedValue([
+      {
+        id: 'fs:image-1',
+        name: 'platform-image.png',
+        mimeType: 'application/octet-stream',
+        size: bytes.byteLength,
+        version: 'v1',
+        transport: 'token',
+        token: 'opaque-platform-token',
+      },
+    ])
+    const readFile = vi.fn().mockResolvedValue({
+      id: 'fs:image-1',
+      name: 'platform-image.png',
+      mimeType: 'application/octet-stream',
+      size: bytes.byteLength,
+      version: 'v1',
+      bytes: bytes.buffer as ArrayBuffer,
+    })
+    const host = { pickFile, readFile } as unknown as OfficeHostApi
+
+    const result = await readLocalImageViaHost(host, { path: 'host-picker://insert-image' })
+
+    expect(result).toEqual({
+      mediaType: 'image/png',
+      base64: Buffer.from(bytes).toString('base64'),
+    })
+    expect(pickFile).toHaveBeenCalledWith({
+      multiple: false,
+      accept: ['image/png', 'image/jpeg', 'image/gif', '.png', '.jpg', '.jpeg', '.gif'],
+      mode: 'file',
+    })
+    expect(readFile).toHaveBeenCalledWith('fs:image-1')
+  })
+
+  it('rejects spoofed image metadata after reading the real bytes', async () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04])
+    const host = {
+      pickFile: vi.fn().mockResolvedValue([
+        {
+          id: 'fs:not-image',
+          name: 'fake.png',
+          mimeType: 'image/png',
+          size: bytes.byteLength,
+          version: 'v1',
+          transport: 'token',
+          token: 'opaque-platform-token',
+        },
+      ]),
+      readFile: vi.fn().mockResolvedValue({
+        id: 'fs:not-image',
+        name: 'fake.png',
+        mimeType: 'image/png',
+        size: bytes.byteLength,
+        version: 'v1',
+        bytes: bytes.buffer as ArrayBuffer,
+      }),
+    } as unknown as OfficeHostApi
+
+    await expect(
+      readLocalImageViaHost(host, { path: 'host-picker://insert-image' }),
+    ).rejects.toThrow('not a PNG/JPEG/GIF image')
+  })
+
+  it('rejects oversized platform images before requesting their content', async () => {
+    const readFile = vi.fn()
+    const host = {
+      pickFile: vi.fn().mockResolvedValue([
+        {
+          id: 'fs:huge-image',
+          name: 'huge.png',
+          mimeType: 'image/png',
+          size: 20 * 1024 * 1024 + 1,
+          version: 'v1',
+          transport: 'token',
+          token: 'opaque-platform-token',
+        },
+      ]),
+      readFile,
+    } as unknown as OfficeHostApi
+
+    await expect(
+      readLocalImageViaHost(host, { path: 'host-picker://insert-image' }),
+    ).rejects.toThrow('exceeds 20MB')
+    expect(readFile).not.toHaveBeenCalled()
   })
 })
