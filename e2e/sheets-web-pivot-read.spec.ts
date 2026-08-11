@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -80,7 +80,7 @@ async function createPivotWorkbook(path: string): Promise<void> {
 test.describe('Sheets Web pivot reads', () => {
   test.skip(!sheetsWebUrl, 'SHEETS_WEB_E2E_URL is only set by the Sheets Web browser CI step')
 
-  test('parses pivot table and cache definitions from the active session', async ({ page }) => {
+  test('parses pivot definitions and marks the cache for Excel refresh', async ({ page }) => {
     test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
 
     const directory = await mkdtemp(join(tmpdir(), 'genoffice-sheets-web-pivot-'))
@@ -134,5 +134,55 @@ test.describe('Sheets Web pivot reads', () => {
       { x: 1, hidden: false },
     ])
     expect(definition.unsupported).toEqual([])
+
+    const saved = await editorFrame.locator('body').evaluate(
+      async (_body, payload) => {
+        const api = (window as typeof window & { desktopApi: any }).desktopApi
+        return api.saveWorkbookEdits({
+          sessionId: payload.sessionId,
+          mode: 'save',
+          edits: [],
+          structuralOps: [],
+          chartEdits: [],
+          visualEdits: [],
+          visualAdditions: [],
+          tableAdditions: [],
+          pivotAdditions: [],
+          sheetOps: [],
+          sheetOrder: [],
+          filterStates: [],
+          hyperlinkEdits: [],
+          cfStates: [],
+          dvStates: [],
+          pageSetupStates: [],
+          noteStates: [],
+          formulaValues: [],
+          pivotCacheRefreshPaths: ['xl/pivotCache/pivotCacheDefinition1.xml'],
+          pivotRefreshUpdates: [],
+          sheetProtections: [],
+          sparklineAdditions: [],
+          definedNamesState: null,
+        })
+      },
+      { sessionId: opened.sessionId },
+    )
+
+    expect(saved.canceled).toBe(false)
+    expect(saved.touchedEntries).toContain('xl/pivotCache/pivotCacheDefinition1.xml')
+    await expect(page.locator('#host-state')).toHaveText('saved', { timeout: 30_000 })
+    await expect(page.locator('#download-button')).toBeEnabled()
+
+    const downloadPromise = page.waitForEvent('download')
+    await page.locator('#download-button').click()
+    const download = await downloadPromise
+    const downloadPath = await download.path()
+    expect(downloadPath).toBeTruthy()
+
+    const downloadedZip = await JSZip.loadAsync(await readFile(downloadPath!))
+    const cacheXml = await downloadedZip
+      .file('xl/pivotCache/pivotCacheDefinition1.xml')
+      ?.async('text')
+    expect(cacheXml).toMatch(/<pivotCacheDefinition\b[^>]*\brefreshOnLoad="1"/)
+    expect(cacheXml).toContain('<worksheetSource ref="A1:B3" sheet="Data"/>')
   })
 })
