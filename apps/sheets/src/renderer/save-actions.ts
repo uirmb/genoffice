@@ -148,7 +148,9 @@ export async function handleSave(
     visualEdits.length +
     tableAdditions.length +
     pivotAdditions.length
-  if (total === 0) {
+  // Save As is also a file operation: an unchanged workbook still needs to
+  // reach the Web DesktopApi so the Host can create a distinct result file.
+  if (total === 0 && mode !== 'save-as') {
     if (mode !== 'recovery') ctx.setMessage(t('appNoEditsToSave'))
     return
   }
@@ -307,6 +309,7 @@ const SAVE_ERROR_PATTERNS = [
   ['A new pivot cannot be saved together with row/column', 'appSaveErrPivotWithRowCol'],
   ['A new table cannot be saved together with row/column', 'appSaveErrTableWithRowCol'],
   ['Defined-name edits cannot be saved together', 'appSaveErrNamesWithStructural'],
+  ['VERSION_CONFLICT', 'appSaveErrChangedOnDisk'],
   ['The workbook changed on disk', 'appSaveErrChangedOnDisk'],
   ['style edits cannot be saved', 'appSaveErrStylesheetLimited'],
   ['Saving would change the workbook package structure', 'appSaveErrPackageGuard'],
