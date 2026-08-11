@@ -17,6 +17,14 @@ import {
 
 const MAX_PATCH_ENTRY_BYTES = 256 * 1024 * 1024
 
+type PlannerFilterStates = Parameters<typeof planCellEditsToXlsx>[5]
+type PlannerHyperlinkEdits = Parameters<typeof planCellEditsToXlsx>[6]
+type PlannerCfStates = Parameters<typeof planCellEditsToXlsx>[7]
+type PlannerDvStates = Parameters<typeof planCellEditsToXlsx>[8]
+type PlannerSheetProtections = Parameters<typeof planCellEditsToXlsx>[9]
+type PlannerPageSetupStates = Parameters<typeof planCellEditsToXlsx>[12]
+type PlannerNoteStates = Parameters<typeof planCellEditsToXlsx>[13]
+
 function createEngineEntrySource(
   sessionId: string,
   manifest: readonly XlsxArchiveEntry[],
@@ -71,15 +79,8 @@ function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
     request.tableAdditions.length > 0 ||
     request.pivotAdditions.length > 0 ||
     request.sheetOps.length > 0 ||
-    request.filterStates.length > 0 ||
-    request.hyperlinkEdits.length > 0 ||
-    request.cfStates.length > 0 ||
-    request.dvStates.length > 0 ||
-    request.pageSetupStates.length > 0 ||
-    request.noteStates.length > 0 ||
     request.pivotCacheRefreshPaths.length > 0 ||
     request.pivotRefreshUpdates.length > 0 ||
-    request.sheetProtections.length > 0 ||
     request.sparklineAdditions.length > 0 ||
     request.definedNamesState !== null
   )
@@ -116,6 +117,94 @@ function toPlannerCellEdits(
   }))
 }
 
+function toPlannerFilterStates(
+  request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
+): PlannerFilterStates {
+  const names = workbookSheetNames(workbook)
+  return request.filterStates.map((state) => ({
+    sheetName: requiredSheetName(names, state.sheetId),
+    filter: state.filter,
+    hiddenRows: state.hiddenRows,
+    visibilityRange: state.visibilityRange,
+  }))
+}
+
+function toPlannerHyperlinkEdits(
+  request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
+): PlannerHyperlinkEdits {
+  const names = workbookSheetNames(workbook)
+  const linksBySheet = new Map<
+    string,
+    Array<{ row: number; column: number; target: string | null }>
+  >()
+
+  for (const link of request.hyperlinkEdits) {
+    const sheetName = requiredSheetName(names, link.sheetId)
+    const links = linksBySheet.get(sheetName) ?? []
+    links.push({ row: link.row, column: link.column, target: link.target })
+    linksBySheet.set(sheetName, links)
+  }
+
+  return [...linksBySheet].map(([sheetName, links]) => ({ sheetName, edits: links }))
+}
+
+function toPlannerCfStates(
+  request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
+): PlannerCfStates {
+  const names = workbookSheetNames(workbook)
+  return request.cfStates.map((state) => ({
+    sheetName: requiredSheetName(names, state.sheetId),
+    rules: state.rules,
+  }))
+}
+
+function toPlannerDvStates(
+  request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
+): PlannerDvStates {
+  const names = workbookSheetNames(workbook)
+  return request.dvStates.map((state) => ({
+    sheetName: requiredSheetName(names, state.sheetId),
+    rules: state.rules,
+  }))
+}
+
+function toPlannerSheetProtections(
+  request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
+): PlannerSheetProtections {
+  const names = workbookSheetNames(workbook)
+  return request.sheetProtections.map((state) => ({
+    sheetName: requiredSheetName(names, state.sheetId),
+    protected: state.protected,
+  }))
+}
+
+function toPlannerPageSetupStates(
+  request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
+): PlannerPageSetupStates {
+  const names = workbookSheetNames(workbook)
+  return request.pageSetupStates.map(({ sheetId, ...state }) => ({
+    sheetName: requiredSheetName(names, sheetId),
+    ...state,
+  }))
+}
+
+function toPlannerNoteStates(
+  request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
+): PlannerNoteStates {
+  const names = workbookSheetNames(workbook)
+  return request.noteStates.map(({ sheetId, notes }) => ({
+    sheetName: requiredSheetName(names, sheetId),
+    notes,
+  }))
+}
+
 function toPlannerFormulaValues(
   request: WorkbookSaveRequest,
   workbook: WorkbookFile,
@@ -142,10 +231,9 @@ function toPlannerFormulaValues(
  * reads package parts through the Rust session API; Rust only reassembles the
  * planned replacement/add/remove sets and returns standard XLSX bytes.
  *
- * The first Web milestone intentionally enables the common cell-edit path and
- * formula cached-value refresh before the higher-level journal families.
- * Unsupported advanced journals fail closed rather than producing a partially
- * saved workbook.
+ * Web enables journal families only after they have direct preservation tests.
+ * Unsupported high-complexity journals still fail closed rather than producing
+ * a partially saved workbook.
  */
 export async function saveWorkbookRequestViaEngine(
   request: WorkbookSaveRequest,
@@ -164,15 +252,15 @@ export async function saveWorkbookRequestViaEngine(
     [],
     [],
     undefined,
-    [],
-    [],
-    [],
-    [],
-    [],
+    toPlannerFilterStates(request, workbook),
+    toPlannerHyperlinkEdits(request, workbook),
+    toPlannerCfStates(request, workbook),
+    toPlannerDvStates(request, workbook),
+    toPlannerSheetProtections(request, workbook),
     null,
     [],
-    [],
-    [],
+    toPlannerPageSetupStates(request, workbook),
+    toPlannerNoteStates(request, workbook),
     [],
     [],
     [],
