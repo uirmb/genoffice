@@ -112,7 +112,7 @@ test.describe('Sheets Web', () => {
     )
     expect(formulas.truncated).toBe(false)
     expect(formulas.cells.find((cell: any) => cell.row === 0 && cell.column === 2)?.formula).toBe(
-      'B1*2',
+      '=B1*2',
     )
 
     const recalculated = await editorFrame.locator('body').evaluate(
