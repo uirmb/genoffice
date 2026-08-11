@@ -4,6 +4,7 @@ import {
   type CellEdit,
   type EntrySource,
   type MutationPlan,
+  type SheetFormulaValues,
 } from '../gateway/xlsx-gateway'
 import {
   getXlsxArchiveManifest,
@@ -80,24 +81,28 @@ function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
     request.pivotRefreshUpdates.length > 0 ||
     request.sheetProtections.length > 0 ||
     request.sparklineAdditions.length > 0 ||
-    request.formulaValues.length > 0 ||
     request.definedNamesState !== null
   )
+}
+
+function workbookSheetNames(workbook: WorkbookFile): Map<string, string> {
+  return new Map(workbook.sheets.map((sheet) => [sheet.id, sheet.name]))
+}
+
+function requiredSheetName(names: ReadonlyMap<string, string>, sheetId: string): string {
+  const name = names.get(sheetId)
+  if (!name) throw new Error(`Unknown worksheet ${sheetId}.`)
+  return name
 }
 
 function toPlannerCellEdits(
   request: WorkbookSaveRequest,
   workbook: WorkbookFile,
 ): CellEdit[] {
-  const names = new Map(workbook.sheets.map((sheet) => [sheet.id, sheet.name]))
-  const sheetName = (sheetId: string): string => {
-    const name = names.get(sheetId)
-    if (!name) throw new Error(`Unknown worksheet ${sheetId}.`)
-    return name
-  }
+  const names = workbookSheetNames(workbook)
 
   return request.edits.map((edit) => ({
-    sheetName: sheetName(edit.sheetId),
+    sheetName: requiredSheetName(names, edit.sheetId),
     row: edit.row,
     column: edit.column,
     writeValue: edit.writeValue,
@@ -111,14 +116,36 @@ function toPlannerCellEdits(
   }))
 }
 
+function toPlannerFormulaValues(
+  request: WorkbookSaveRequest,
+  workbook: WorkbookFile,
+): SheetFormulaValues[] {
+  const names = workbookSheetNames(workbook)
+  const valuesBySheet = new Map<string, SheetFormulaValues['cells'][number][]>()
+
+  for (const value of request.formulaValues) {
+    const sheetName = requiredSheetName(names, value.sheetId)
+    const cells = valuesBySheet.get(sheetName) ?? []
+    cells.push({
+      row: value.row,
+      column: value.column,
+      value: value.value,
+    })
+    valuesBySheet.set(sheetName, cells)
+  }
+
+  return [...valuesBySheet].map(([sheetName, cells]) => ({ sheetName, cells }))
+}
+
 /**
  * Browser preservation-save path. The same mutation planner used by Electron
  * reads package parts through the Rust session API; Rust only reassembles the
  * planned replacement/add/remove sets and returns standard XLSX bytes.
  *
- * The first Web milestone intentionally enables the common cell-edit path
- * before the higher-level journal families. Unsupported advanced journals fail
- * closed rather than producing a partially saved workbook.
+ * The first Web milestone intentionally enables the common cell-edit path and
+ * formula cached-value refresh before the higher-level journal families.
+ * Unsupported advanced journals fail closed rather than producing a partially
+ * saved workbook.
  */
 export async function saveWorkbookRequestViaEngine(
   request: WorkbookSaveRequest,
@@ -131,7 +158,29 @@ export async function saveWorkbookRequestViaEngine(
 
   const manifest = await getXlsxArchiveManifest(request.sessionId)
   const source = createEngineEntrySource(request.sessionId, manifest)
-  const plan = await planCellEditsToXlsx(source, toPlannerCellEdits(request, workbook))
+  const plan = await planCellEditsToXlsx(
+    source,
+    toPlannerCellEdits(request, workbook),
+    [],
+    [],
+    undefined,
+    [],
+    [],
+    [],
+    [],
+    [],
+    null,
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    toPlannerFormulaValues(request, workbook),
+  )
 
   const saved = await saveXlsxArchiveMutation(request.sessionId, name, {
     replacements: plan.replaced,
