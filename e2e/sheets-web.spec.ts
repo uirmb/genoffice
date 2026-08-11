@@ -42,8 +42,8 @@ async function createMinimalWorkbook(path: string): Promise<void> {
 </styleSheet>`,
     'xl/worksheets/sheet1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <dimension ref="A1:B1"/>
-  <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Browser Original</t></is></c><c r="B1"><v>42</v></c></row></sheetData>
+  <dimension ref="A1:C1"/>
+  <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Browser Original</t></is></c><c r="B1"><v>42</v></c><c r="C1"><f>B1*2</f><v>84</v></c></row></sheetData>
 </worksheet>`,
   }
 
@@ -55,7 +55,7 @@ async function createMinimalWorkbook(path: string): Promise<void> {
 test.describe('Sheets Web', () => {
   test.skip(!sheetsWebUrl, 'SHEETS_WEB_E2E_URL is only set by the Sheets Web browser CI step')
 
-  test('opens, saves, rereads, and downloads a real XLSX through the iframe host', async ({
+  test('opens, reads formulas, saves, rereads, and downloads a real XLSX through the iframe host', async ({
     page,
   }) => {
     test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
@@ -89,7 +89,7 @@ test.describe('Sheets Web', () => {
         return api.readWorkbookRange({
           sessionId: payload.sessionId,
           sheetId: payload.sheetId,
-          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 1 },
+          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
         })
       },
       { sessionId: opened.sessionId, sheetId },
@@ -98,6 +98,21 @@ test.describe('Sheets Web', () => {
       'Browser Original',
     )
     expect(initialRange.cells.find((cell: any) => cell.row === 0 && cell.column === 1)?.value).toBe(42)
+
+    const formulas = await editorFrame.locator('body').evaluate(
+      async (_body, payload) => {
+        const api = (window as typeof window & { desktopApi: any }).desktopApi
+        return api.readWorkbookFormulas({
+          sessionId: payload.sessionId,
+          sheetId: payload.sheetId,
+        })
+      },
+      { sessionId: opened.sessionId, sheetId },
+    )
+    expect(formulas.truncated).toBe(false)
+    expect(formulas.cells.find((cell: any) => cell.row === 0 && cell.column === 2)?.formula).toBe(
+      'B1*2',
+    )
 
     const saved = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
@@ -171,5 +186,6 @@ test.describe('Sheets Web', () => {
     const downloadedZip = await JSZip.loadAsync(await readFile(downloadPath!))
     const worksheetXml = await downloadedZip.file('xl/worksheets/sheet1.xml')?.async('text')
     expect(worksheetXml).toContain('Browser Saved')
+    expect(worksheetXml).toContain('<f>B1*2</f>')
   })
 })
