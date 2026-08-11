@@ -25,6 +25,7 @@ type PlannerHyperlinkEdits = Parameters<typeof planCellEditsToXlsx>[6]
 type PlannerCfStates = Parameters<typeof planCellEditsToXlsx>[7]
 type PlannerDvStates = Parameters<typeof planCellEditsToXlsx>[8]
 type PlannerSheetProtections = Parameters<typeof planCellEditsToXlsx>[9]
+type PlannerVisualAdditions = Parameters<typeof planCellEditsToXlsx>[11]
 type PlannerPageSetupStates = Parameters<typeof planCellEditsToXlsx>[12]
 type PlannerNoteStates = Parameters<typeof planCellEditsToXlsx>[13]
 
@@ -81,8 +82,6 @@ function mergeAdditions(plan: MutationPlan): Map<string, string | Uint8Array> {
 
 function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
   return (
-    request.visualEdits.length > 0 ||
-    request.visualAdditions.length > 0 ||
     request.tableAdditions.length > 0 ||
     request.pivotAdditions.length > 0 ||
     request.pivotCacheRefreshPaths.length > 0 ||
@@ -263,6 +262,16 @@ function toPlannerStructuralOps(
   return [...bySheet].map(([sheetName, ops]) => ({ sheetName, ops }))
 }
 
+function toPlannerVisualAdditions(
+  request: WorkbookSaveRequest,
+  names: ReadonlyMap<string, string>,
+): PlannerVisualAdditions {
+  return request.visualAdditions.map(({ sheetId, ...addition }) => ({
+    sheetName: requiredSheetName(names, sheetId),
+    ...addition,
+  }))
+}
+
 function toPlannerCellEdits(
   request: WorkbookSaveRequest,
   names: ReadonlyMap<string, string>,
@@ -416,14 +425,14 @@ export async function saveWorkbookRequestViaEngine(
     toPlannerDvStates(request, sheetContext.plannerNames),
     toPlannerSheetProtections(request, sheetContext.plannerNames),
     request.definedNamesState,
-    [],
+    toPlannerVisualAdditions(request, sheetContext.plannerNames),
     toPlannerPageSetupStates(request, sheetContext.plannerNames),
     toPlannerNoteStates(request, sheetContext.plannerNames),
     [],
     [],
     [],
     [],
-    [],
+    request.visualEdits,
     [],
     toPlannerFormulaValues(request, sheetContext.plannerNames),
   )
