@@ -349,9 +349,15 @@ export function createSheetsWebDesktopController(
           newDocument: currentIsNewDocument,
         })
 
-        if (!result.ok || !result.file) {
+        if (!result.ok) {
           await deleteXlsxSession(saved.file.sessionId).catch(() => undefined)
-          return { canceled: true }
+          if (result.code === 'CANCELLED') return { canceled: true }
+          const code = result.code ?? 'SAVE_FAILED'
+          throw new Error(`${code}: ${result.error || 'The host could not save this workbook.'}`)
+        }
+        if (!result.file) {
+          await deleteXlsxSession(saved.file.sessionId).catch(() => undefined)
+          throw new Error('SAVE_FAILED: The host reported success without a saved file descriptor.')
         }
 
         const nextWorkbook: WorkbookFile = {
