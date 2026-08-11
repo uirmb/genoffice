@@ -240,6 +240,19 @@ test.describe('Sheets Web existing Pivot refresh', () => {
     )
 
     expect(error).toContain('conflicts with existing worksheet content')
-    await expect(page.locator('#download-button')).toBeDisabled()
+
+    const downloadPromise = page.waitForEvent('download')
+    await page.locator('#download-button').click()
+    const download = await downloadPromise
+    const downloadPath = await download.path()
+    expect(downloadPath).toBeTruthy()
+
+    const zip = await JSZip.loadAsync(await readFile(downloadPath!))
+    const sheetXml = await zip.file('xl/worksheets/sheet1.xml')?.async('text')
+    const pivotXml = await zip.file('xl/pivotTables/pivotTable1.xml')?.async('text')
+    const cacheXml = await zip.file(PIVOT_CACHE_PATH)?.async('text')
+    expect(sheetXml).toContain('<t>KEEP</t>')
+    expect(pivotXml).toMatch(/<location\b[^>]*\bref="F1:G4"/)
+    expect(cacheXml).not.toMatch(/<pivotCacheDefinition\b[^>]*\brefreshOnLoad="1"/)
   })
 })
