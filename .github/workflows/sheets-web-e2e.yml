@@ -35,6 +35,10 @@ jobs:
       - name: Typecheck Sheets
         run: npm run typecheck -w @genoffice/sheets
 
+      - name: Web client unit tests
+        run: npx vitest run tests/web-engine-client.test.ts
+        working-directory: apps/sheets
+
       - name: Build XLSX Engine Service
         run: npm run build:xlsx-engine
 
