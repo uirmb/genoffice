@@ -17,6 +17,7 @@ import {
 
 const MAX_PATCH_ENTRY_BYTES = 256 * 1024 * 1024
 
+type PlannerSheetPlan = NonNullable<Parameters<typeof planCellEditsToXlsx>[4]>
 type PlannerFilterStates = Parameters<typeof planCellEditsToXlsx>[5]
 type PlannerHyperlinkEdits = Parameters<typeof planCellEditsToXlsx>[6]
 type PlannerCfStates = Parameters<typeof planCellEditsToXlsx>[7]
@@ -24,6 +25,12 @@ type PlannerDvStates = Parameters<typeof planCellEditsToXlsx>[8]
 type PlannerSheetProtections = Parameters<typeof planCellEditsToXlsx>[9]
 type PlannerPageSetupStates = Parameters<typeof planCellEditsToXlsx>[12]
 type PlannerNoteStates = Parameters<typeof planCellEditsToXlsx>[13]
+
+interface SheetPlanContext {
+  readonly plan: PlannerSheetPlan | undefined
+  /** Planner-stage name: original file name for existing sheets, final name for additions. */
+  readonly plannerNames: ReadonlyMap<string, string>
+}
 
 function createEngineEntrySource(
   sessionId: string,
@@ -78,7 +85,6 @@ function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
     request.visualAdditions.length > 0 ||
     request.tableAdditions.length > 0 ||
     request.pivotAdditions.length > 0 ||
-    request.sheetOps.length > 0 ||
     request.pivotCacheRefreshPaths.length > 0 ||
     request.pivotRefreshUpdates.length > 0 ||
     request.sparklineAdditions.length > 0 ||
@@ -86,7 +92,7 @@ function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
   )
 }
 
-function workbookSheetNames(workbook: WorkbookFile): Map<string, string> {
+function originalSheetNames(workbook: WorkbookFile): Map<string, string> {
   return new Map(workbook.sheets.map((sheet) => [sheet.id, sheet.name]))
 }
 
@@ -96,12 +102,155 @@ function requiredSheetName(names: ReadonlyMap<string, string>, sheetId: string):
   return name
 }
 
-function toPlannerCellEdits(
+/**
+ * Collapses the renderer's ordered sheet journal into the gateway's declarative
+ * SheetEditPlan. Existing sheets keep their original file name until the final
+ * sheet-surgery phase; newly added sheets use their final name from the start
+ * because their worksheet part is allocated under that name.
+ */
+function buildSheetPlanContext(
   request: WorkbookSaveRequest,
   workbook: WorkbookFile,
-): CellEdit[] {
-  const names = workbookSheetNames(workbook)
+): SheetPlanContext {
+  const originalNames = originalSheetNames(workbook)
+  if (request.sheetOps.length === 0) {
+    return { plan: undefined, plannerNames: originalNames }
+  }
 
+  const finalNames = new Map(originalNames)
+  const added = new Map<
+    string,
+    { name: string; sourceSheetId?: string | undefined; sequence: number }
+  >()
+  const removed = new Set<string>()
+  const hidden = new Map<string, boolean>()
+  let additionSequence = 0
+  let orderChanged = false
+
+  for (const op of request.sheetOps) {
+    switch (op.kind) {
+      case 'rename-sheet': {
+        if (!finalNames.has(op.sheetId)) throw new Error(`Unknown worksheet ${op.sheetId}.`)
+        finalNames.set(op.sheetId, op.newName)
+        const addition = added.get(op.sheetId)
+        if (addition) addition.name = op.newName
+        break
+      }
+      case 'add-sheet': {
+        if (finalNames.has(op.sheetId)) {
+          throw new Error(`Worksheet id ${op.sheetId} already exists.`)
+        }
+        finalNames.set(op.sheetId, op.name)
+        added.set(op.sheetId, { name: op.name, sequence: additionSequence++ })
+        break
+      }
+      case 'duplicate-sheet': {
+        if (finalNames.has(op.sheetId)) {
+          throw new Error(`Worksheet id ${op.sheetId} already exists.`)
+        }
+        if (!originalNames.has(op.sourceSheetId)) {
+          throw new Error(
+            'Duplicating a sheet that was itself added in the current unsaved session is not supported yet.',
+          )
+        }
+        finalNames.set(op.sheetId, op.name)
+        added.set(op.sheetId, {
+          name: op.name,
+          sourceSheetId: op.sourceSheetId,
+          sequence: additionSequence++,
+        })
+        break
+      }
+      case 'remove-sheet': {
+        if (!finalNames.has(op.sheetId)) throw new Error(`Unknown worksheet ${op.sheetId}.`)
+        removed.add(op.sheetId)
+        break
+      }
+      case 'set-sheet-hidden': {
+        if (!finalNames.has(op.sheetId)) throw new Error(`Unknown worksheet ${op.sheetId}.`)
+        hidden.set(op.sheetId, op.hidden)
+        break
+      }
+      case 'reorder-sheets':
+        orderChanged = true
+        break
+    }
+  }
+
+  // An added-then-removed sheet never needs to enter the package.
+  for (const sheetId of removed) {
+    if (added.has(sheetId)) {
+      added.delete(sheetId)
+      finalNames.delete(sheetId)
+      hidden.delete(sheetId)
+      removed.delete(sheetId)
+    }
+  }
+
+  const plannerNames = new Map(originalNames)
+  for (const [sheetId, addition] of added) plannerNames.set(sheetId, addition.name)
+
+  const renames = workbook.sheets.flatMap((sheet) => {
+    if (removed.has(sheet.id)) return []
+    const finalName = requiredSheetName(finalNames, sheet.id)
+    return finalName === sheet.name ? [] : [{ sheetName: sheet.name, newName: finalName }]
+  })
+
+  const additions = [...added.entries()]
+    .sort((left, right) => left[1].sequence - right[1].sequence)
+    .map(([, addition]) => ({
+      name: addition.name,
+      ...(addition.sourceSheetId === undefined
+        ? {}
+        : { sourceSheetName: requiredSheetName(originalNames, addition.sourceSheetId) }),
+    }))
+
+  const removals = workbook.sheets
+    .filter((sheet) => removed.has(sheet.id))
+    .map((sheet) => sheet.name)
+
+  const hiddenChanges = [...hidden.entries()]
+    .filter(([sheetId]) => !removed.has(sheetId))
+    .map(([sheetId, isHidden]) => ({
+      sheetName: originalNames.get(sheetId) ?? requiredSheetName(finalNames, sheetId),
+      hidden: isHidden,
+    }))
+
+  const order = request.sheetOrder.map((sheetId) => {
+    if (removed.has(sheetId)) {
+      throw new Error(`Removed worksheet ${sheetId} is still present in the final sheet order.`)
+    }
+    return requiredSheetName(finalNames, sheetId)
+  })
+
+  const expectedIds = new Set([
+    ...workbook.sheets.filter((sheet) => !removed.has(sheet.id)).map((sheet) => sheet.id),
+    ...added.keys(),
+  ])
+  if (order.length !== expectedIds.size || request.sheetOrder.some((sheetId) => !expectedIds.has(sheetId))) {
+    throw new Error('Final sheet order does not match the saved worksheet set.')
+  }
+  if (new Set(request.sheetOrder).size !== request.sheetOrder.length) {
+    throw new Error('Final sheet order contains a duplicate worksheet id.')
+  }
+
+  return {
+    plannerNames,
+    plan: {
+      renames,
+      additions,
+      removals,
+      order,
+      hiddenChanges,
+      orderChanged,
+    },
+  }
+}
+
+function toPlannerCellEdits(
+  request: WorkbookSaveRequest,
+  names: ReadonlyMap<string, string>,
+): CellEdit[] {
   return request.edits.map((edit) => ({
     sheetName: requiredSheetName(names, edit.sheetId),
     row: edit.row,
@@ -119,9 +268,8 @@ function toPlannerCellEdits(
 
 function toPlannerFilterStates(
   request: WorkbookSaveRequest,
-  workbook: WorkbookFile,
+  names: ReadonlyMap<string, string>,
 ): PlannerFilterStates {
-  const names = workbookSheetNames(workbook)
   return request.filterStates.map((state) => ({
     sheetName: requiredSheetName(names, state.sheetId),
     filter: state.filter,
@@ -132,9 +280,8 @@ function toPlannerFilterStates(
 
 function toPlannerHyperlinkEdits(
   request: WorkbookSaveRequest,
-  workbook: WorkbookFile,
+  names: ReadonlyMap<string, string>,
 ): PlannerHyperlinkEdits {
-  const names = workbookSheetNames(workbook)
   const linksBySheet = new Map<
     string,
     Array<{ row: number; column: number; target: string | null }>
@@ -152,9 +299,8 @@ function toPlannerHyperlinkEdits(
 
 function toPlannerCfStates(
   request: WorkbookSaveRequest,
-  workbook: WorkbookFile,
+  names: ReadonlyMap<string, string>,
 ): PlannerCfStates {
-  const names = workbookSheetNames(workbook)
   return request.cfStates.map((state) => ({
     sheetName: requiredSheetName(names, state.sheetId),
     rules: state.rules,
@@ -163,9 +309,8 @@ function toPlannerCfStates(
 
 function toPlannerDvStates(
   request: WorkbookSaveRequest,
-  workbook: WorkbookFile,
+  names: ReadonlyMap<string, string>,
 ): PlannerDvStates {
-  const names = workbookSheetNames(workbook)
   return request.dvStates.map((state) => ({
     sheetName: requiredSheetName(names, state.sheetId),
     rules: state.rules,
@@ -174,9 +319,8 @@ function toPlannerDvStates(
 
 function toPlannerSheetProtections(
   request: WorkbookSaveRequest,
-  workbook: WorkbookFile,
+  names: ReadonlyMap<string, string>,
 ): PlannerSheetProtections {
-  const names = workbookSheetNames(workbook)
   return request.sheetProtections.map((state) => ({
     sheetName: requiredSheetName(names, state.sheetId),
     protected: state.protected,
@@ -185,9 +329,8 @@ function toPlannerSheetProtections(
 
 function toPlannerPageSetupStates(
   request: WorkbookSaveRequest,
-  workbook: WorkbookFile,
+  names: ReadonlyMap<string, string>,
 ): PlannerPageSetupStates {
-  const names = workbookSheetNames(workbook)
   return request.pageSetupStates.map(({ sheetId, ...state }) => ({
     sheetName: requiredSheetName(names, sheetId),
     ...state,
@@ -196,9 +339,8 @@ function toPlannerPageSetupStates(
 
 function toPlannerNoteStates(
   request: WorkbookSaveRequest,
-  workbook: WorkbookFile,
+  names: ReadonlyMap<string, string>,
 ): PlannerNoteStates {
-  const names = workbookSheetNames(workbook)
   return request.noteStates.map(({ sheetId, notes }) => ({
     sheetName: requiredSheetName(names, sheetId),
     notes,
@@ -207,9 +349,8 @@ function toPlannerNoteStates(
 
 function toPlannerFormulaValues(
   request: WorkbookSaveRequest,
-  workbook: WorkbookFile,
+  names: ReadonlyMap<string, string>,
 ): SheetFormulaValues[] {
-  const names = workbookSheetNames(workbook)
   const valuesBySheet = new Map<string, SheetFormulaValues['cells'][number][]>()
 
   for (const value of request.formulaValues) {
@@ -244,30 +385,31 @@ export async function saveWorkbookRequestViaEngine(
     throw new Error('This workbook contains edits that are not enabled in Sheets Web save yet.')
   }
 
+  const sheetContext = buildSheetPlanContext(request, workbook)
   const manifest = await getXlsxArchiveManifest(request.sessionId)
   const source = createEngineEntrySource(request.sessionId, manifest)
   const plan = await planCellEditsToXlsx(
     source,
-    toPlannerCellEdits(request, workbook),
+    toPlannerCellEdits(request, sheetContext.plannerNames),
     [],
     [],
-    undefined,
-    toPlannerFilterStates(request, workbook),
-    toPlannerHyperlinkEdits(request, workbook),
-    toPlannerCfStates(request, workbook),
-    toPlannerDvStates(request, workbook),
-    toPlannerSheetProtections(request, workbook),
+    sheetContext.plan,
+    toPlannerFilterStates(request, sheetContext.plannerNames),
+    toPlannerHyperlinkEdits(request, sheetContext.plannerNames),
+    toPlannerCfStates(request, sheetContext.plannerNames),
+    toPlannerDvStates(request, sheetContext.plannerNames),
+    toPlannerSheetProtections(request, sheetContext.plannerNames),
     null,
     [],
-    toPlannerPageSetupStates(request, workbook),
-    toPlannerNoteStates(request, workbook),
+    toPlannerPageSetupStates(request, sheetContext.plannerNames),
+    toPlannerNoteStates(request, sheetContext.plannerNames),
     [],
     [],
     [],
     [],
     [],
     [],
-    toPlannerFormulaValues(request, workbook),
+    toPlannerFormulaValues(request, sheetContext.plannerNames),
   )
 
   const saved = await saveXlsxArchiveMutation(request.sessionId, name, {
