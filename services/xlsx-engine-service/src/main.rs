@@ -23,6 +23,7 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 use xlsx_sidecar::{
     archive::{archive_manifest, read_entries_to_dir, save_archive, scan_entries_for_text, EntryContent},
+    recalc::{recalc_cells, RecalcCache, RecalcEdit, RecalcRead},
     CellRange, WorkbookSessions,
 };
 
@@ -60,6 +61,7 @@ impl SessionStore for MemorySessionStore {
 
 struct EngineState {
     workbooks: WorkbookSessions,
+    recalc: RecalcCache,
     files: HashMap<String, PathBuf>,
     metadata: HashMap<String, Value>,
 }
@@ -68,6 +70,7 @@ impl Default for EngineState {
     fn default() -> Self {
         Self {
             workbooks: WorkbookSessions::new(),
+            recalc: RecalcCache::new(),
             files: HashMap::new(),
             metadata: HashMap::new(),
         }
@@ -103,6 +106,13 @@ struct ReadRangeRequest {
 #[serde(rename_all = "camelCase")]
 struct ReadFormulaCellsRequest {
     sheet_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecalcRequest {
+    edits: Vec<RecalcEdit>,
+    reads: Vec<RecalcRead>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -305,6 +315,22 @@ async fn read_formula_cells(
     Ok(Json(serde_json::to_value(result).map_err(internal_error)?))
 }
 
+async fn recalc_workbook(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(request): Json<RecalcRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let mut engine = state.engine.lock().await;
+    let path = engine
+        .files
+        .get(&session_id)
+        .cloned()
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Unknown workbook session.".to_string()))?;
+    let result = recalc_cells(&mut engine.recalc, &path, &request.edits, &request.reads)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    Ok(Json(serde_json::to_value(result).map_err(internal_error)?))
+}
+
 async fn archive_manifest_for_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -427,6 +453,9 @@ async fn delete_session(
     let mut engine = state.engine.lock().await;
     let path = engine.files.remove(&session_id);
     engine.metadata.remove(&session_id);
+    if let Some(path) = path.as_deref() {
+        engine.recalc.purge(path);
+    }
     let closed = engine.workbooks.close(&session_id).is_ok();
     drop(engine);
 
@@ -541,6 +570,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route(
             "/v1/sessions/{session_id}/formulas",
             post(read_formula_cells),
+        )
+        .route(
+            "/v1/sessions/{session_id}/recalc",
+            post(recalc_workbook),
         )
         .route(
             "/v1/sessions/{session_id}/archive/manifest",
