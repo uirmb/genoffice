@@ -11,7 +11,7 @@ permissions:
 jobs:
   sheets-web-foundation:
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,6 +28,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Typecheck Sheets
         run: npm run typecheck -w @genoffice/sheets
@@ -134,7 +137,6 @@ jobs:
       - name: Verify XLSX archive save round-trip
         run: |
           SESSION_ID=$(cat /tmp/source-session-id)
-          SHEET_ID=$(cat /tmp/source-sheet-id)
           READ=$(curl --fail --silent \
             -H 'content-type: application/json' \
             -H "X-Xlsx-Session: $SESSION_ID" \
@@ -187,10 +189,48 @@ jobs:
       - name: Build XLSX Host Demo
         run: npm run build:web-xlsx-host
 
+      - name: Start Sheets Web preview
+        run: |
+          npx vite preview --config vite.web.config.ts --host 127.0.0.1 --port 5275 > /tmp/sheets-web.log 2>&1 &
+          echo $! > /tmp/sheets-web.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5275/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/sheets-web.log
+          exit 1
+        working-directory: apps/sheets
+
+      - name: Start XLSX Host Demo preview
+        run: |
+          npx vite preview --config examples/web-xlsx-host/vite.config.ts --host 127.0.0.1 --port 8082 > /tmp/web-xlsx-host.log 2>&1 &
+          echo $! > /tmp/web-xlsx-host.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8082/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/web-xlsx-host.log
+          exit 1
+
+      - name: Browser E2E (Sheets Web)
+        env:
+          SHEETS_WEB_E2E_URL: http://127.0.0.1:5275/
+          SHEETS_WEB_HOST_E2E_URL: http://127.0.0.1:8082/
+        run: npx playwright test e2e/sheets-web.spec.ts --config e2e/playwright.config.ts
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sheets-web-foundation-artifacts
-          path: /tmp/xlsx-engine.log
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+            /tmp/xlsx-engine.log
+            /tmp/sheets-web.log
+            /tmp/web-xlsx-host.log
           retention-days: 7
