@@ -5,6 +5,7 @@ import {
 } from '@genoffice/web-runtime'
 import { getXlsxEngineHealth } from './engine-client'
 import { createSheetsWebDesktopController } from './desktop-api'
+import { readPivotDefinitionViaEngine } from './pivot-reader'
 import './product-policy.css'
 
 function renderBootstrapError(error: unknown): void {
@@ -47,6 +48,7 @@ async function bootstrapWeb(): Promise<void> {
   if (!host) throw new Error('Unable to initialize the Sheets web host runtime.')
 
   const controller = createSheetsWebDesktopController(host, embeddedRuntime?.bridge)
+  controller.desktopApi.readPivotDefinition = readPivotDefinitionViaEngine
 
   // Electron exposes this property as readonly through preload typings. Web
   // installs the same contract before importing the shared renderer.
