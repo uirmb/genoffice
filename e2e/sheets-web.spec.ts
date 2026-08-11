@@ -43,8 +43,13 @@ async function createMinimalWorkbook(path: string): Promise<void> {
 </styleSheet>`,
     'xl/worksheets/sheet1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <dimension ref="A1:C1"/>
-  <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Browser Original</t></is></c><c r="B1"><v>42</v></c><c r="C1"><f>B1*2</f><v>84</v></c></row></sheetData>
+  <dimension ref="A1:C2"/>
+  <sheetData>
+    <row r="1"><c r="A1" t="inlineStr"><is><t>Browser Original</t></is></c><c r="B1"><v>42</v></c><c r="C1"><f>B1*2</f><v>84</v></c></row>
+    <row r="2"><c r="A2" t="inlineStr"><is><t>Hide me</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row>
+  </sheetData>
+  <conditionalFormatting sqref="B2"><cfRule type="cellIs" operator="greaterThan" priority="1"><formula>0</formula></cfRule></conditionalFormatting>
+  <dataValidations count="1"><dataValidation type="whole" operator="between" sqref="B2"><formula1>0</formula1><formula2>100</formula2></dataValidation></dataValidations>
 </worksheet>`,
   }
 
@@ -56,9 +61,7 @@ async function createMinimalWorkbook(path: string): Promise<void> {
 test.describe('Sheets Web', () => {
   test.skip(!sheetsWebUrl, 'SHEETS_WEB_E2E_URL is only set by the Sheets Web browser CI step')
 
-  test('opens, reads formulas, recalculates, saves formula caches, rereads, and downloads a real XLSX through the iframe host', async ({
-    page,
-  }) => {
+  test('preserves formulas and advanced worksheet journals through the iframe host', async ({ page }) => {
     test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
 
     const directory = await mkdtemp(join(tmpdir(), 'genoffice-sheets-web-'))
@@ -90,7 +93,7 @@ test.describe('Sheets Web', () => {
         return api.readWorkbookRange({
           sessionId: payload.sessionId,
           sheetId: payload.sheetId,
-          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
+          range: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 },
         })
       },
       { sessionId: opened.sessionId, sheetId },
@@ -99,6 +102,9 @@ test.describe('Sheets Web', () => {
       'Browser Original',
     )
     expect(initialRange.cells.find((cell: any) => cell.row === 0 && cell.column === 1)?.value).toBe(42)
+    expect(initialRange.cells.find((cell: any) => cell.row === 1 && cell.column === 0)?.value).toBe(
+      'Hide me',
+    )
 
     const formulas = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
@@ -174,12 +180,40 @@ test.describe('Sheets Web', () => {
           pivotAdditions: [],
           sheetOps: [],
           sheetOrder: [],
-          filterStates: [],
-          hyperlinkEdits: [],
-          cfStates: [],
-          dvStates: [],
-          pageSetupStates: [],
-          noteStates: [],
+          filterStates: [
+            {
+              sheetId: payload.sheetId,
+              filter: {
+                range: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 },
+                columns: [{ colId: 0, values: ['Browser Saved'] }],
+              },
+              hiddenRows: [1],
+              visibilityRange: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 },
+            },
+          ],
+          hyperlinkEdits: [
+            {
+              sheetId: payload.sheetId,
+              row: 0,
+              column: 0,
+              target: '#Sheet1!B1',
+            },
+          ],
+          cfStates: [{ sheetId: payload.sheetId, rules: [] }],
+          dvStates: [{ sheetId: payload.sheetId, rules: [] }],
+          pageSetupStates: [
+            {
+              sheetId: payload.sheetId,
+              orientation: 'landscape',
+              printGridlines: true,
+            },
+          ],
+          noteStates: [
+            {
+              sheetId: payload.sheetId,
+              notes: [{ row: 0, column: 0, author: 'GenOffice', text: 'Web note' }],
+            },
+          ],
           formulaValues: [
             {
               sheetId: payload.sheetId,
@@ -190,7 +224,7 @@ test.describe('Sheets Web', () => {
           ],
           pivotCacheRefreshPaths: [],
           pivotRefreshUpdates: [],
-          sheetProtections: [],
+          sheetProtections: [{ sheetId: payload.sheetId, protected: true }],
           sparklineAdditions: [],
           definedNamesState: null,
         })
@@ -200,6 +234,7 @@ test.describe('Sheets Web', () => {
 
     expect(saved.canceled).toBe(false)
     expect(saved.touchedEntries).toContain('xl/worksheets/sheet1.xml')
+    expect(saved.touchedEntries).toContain('xl/comments1.xml')
     await expect(page.locator('#host-state')).toHaveText('saved', { timeout: 30_000 })
     await expect(page.locator('#file-name')).toHaveText('web-excel-browser-e2e.xlsx')
     await expect(page.locator('#download-button')).toBeEnabled()
@@ -211,7 +246,7 @@ test.describe('Sheets Web', () => {
         return api.readWorkbookRange({
           sessionId: payload.sessionId,
           sheetId: payload.sheetId,
-          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
+          range: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 },
         })
       },
       { sessionId: saved.file.sessionId, sheetId: savedSheetId },
@@ -236,5 +271,30 @@ test.describe('Sheets Web', () => {
     expect(worksheetXml).toContain('Browser Saved')
     expect(worksheetXml).toContain('<f>B1*2</f>')
     expect(worksheetXml).toMatch(/<c r="C1"[^>]*><f>B1\*2<\/f><v>100<\/v><\/c>/)
+    expect(worksheetXml).toContain('<sheetProtection sheet="1" objects="1" scenarios="1"/>')
+    expect(worksheetXml).toContain('<autoFilter ref="A1:C2">')
+    expect(worksheetXml).toMatch(/<row\b[^>]*\br="2"[^>]*\bhidden="1"/)
+    expect(worksheetXml).toContain('<hyperlink ref="A1" location="Sheet1!B1"/>')
+    expect(worksheetXml).not.toContain('<conditionalFormatting')
+    expect(worksheetXml).not.toContain('<dataValidations')
+    expect(worksheetXml).toMatch(/<pageSetup\b[^>]*\borientation="landscape"/)
+    expect(worksheetXml).toMatch(/<printOptions\b[^>]*\bgridLines="1"/)
+    expect(worksheetXml).toContain('<legacyDrawing r:id=')
+
+    const commentsXml = await downloadedZip.file('xl/comments1.xml')?.async('text')
+    expect(commentsXml).toContain('<author>GenOffice</author>')
+    expect(commentsXml).toContain('<comment ref="A1" authorId="0">')
+    expect(commentsXml).toContain('Web note')
+    expect(downloadedZip.file('xl/drawings/vmlDrawing1.vml')).not.toBeNull()
+
+    const worksheetRels = await downloadedZip
+      .file('xl/worksheets/_rels/sheet1.xml.rels')
+      ?.async('text')
+    expect(worksheetRels).toContain('/relationships/comments')
+    expect(worksheetRels).toContain('/relationships/vmlDrawing')
+
+    const contentTypes = await downloadedZip.file('[Content_Types].xml')?.async('text')
+    expect(contentTypes).toContain('spreadsheetml.comments+xml')
+    expect(contentTypes).toContain('Extension="vml"')
   })
 })
