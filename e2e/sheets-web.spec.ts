@@ -48,8 +48,6 @@ async function createMinimalWorkbook(path: string): Promise<void> {
     <row r="1"><c r="A1" t="inlineStr"><is><t>Browser Original</t></is></c><c r="B1"><v>42</v></c><c r="C1"><f>B1*2</f><v>84</v></c></row>
     <row r="2"><c r="A2" t="inlineStr"><is><t>Hide me</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row>
   </sheetData>
-  <conditionalFormatting sqref="B2"><cfRule type="cellIs" operator="greaterThan" priority="1"><formula>0</formula></cfRule></conditionalFormatting>
-  <dataValidations count="1"><dataValidation type="whole" operator="between" sqref="B2"><formula1>0</formula1><formula2>100</formula2></dataValidation></dataValidations>
 </worksheet>`,
   }
 
@@ -199,8 +197,40 @@ test.describe('Sheets Web', () => {
               target: '#Sheet1!B1',
             },
           ],
-          cfStates: [{ sheetId: payload.sheetId, rules: [] }],
-          dvStates: [{ sheetId: payload.sheetId, rules: [] }],
+          cfStates: [
+            {
+              sheetId: payload.sheetId,
+              rules: [
+                {
+                  ranges: [{ startRow: 1, endRow: 1, startColumn: 1, endColumn: 1 }],
+                  stopIfTrue: false,
+                  rule: {
+                    type: 'highlightCell',
+                    subType: 'formula',
+                    value: '=B2>0',
+                    style: {},
+                  },
+                },
+              ],
+            },
+          ],
+          dvStates: [
+            {
+              sheetId: payload.sheetId,
+              rules: [
+                {
+                  ranges: [{ startRow: 1, endRow: 1, startColumn: 1, endColumn: 1 }],
+                  rule: {
+                    type: 'whole',
+                    operator: 'between',
+                    formula1: '0',
+                    formula2: '100',
+                    allowBlank: true,
+                  },
+                },
+              ],
+            },
+          ],
           pageSetupStates: [
             {
               sheetId: payload.sheetId,
@@ -234,7 +264,6 @@ test.describe('Sheets Web', () => {
 
     expect(saved.canceled).toBe(false)
     expect(saved.touchedEntries).toContain('xl/worksheets/sheet1.xml')
-    expect(saved.touchedEntries).toContain('xl/comments1.xml')
     await expect(page.locator('#host-state')).toHaveText('saved', { timeout: 30_000 })
     await expect(page.locator('#file-name')).toHaveText('web-excel-browser-e2e.xlsx')
     await expect(page.locator('#download-button')).toBeEnabled()
@@ -275,8 +304,12 @@ test.describe('Sheets Web', () => {
     expect(worksheetXml).toContain('<autoFilter ref="A1:C2">')
     expect(worksheetXml).toMatch(/<row\b[^>]*\br="2"[^>]*\bhidden="1"/)
     expect(worksheetXml).toContain('<hyperlink ref="A1" location="Sheet1!B1"/>')
-    expect(worksheetXml).not.toContain('<conditionalFormatting')
-    expect(worksheetXml).not.toContain('<dataValidations')
+    expect(worksheetXml).toContain('<conditionalFormatting sqref="B2">')
+    expect(worksheetXml).toContain('<formula>B2&gt;0</formula>')
+    expect(worksheetXml).toContain('<dataValidations count="1">')
+    expect(worksheetXml).toMatch(/<dataValidation\b[^>]*\btype="whole"[^>]*\ballowBlank="1"[^>]*\bsqref="B2"/)
+    expect(worksheetXml).toContain('<formula1>0</formula1>')
+    expect(worksheetXml).toContain('<formula2>100</formula2>')
     expect(worksheetXml).toMatch(/<pageSetup\b[^>]*\borientation="landscape"/)
     expect(worksheetXml).toMatch(/<printOptions\b[^>]*\bgridLines="1"/)
     expect(worksheetXml).toContain('<legacyDrawing r:id=')
