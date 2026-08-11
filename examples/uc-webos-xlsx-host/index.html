@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GenOffice Excel - UC Web OS Host</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #fff;
+      }
+
+      #office-frame {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        display: block;
+      }
+
+      #host-error {
+        position: fixed;
+        inset: 16px;
+        z-index: 10;
+        display: none;
+        padding: 16px;
+        overflow: auto;
+        box-sizing: border-box;
+        border: 1px solid #f0b8b8;
+        border-radius: 8px;
+        background: #fff7f7;
+        color: #a40000;
+        font: 13px/1.5 system-ui, sans-serif;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe id="office-frame" title="GenOffice Excel"></iframe>
+    <div id="host-error"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
