@@ -1,0 +1,88 @@
+name: Sheets Web Engine Limits
+
+on:
+  pull_request:
+    branches: [main, agent/ppt-web-foundation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine-limits:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build XLSX Engine Service
+        run: cargo build --release --manifest-path services/xlsx-engine-service/Cargo.toml
+
+      - name: Reject invalid limit configuration
+        run: |
+          set +e
+          XLSX_ENGINE_LISTEN=127.0.0.1:7398 \
+          XLSX_ENGINE_MAX_WORKBOOK_MB=0 \
+          XLSX_ENGINE_MAX_REQUEST_MB=8 \
+            ./services/xlsx-engine-service/target/release/xlsx-engine-service \
+            > /tmp/xlsx-engine-invalid-limit.log 2>&1
+          STATUS=$?
+          set -e
+          test "$STATUS" -ne 0
+          grep -q 'XLSX_ENGINE_MAX_WORKBOOK_MB must be greater than zero' /tmp/xlsx-engine-invalid-limit.log
+
+      - name: Start XLSX Engine Service with a 1MiB workbook limit
+        env:
+          XLSX_ENGINE_LISTEN: 127.0.0.1:7399
+          XLSX_ENGINE_MAX_WORKBOOK_MB: 1
+          XLSX_ENGINE_MAX_REQUEST_MB: 8
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine-limit.log 2>&1 &
+          echo $! > /tmp/xlsx-engine-limit.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7399/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/xlsx-engine-limit.log
+          exit 1
+
+      - name: Reject oversized workbook with HTTP 413
+        run: |
+          python3 - <<'PY'
+          with open('/tmp/oversized.xlsx', 'wb') as handle:
+              handle.write(b'X' * (1024 * 1024 + 1))
+          PY
+          STATUS=$(curl --silent \
+            --output /tmp/oversized-response.txt \
+            --write-out '%{http_code}' \
+            --data-binary @/tmp/oversized.xlsx \
+            'http://127.0.0.1:7399/v1/workbooks?name=oversized.xlsx')
+          test "$STATUS" = '413'
+          grep -q 'configured 1MB upload limit' /tmp/oversized-response.txt
+
+      - name: Keep normal requests below the limit reachable
+        run: |
+          STATUS=$(curl --silent \
+            --output /tmp/small-response.txt \
+            --write-out '%{http_code}' \
+            --data-binary 'not-a-real-xlsx' \
+            'http://127.0.0.1:7399/v1/workbooks?name=small.xlsx')
+          test "$STATUS" = '422'
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sheets-web-engine-limit-logs
+          path: |
+            /tmp/xlsx-engine-invalid-limit.log
+            /tmp/xlsx-engine-limit.log
+            /tmp/oversized-response.txt
+            /tmp/small-response.txt
+          retention-days: 7
