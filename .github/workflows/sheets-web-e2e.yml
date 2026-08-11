@@ -224,7 +224,9 @@ jobs:
         env:
           SHEETS_WEB_E2E_URL: http://127.0.0.1:5275/
           SHEETS_WEB_HOST_E2E_URL: http://127.0.0.1:8082/
-        run: npx playwright test e2e/sheets-web.spec.ts --config e2e/playwright.config.ts
+        run: |
+          set -o pipefail
+          npx playwright test e2e/sheets-web.spec.ts --config e2e/playwright.config.ts 2>&1 | tee /tmp/sheets-web-e2e.log
 
       - name: Upload logs on failure
         if: failure()
@@ -234,7 +236,10 @@ jobs:
           path: |
             e2e/test-results
             e2e/playwright-report
+            test-results
+            playwright-report
             /tmp/xlsx-engine.log
             /tmp/sheets-web.log
             /tmp/web-xlsx-host.log
+            /tmp/sheets-web-e2e.log
           retention-days: 7
