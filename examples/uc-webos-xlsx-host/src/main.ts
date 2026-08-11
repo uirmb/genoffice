@@ -11,6 +11,8 @@ import {
   type HostToEditorMessage,
 } from '@genoffice/office-protocol'
 
+import { detectSelectedFileVersionConflict } from './versioning'
+
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const DEFAULT_SHEETS_URL = 'http://127.0.0.1:5275'
 const DEFAULT_PLUGIN_ID = 'thirdparty.plugin.excel-online'
@@ -233,8 +235,7 @@ async function readSelectedFile(
   const name = normalizeXlsxName(stringValue(result.filename) || stringValue(access.filename) || fallbackName)
   const id =
     stringValue(access.nodeId) || stringValue(access.id) || fallbackId || `uc-xlsx-${Date.now()}`
-  const version =
-    stringValue(access.version) || stringValue(access.fileVersion) || null
+  const version = stringValue(access.version) || stringValue(access.fileVersion) || null
 
   return {
     id,
@@ -365,6 +366,23 @@ async function saveOfficeDocument(
     }
 
     const access = await requestSelectedFileAccess(writeMode, filename)
+    if (!saveAs) {
+      const conflict = detectSelectedFileVersionConflict(message.payload.baseVersion, access)
+      if (conflict) {
+        sendOffice({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:save-document-result',
+          requestId: message.requestId,
+          payload: {
+            ok: false,
+            code: conflict.code,
+            error: conflict.error,
+          },
+        })
+        return
+      }
+    }
+
     const bytes = message.payload.bytes.slice(0)
     const response = await ucCall(
       'uc.fs.saveResultFile',
