@@ -90,7 +90,11 @@ jobs:
           UC_WEBOS_XLSX_HOST_E2E_URL: http://127.0.0.1:8083/
         run: |
           set -o pipefail
-          npx playwright test e2e/uc-webos-xlsx-host.spec.ts --config e2e/playwright.config.ts 2>&1 | tee /tmp/uc-webos-xlsx-host-e2e.log
+          npx playwright test \
+            e2e/uc-webos-xlsx-host.spec.ts \
+            e2e/uc-webos-xlsx-host-shortcuts.spec.ts \
+            --config e2e/playwright.config.ts \
+            2>&1 | tee /tmp/uc-webos-xlsx-host-e2e.log
 
       - name: Upload logs on failure
         if: failure()
