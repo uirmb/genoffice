@@ -38,6 +38,7 @@ import {
   readXlsxWorkbookMedia,
   readXlsxWorkbookRange,
   recalcXlsxWorkbook,
+  saveXlsxArchiveMutation,
 } from './engine-client'
 import { saveWorkbookRequestViaEngine } from './xlsx-save'
 
@@ -59,6 +60,31 @@ function unavailable(name: string): never {
 
 function noopUnsubscribe(): () => void {
   return () => undefined
+}
+
+function hasWorkbookMutations(request: WorkbookSaveRequest): boolean {
+  return (
+    request.edits.length > 0 ||
+    request.structuralOps.length > 0 ||
+    request.chartEdits.length > 0 ||
+    request.visualEdits.length > 0 ||
+    request.visualAdditions.length > 0 ||
+    request.tableAdditions.length > 0 ||
+    request.pivotAdditions.length > 0 ||
+    request.sheetOps.length > 0 ||
+    request.filterStates.length > 0 ||
+    request.hyperlinkEdits.length > 0 ||
+    request.cfStates.length > 0 ||
+    request.dvStates.length > 0 ||
+    request.pageSetupStates.length > 0 ||
+    request.noteStates.length > 0 ||
+    request.formulaValues.length > 0 ||
+    request.pivotCacheRefreshPaths.length > 0 ||
+    request.pivotRefreshUpdates.length > 0 ||
+    request.sheetProtections.length > 0 ||
+    request.sparklineAdditions.length > 0 ||
+    request.definedNamesState !== null
+  )
 }
 
 function normalizeLanguage(locale: string): SheetsLanguage {
@@ -303,7 +329,17 @@ export function createSheetsWebDesktopController(
       saving = true
       const previousSessionId = activeWorkbook.sessionId
       try {
-        const saved = await saveWorkbookRequestViaEngine(request, activeWorkbook, activeWorkbook.name)
+        const saved =
+          request.mode === 'save-as' && !hasWorkbookMutations(request)
+            ? {
+                ...(await saveXlsxArchiveMutation(request.sessionId, activeWorkbook.name, {
+                  replacements: new Map(),
+                  removals: [],
+                  additions: new Map(),
+                })),
+                touchedEntries: [] as readonly string[],
+              }
+            : await saveWorkbookRequestViaEngine(request, activeWorkbook, activeWorkbook.name)
         const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook)
         const result = await host.saveDocument({
           file: descriptor,
