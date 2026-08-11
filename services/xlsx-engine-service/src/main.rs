@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fs,
+    fs, io,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     sync::Arc,
@@ -29,6 +29,10 @@ use xlsx_sidecar::{
 
 const XLSX_MIME: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const DEFAULT_MAX_WORKBOOK_MB: usize = 100;
+// Archive mutation JSON carries base64 content, so it needs headroom above the
+// raw workbook upload limit while still remaining bounded in production.
+const DEFAULT_MAX_REQUEST_MB: usize = 384;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,6 +85,7 @@ impl Default for EngineState {
 struct AppState {
     sessions: Arc<MemorySessionStore>,
     engine: Arc<Mutex<EngineState>>,
+    max_workbook_bytes: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -244,6 +249,16 @@ async fn open_workbook(
     Query(query): Query<OpenWorkbookQuery>,
     bytes: Bytes,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
+    if bytes.len() > state.max_workbook_bytes {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "Workbook exceeds the configured {}MB upload limit.",
+                state.max_workbook_bytes / (1024 * 1024)
+            ),
+        ));
+    }
+
     let name = safe_workbook_name(query.name.as_deref().unwrap_or("workbook.xlsx"));
     let directory = workbook_directory();
     fs::create_dir_all(&directory).map_err(internal_error)?;
@@ -545,6 +560,38 @@ fn safe_workbook_name(input: &str) -> String {
     name
 }
 
+fn configured_limit_bytes(name: &str, default_mb: usize) -> Result<usize, io::Error> {
+    let megabytes = match std::env::var(name) {
+        Ok(raw) => raw.parse::<usize>().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{name} must be a positive integer number of MiB."),
+            )
+        })?,
+        Err(std::env::VarError::NotPresent) => default_mb,
+        Err(error) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Unable to read {name}: {error}"),
+            ))
+        }
+    };
+
+    if megabytes == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{name} must be greater than zero."),
+        ));
+    }
+
+    megabytes.checked_mul(1024 * 1024).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{name} is too large for this platform."),
+        )
+    })
+}
+
 fn internal_error(error: impl ToString) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
 }
@@ -554,10 +601,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listen_addr = std::env::var("XLSX_ENGINE_LISTEN")
         .unwrap_or_else(|_| "127.0.0.1:7301".to_string());
     let address: SocketAddr = listen_addr.parse()?;
+    let max_workbook_bytes =
+        configured_limit_bytes("XLSX_ENGINE_MAX_WORKBOOK_MB", DEFAULT_MAX_WORKBOOK_MB)?;
+    let max_request_bytes =
+        configured_limit_bytes("XLSX_ENGINE_MAX_REQUEST_MB", DEFAULT_MAX_REQUEST_MB)?;
+    if max_request_bytes < max_workbook_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "XLSX_ENGINE_MAX_REQUEST_MB must be greater than or equal to XLSX_ENGINE_MAX_WORKBOOK_MB.",
+        )
+        .into());
+    }
 
     let state = AppState {
         sessions: Arc::new(MemorySessionStore::default()),
         engine: Arc::new(Mutex::new(EngineState::default())),
+        max_workbook_bytes,
     };
 
     let app = Router::new()
@@ -591,11 +650,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/v1/sessions/{session_id}/archive/save",
             post(archive_save_for_session),
         )
-        .layer(DefaultBodyLimit::disable())
+        .layer(DefaultBodyLimit::max(max_request_bytes))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(address).await?;
-    println!("xlsx-engine-service listening on http://{address}");
+    println!(
+        "xlsx-engine-service listening on http://{address} (workbook max {}MB, request max {}MB)",
+        max_workbook_bytes / (1024 * 1024),
+        max_request_bytes / (1024 * 1024)
+    );
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
