@@ -33,6 +33,17 @@ The implementation uses the currently established file APIs:
 
 Normal save requests `writeMode: 'selected'`. Save As first chooses a destination, then requests `writeMode: 'result'`. A successful Save As must return a new `nodeId`/`id`; otherwise the host rejects the result so later Ctrl+S cannot accidentally write back to the original file.
 
+### Optimistic version protection
+
+The file version returned when the workbook is opened is carried into GenOffice as the editor's `baseVersion`. Before a normal Save, the UC Host requests fresh selected-file access and compares the latest `version`/`fileVersion` with that base version.
+
+- same version → `uc.fs.saveResultFile` may run;
+- different version → the Host returns `VERSION_CONFLICT` **before** `saveResultFile` is called;
+- missing version on either side → backward-compatible save behavior is retained;
+- Save As is exempt from the original file's version comparison because it creates a result file instead of overwriting the selected file.
+
+After a successful save, the version returned by UC becomes the next `baseVersion`. This prevents a later Ctrl+S from silently overwriting changes made by another editor/session.
+
 ## GenOffice protocol
 
 The nested editor uses only the shared `office:*` iframe protocol:
