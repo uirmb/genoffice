@@ -82,6 +82,33 @@ jobs:
           HEALTH=$(curl --fail --silent http://127.0.0.1:7399/health)
           node -e "const v=JSON.parse(process.argv[1]); if(v.maxHeavyRequests!==2 || v.heavyQueueTimeoutSecs!==1 || v.availableHeavySlots!==2) process.exit(1)" "$HEALTH"
 
+      - name: Verify request ids and structured logs
+        run: |
+          curl --fail --silent \
+            --dump-header /tmp/health-headers.txt \
+            --header 'X-Request-Id: ci-health-123' \
+            http://127.0.0.1:7399/health \
+            > /tmp/health-response.json
+          grep -qi '^x-request-id: ci-health-123' /tmp/health-headers.txt
+          grep -q '"requestId":"ci-health-123"' /tmp/xlsx-engine-limit.log
+          grep -q '"event":"http_request"' /tmp/xlsx-engine-limit.log
+          grep -q '"path":"/health"' /tmp/xlsx-engine-limit.log
+
+      - name: Verify operational metrics
+        run: |
+          curl --fail --silent \
+            --header 'X-Request-Id: ci-metrics-123' \
+            http://127.0.0.1:7399/metrics \
+            > /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_requests_total ' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_server_errors_total ' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_heavy_admission_rejects_total ' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_heavy_slots 2$' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_heavy_slots_available 2$' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_workbook_sessions ' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_lightweight_sessions ' /tmp/xlsx-engine-metrics.txt
+          grep -q '"requestId":"ci-metrics-123"' /tmp/xlsx-engine-limit.log
+
       - name: Reject oversized workbook with HTTP 413
         run: |
           python3 - <<'PY'
@@ -185,6 +212,9 @@ jobs:
             /tmp/xlsx-engine-limit.log
             /tmp/xlsx-engine-workspace.log
             /tmp/xlsx-engine-ttl.log
+            /tmp/health-headers.txt
+            /tmp/health-response.json
+            /tmp/xlsx-engine-metrics.txt
             /tmp/oversized-response.txt
             /tmp/small-response.txt
             /tmp/expired-session-response.txt
