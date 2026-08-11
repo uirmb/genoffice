@@ -26,6 +26,7 @@ const COMMENTS_REL_TYPE =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments'
 const VML_REL_TYPE =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing'
+const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 const COMMENTS_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml'
 const CONTENT_TYPES_PATH = '[Content_Types].xml'
@@ -178,16 +179,25 @@ const EMPTY_RELS =
 const AFTER_LEGACY_DRAWING =
   /<legacyDrawingHF\b|<picture\b|<oleObjects\b|<controls\b|<webPublishItems\b|<tableParts\b|<extLst\b/
 
+function ensureRelationshipNamespace(worksheetXml: string): string {
+  const open = /<worksheet\b[^>]*>/.exec(worksheetXml)
+  if (!open) throw new NoteEditError('Worksheet has no opening element.')
+  if (/\bxmlns:r="[^"]+"/.test(open[0])) return worksheetXml
+  const replacement = open[0].replace(/>$/, ` xmlns:r="${REL_NS}">`)
+  return worksheetXml.slice(0, open.index) + replacement + worksheetXml.slice(open.index + open[0].length)
+}
+
 function ensureLegacyDrawingElement(worksheetXml: string, rid: string): string {
-  if (/<legacyDrawing\b/.test(worksheetXml)) return worksheetXml
+  const xml = ensureRelationshipNamespace(worksheetXml)
+  if (/<legacyDrawing\b/.test(xml)) return xml
   const element = `<legacyDrawing r:id="${rid}"/>`
-  const anchor = AFTER_LEGACY_DRAWING.exec(worksheetXml)
+  const anchor = AFTER_LEGACY_DRAWING.exec(xml)
   if (anchor) {
-    return worksheetXml.slice(0, anchor.index) + element + worksheetXml.slice(anchor.index)
+    return xml.slice(0, anchor.index) + element + xml.slice(anchor.index)
   }
-  const end = worksheetXml.lastIndexOf('</worksheet>')
+  const end = xml.lastIndexOf('</worksheet>')
   if (end === -1) throw new NoteEditError('Worksheet has no closing element.')
-  return worksheetXml.slice(0, end) + element + worksheetXml.slice(end)
+  return xml.slice(0, end) + element + xml.slice(end)
 }
 
 /// Replaces the worksheet's whole comment set (empty list removes it).
