@@ -39,6 +39,7 @@ async function createMinimalWorkbook(path: string): Promise<void> {
   <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
   <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
   <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`,
     'xl/worksheets/sheet1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
@@ -55,7 +56,7 @@ async function createMinimalWorkbook(path: string): Promise<void> {
 test.describe('Sheets Web', () => {
   test.skip(!sheetsWebUrl, 'SHEETS_WEB_E2E_URL is only set by the Sheets Web browser CI step')
 
-  test('opens, reads formulas, saves, rereads, and downloads a real XLSX through the iframe host', async ({
+  test('opens, reads formulas, recalculates, saves, rereads, and downloads a real XLSX through the iframe host', async ({
     page,
   }) => {
     test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
@@ -113,6 +114,35 @@ test.describe('Sheets Web', () => {
     expect(formulas.cells.find((cell: any) => cell.row === 0 && cell.column === 2)?.formula).toBe(
       'B1*2',
     )
+
+    const recalculated = await editorFrame.locator('body').evaluate(
+      async (_body, payload) => {
+        const api = (window as typeof window & { desktopApi: any }).desktopApi
+        return api.recalcWorkbook({
+          sessionId: payload.sessionId,
+          edits: [
+            {
+              sheetId: payload.sheetId,
+              row: 0,
+              column: 1,
+              input: '50',
+            },
+          ],
+          reads: [
+            {
+              sheetId: payload.sheetId,
+              range: { startRow: 0, endRow: 0, startColumn: 2, endColumn: 2 },
+            },
+          ],
+        })
+      },
+      { sessionId: opened.sessionId, sheetId },
+    )
+    const recalculatedFormula = recalculated.cells.find(
+      (cell: any) => cell.row === 0 && cell.column === 2,
+    )
+    expect(recalculatedFormula?.number).toBe(100)
+    expect(recalculatedFormula?.isFormula).toBe(true)
 
     const saved = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
