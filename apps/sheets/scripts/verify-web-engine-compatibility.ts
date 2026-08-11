@@ -84,7 +84,9 @@ interface FixtureReport {
 async function checkedResponse(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`${ENGINE_URL}${path}`, init)
   if (!response.ok) {
-    throw new Error(`Engine ${init?.method || 'GET'} ${path} failed (${response.status}): ${await response.text()}`)
+    throw new Error(
+      `Engine ${init?.method || 'GET'} ${path} failed (${response.status}): ${await response.text()}`,
+    )
   }
   return response
 }
@@ -97,6 +99,12 @@ function sessionHeaders(sessionId: string): HeadersInit {
   }
 }
 
+function bufferToArrayBuffer(bytes: Buffer): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  return copy.buffer
+}
+
 async function openWorkbook(name: string, bytes: Buffer): Promise<OpenedWorkbook> {
   const response = await checkedResponse(`/v1/workbooks?name=${encodeURIComponent(name)}`, {
     method: 'POST',
@@ -104,7 +112,7 @@ async function openWorkbook(name: string, bytes: Buffer): Promise<OpenedWorkbook
       Accept: 'application/json',
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     },
-    body: bytes,
+    body: bufferToArrayBuffer(bytes),
   })
   return (await response.json()) as OpenedWorkbook
 }
@@ -136,7 +144,10 @@ async function readEntries(
     entries: Array<{ name: string; contentBase64: string }>
   }
   return new Map(
-    body.entries.map((entry) => [entry.name, Uint8Array.from(Buffer.from(entry.contentBase64, 'base64'))]),
+    body.entries.map((entry) => [
+      entry.name,
+      Uint8Array.from(Buffer.from(entry.contentBase64, 'base64')),
+    ]),
   )
 }
 
@@ -214,8 +225,10 @@ function createEngineEntrySource(
   return {
     paths: async () => entries.map((entry) => entry.name),
     has: async (path) => byName.has(path),
-    canPatch: async (path) => (byName.get(path)?.uncompressedSize ?? 0) <= MAX_PATCH_ENTRY_BYTES,
-    containsText: async (path, needle) => (await scanEntries(sessionId, [path], needle)).includes(path),
+    canPatch: async (path) =>
+      (byName.get(path)?.uncompressedSize ?? 0) <= MAX_PATCH_ENTRY_BYTES,
+    containsText: async (path, needle) =>
+      (await scanEntries(sessionId, [path], needle)).includes(path),
     readText: async (path) => {
       const cached = textCache.get(path)
       if (cached !== undefined) return cached
@@ -292,13 +305,11 @@ async function verifyCase(entry: CorpusCase): Promise<FixtureReport> {
       .filter((item) => !afterPaths.has(item.path))
       .map((item) => item.path)
     const beforePaths = new Set(beforeEntries.map((item) => item.path))
-    const addedEntries = afterEntries.filter((item) => !beforePaths.has(item.path)).map((item) => item.path)
+    const addedEntries = afterEntries
+      .filter((item) => !beforePaths.has(item.path))
+      .map((item) => item.path)
 
-    const allowed = new Set([
-      ...plan.touchedEntries,
-      ...plan.removedEntries,
-      ...plan.addedEntries,
-    ])
+    const allowed = new Set([...plan.touchedEntries, ...plan.removedEntries, ...plan.addedEntries])
     const unexpectedChanges = [...changedEntries, ...removedEntries, ...addedEntries].filter(
       (path) => !allowed.has(path),
     )
@@ -311,7 +322,9 @@ async function verifyCase(entry: CorpusCase): Promise<FixtureReport> {
       removedEntries,
       addedEntries,
       unexpectedChanges,
-      preservedEntryCount: afterEntries.filter((item) => beforeByPath.get(item.path) === item.sha256).length,
+      preservedEntryCount: afterEntries.filter(
+        (item) => beforeByPath.get(item.path) === item.sha256,
+      ).length,
     }
   } catch (error) {
     return {
