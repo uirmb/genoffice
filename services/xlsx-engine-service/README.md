@@ -43,6 +43,19 @@ The service keeps HTTP bodies bounded in production while leaving enough room fo
 
 The request limit intentionally exceeds the raw workbook limit because base64 content expands binary payloads by roughly one third and a preservation save can contain multiple replaced or added package parts.
 
+## Heavy request admission
+
+Workbook parsing, range/formula reads, recalculation and archive operations are admitted through a bounded semaphore before the expensive work starts.
+
+- `XLSX_ENGINE_MAX_HEAVY_REQUESTS` — maximum admitted heavy requests, default `4`.
+- `XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS` — maximum time a request may wait for a heavy-work slot, default `15` seconds.
+
+Both values must be positive integers. A request that cannot obtain a slot within the configured queue timeout returns HTTP `503 Service Unavailable` **before** its XLSX operation starts.
+
+The admission timeout is intentionally not an in-flight execution timeout. Most sidecar/archive operations are synchronous today; aborting only the HTTP future would not reliably stop the underlying file operation and could leave a half-finished save. Once a request receives a slot, it is allowed to finish atomically. A future hard execution deadline should be added only together with cooperative cancellation or an isolated worker-process boundary.
+
+`GET /health` reports `maxHeavyRequests`, `availableHeavySlots` and `heavyQueueTimeoutSecs` so a deployment can observe whether the configured pool is saturated.
+
 ## Session expiry
 
 Workbook sessions are intentionally in-memory for the first single-node milestone, but abandoned browser sessions are no longer allowed to live forever.
@@ -84,4 +97,4 @@ The service boundary is intentionally prepared for later horizontal expansion wi
 
 The Rust service must remain independent of UC Web OS authentication and storage concepts: it does not receive tenant IDs, JWTs, CSRF tokens, FsNode IDs, or plugin permissions. UC owns files and authorization; the engine owns spreadsheet processing.
 
-The remaining single-node hardening work is concurrency/time-budget controls and production metrics/structured logging. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
+The remaining single-node hardening work is production metrics/structured logging and, if required by real workloads, a cooperative/worker-process execution deadline. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
