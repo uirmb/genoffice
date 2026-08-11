@@ -61,6 +61,7 @@ export async function handleSave(
   const visualAdditions = toSaveVisualAdds(state.editJournal)
   const tableAdditions = toSaveTableAdds(state.editJournal)
   const pivotAdditions = toSavePivotAdds(state.editJournal)
+  const sparklineAdditions = toSaveSparklineAdds(state.editJournal)
   const sheetOps = toSaveSheetOps(state.editJournal)
   const hyperlinkEdits = toSaveHyperlinkEdits(state.editJournal)
   let filterStates: WorkbookFilterState[]
@@ -80,8 +81,7 @@ export async function handleSave(
   const pageSetupStates = toSavePageSetupStates(state.editJournal)
   const noteStates = collectNoteStates(ctx.univerRef.current, state)
   const pivotCacheRefreshPaths = [...state.editJournal.pivotCacheRefresh]
-  // Output-area expansion after layout growth (location ref write-back); the
-  // count folds into cacheRefresh.
+  // Output-area expansion after layout growth (location ref write-back).
   const pivotRefreshUpdates = [...state.editJournal.pivotRefreshUpdates].map(
     ([cachePath, update]) => ({
       cachePath,
@@ -142,7 +142,9 @@ export async function handleSave(
     pageSetupStates.length +
     noteStates.length +
     pivotCacheRefreshPaths.length +
+    pivotRefreshUpdates.length +
     sheetProtections.length +
+    sparklineAdditions.length +
     (definedNamesState === null ? 0 : 1) +
     visualAdditions.length +
     visualEdits.length +
@@ -191,7 +193,7 @@ export async function handleSave(
     pivotCacheRefreshPaths,
     pivotRefreshUpdates,
     sheetProtections,
-    sparklineAdditions: toSaveSparklineAdds(state.editJournal),
+    sparklineAdditions,
     formulaValues,
     definedNamesState,
   }
@@ -223,7 +225,7 @@ export async function handleSave(
       pivotCacheRefreshPaths,
       pivotRefreshUpdates,
       sheetProtections,
-      sparklineAdditions: toSaveSparklineAdds(state.editJournal),
+      sparklineAdditions,
       formulaValues,
       definedNamesState: splitSave ? null : definedNamesState,
     })
