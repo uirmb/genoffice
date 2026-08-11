@@ -1,11 +1,14 @@
 import {
   workbookFileSchema,
   workbookFormulaCellsResultSchema,
+  workbookMediaResultSchema,
   workbookRangeResultSchema,
   workbookRecalcResultSchema,
   type WorkbookFile,
   type WorkbookFormulaCellsRequest,
   type WorkbookFormulaCellsResult,
+  type WorkbookMediaRequest,
+  type WorkbookMediaResult,
   type WorkbookRangeRequest,
   type WorkbookRangeResult,
   type WorkbookRecalcRequest,
@@ -13,6 +16,7 @@ import {
 } from '../shared/desktop-api'
 
 const ENGINE_BASE = '/xlsx-engine'
+const MAX_MEDIA_BYTES = 20 * 1024 * 1024
 
 export interface XlsxEngineHealth {
   ok: boolean
@@ -105,6 +109,17 @@ function workbookSheetNames(workbook: WorkbookFile): {
     namesById: new Map(workbook.sheets.map((sheet) => [sheet.id, sheet.name])),
     idsByName: new Map(workbook.sheets.map((sheet) => [sheet.name, sheet.id])),
   }
+}
+
+function mediaTypeForPath(path: string): string | null {
+  const extension = path.split('.').at(-1)?.toLowerCase()
+  if (extension === 'png') return 'image/png'
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg'
+  if (extension === 'gif') return 'image/gif'
+  if (extension === 'webp') return 'image/webp'
+  if (extension === 'bmp') return 'image/bmp'
+  if (extension === 'svg') return 'image/svg+xml'
+  return null
 }
 
 export async function getXlsxEngineHealth(): Promise<XlsxEngineHealth> {
@@ -244,6 +259,35 @@ export async function recalcXlsxWorkbook(
       if (!sheetId) throw new Error(`XLSX engine returned unknown worksheet ${sheet}.`)
       return { sheetId, ...cell }
     }),
+  })
+}
+
+export async function readXlsxWorkbookMedia(
+  request: WorkbookMediaRequest,
+  workbook: WorkbookFile,
+): Promise<WorkbookMediaResult> {
+  const visual = workbook.visuals.find((candidate) => candidate.id === request.visualId)
+  if (!visual?.mediaPath) throw new Error(`Unknown workbook image ${request.visualId}.`)
+
+  const manifest = await getXlsxArchiveManifest(request.sessionId)
+  const entry = manifest.find((candidate) => candidate.name === visual.mediaPath)
+  if (!entry) throw new Error(`Workbook is missing ${visual.mediaPath}.`)
+  if (entry.uncompressedSize > MAX_MEDIA_BYTES) {
+    throw new Error(`Workbook image exceeds the ${MAX_MEDIA_BYTES / 1024 / 1024}MB preview limit.`)
+  }
+
+  const entries = await readXlsxArchiveEntries(request.sessionId, [visual.mediaPath])
+  const bytes = entries.get(visual.mediaPath)
+  if (!bytes) throw new Error(`XLSX Engine did not return ${visual.mediaPath}.`)
+
+  const mediaType = visual.mediaType ?? mediaTypeForPath(visual.mediaPath)
+  if (!mediaType?.startsWith('image/')) {
+    throw new Error(`Unsupported workbook image type for ${visual.mediaPath}.`)
+  }
+
+  return workbookMediaResultSchema.parse({
+    mediaType,
+    base64: bytesToBase64(bytes),
   })
 }
 
