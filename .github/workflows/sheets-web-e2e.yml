@@ -226,7 +226,7 @@ jobs:
           SHEETS_WEB_HOST_E2E_URL: http://127.0.0.1:8082/
         run: |
           set -o pipefail
-          npx playwright test e2e/sheets-web.spec.ts e2e/sheets-web-defined-names.spec.ts e2e/sheets-web-chart.spec.ts e2e/sheets-web-image.spec.ts --config e2e/playwright.config.ts 2>&1 | tee /tmp/sheets-web-e2e.log
+          npx playwright test e2e/sheets-web.spec.ts e2e/sheets-web-defined-names.spec.ts e2e/sheets-web-chart.spec.ts e2e/sheets-web-image.spec.ts e2e/sheets-web-table-sparkline.spec.ts --config e2e/playwright.config.ts 2>&1 | tee /tmp/sheets-web-e2e.log
 
       - name: Upload logs on failure
         if: failure()
