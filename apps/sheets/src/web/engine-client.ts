@@ -2,11 +2,14 @@ import {
   workbookFileSchema,
   workbookFormulaCellsResultSchema,
   workbookRangeResultSchema,
+  workbookRecalcResultSchema,
   type WorkbookFile,
   type WorkbookFormulaCellsRequest,
   type WorkbookFormulaCellsResult,
   type WorkbookRangeRequest,
   type WorkbookRangeResult,
+  type WorkbookRecalcRequest,
+  type WorkbookRecalcResult,
 } from '../shared/desktop-api'
 
 const ENGINE_BASE = '/xlsx-engine'
@@ -92,6 +95,16 @@ function archiveContent(items: ReadonlyMap<string, string | Uint8Array>) {
     name,
     contentBase64: bytesToBase64(content),
   }))
+}
+
+function workbookSheetNames(workbook: WorkbookFile): {
+  namesById: Map<string, string>
+  idsByName: Map<string, string>
+} {
+  return {
+    namesById: new Map(workbook.sheets.map((sheet) => [sheet.id, sheet.name])),
+    idsByName: new Map(workbook.sheets.map((sheet) => [sheet.name, sheet.id])),
+  }
 }
 
 export async function getXlsxEngineHealth(): Promise<XlsxEngineHealth> {
@@ -182,6 +195,56 @@ export async function readXlsxWorkbookFormulaCells(
     },
   )
   return workbookFormulaCellsResultSchema.parse(await readJson<unknown>(response))
+}
+
+export async function recalcXlsxWorkbook(
+  request: WorkbookRecalcRequest,
+  workbook: WorkbookFile,
+): Promise<WorkbookRecalcResult> {
+  const { namesById, idsByName } = workbookSheetNames(workbook)
+  const sheetName = (sheetId: string): string => {
+    const name = namesById.get(sheetId)
+    if (!name) throw new Error(`Unknown worksheet ${sheetId}.`)
+    return name
+  }
+
+  const response = await fetch(
+    `${ENGINE_BASE}/v1/sessions/${encodeURIComponent(request.sessionId)}/recalc`,
+    {
+      method: 'POST',
+      headers: sessionHeaders(request.sessionId),
+      body: JSON.stringify({
+        edits: request.edits.map((edit) => ({
+          sheet: sheetName(edit.sheetId),
+          row: edit.row,
+          column: edit.column,
+          input: edit.input,
+        })),
+        reads: request.reads.map((read) => ({
+          sheet: sheetName(read.sheetId),
+          range: read.range,
+        })),
+      }),
+    },
+  )
+  const result = await readJson<{
+    cells: Array<{
+      sheet: string
+      row: number
+      column: number
+      formatted: string
+      number?: number
+      isFormula: boolean
+    }>
+  }>(response)
+
+  return workbookRecalcResultSchema.parse({
+    cells: result.cells.map(({ sheet, ...cell }) => {
+      const sheetId = idsByName.get(sheet)
+      if (!sheetId) throw new Error(`XLSX engine returned unknown worksheet ${sheet}.`)
+      return { sheetId, ...cell }
+    }),
+  })
 }
 
 export async function getXlsxArchiveManifest(sessionId: string): Promise<XlsxArchiveEntry[]> {
