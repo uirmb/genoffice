@@ -35,6 +35,7 @@ import {
   deleteXlsxSession,
   openXlsxWorkbookBytes,
   readXlsxWorkbookFormulaCells,
+  readXlsxWorkbookMedia,
   readXlsxWorkbookRange,
   recalcXlsxWorkbook,
 } from './engine-client'
@@ -283,8 +284,10 @@ export function createSheetsWebDesktopController(
       if (!activeWorkbook) throw new Error('No active workbook session.')
       return recalcXlsxWorkbook(request, activeWorkbook)
     },
-    readWorkbookMedia: async (_request: WorkbookMediaRequest): Promise<WorkbookMediaResult> =>
-      unavailable('readWorkbookMedia'),
+    readWorkbookMedia: async (request: WorkbookMediaRequest): Promise<WorkbookMediaResult> => {
+      if (!activeWorkbook) throw new Error('No active workbook session.')
+      return readXlsxWorkbookMedia(request, activeWorkbook)
+    },
     readPivotDefinition: async (_request: WorkbookPivotRequest): Promise<WorkbookPivotDefinition> =>
       unavailable('readPivotDefinition'),
     readLocalImage: async () => unavailable('readLocalImage'),
