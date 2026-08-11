@@ -41,7 +41,7 @@ describe('note snapshots', () => {
     expect(vml![1]).toContain('<x:Row>4</x:Row><x:Column>0</x:Column>')
   })
 
-  it('registers rels, content types, and the legacyDrawing element', async () => {
+  it('registers rels, content types, namespace, and the legacyDrawing element', async () => {
     const plan = await planNotes(NOTES)
     const rels = plan.replaced.get('xl/worksheets/_rels/sheet1.xml.rels')
       ?? plan.added.get('xl/worksheets/_rels/sheet1.xml.rels')
@@ -51,6 +51,9 @@ describe('note snapshots', () => {
     expect(contentTypes).toContain('spreadsheetml.comments+xml')
     expect(contentTypes).toContain('Extension="vml"')
     const worksheet = plan.replaced.get('xl/worksheets/sheet1.xml')
+    expect(worksheet).toContain(
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
+    )
     expect(worksheet).toContain('<legacyDrawing r:id="')
   })
 
