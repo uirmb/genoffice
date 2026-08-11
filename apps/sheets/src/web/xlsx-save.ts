@@ -17,7 +17,7 @@ import {
 
 const MAX_PATCH_ENTRY_BYTES = 256 * 1024 * 1024
 
-type PlannerStructuralOps = Parameters<typeof planCellEditsToXlsx>[2]
+type PlannerStructuralOps = NonNullable<Parameters<typeof planCellEditsToXlsx>[2]>
 type PlannerStructuralOp = PlannerStructuralOps[number]['ops'][number]
 type PlannerSheetPlan = NonNullable<Parameters<typeof planCellEditsToXlsx>[4]>
 type PlannerFilterStates = Parameters<typeof planCellEditsToXlsx>[5]
