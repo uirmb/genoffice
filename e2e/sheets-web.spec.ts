@@ -17,6 +17,7 @@ async function createMinimalWorkbook(path: string): Promise<void> {
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
   <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
   <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>`,
     '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -25,12 +26,13 @@ async function createMinimalWorkbook(path: string): Promise<void> {
 </Relationships>`,
     'xl/workbook.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+  <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/><sheet name="RemoveMe" sheetId="2" r:id="rId2"/></sheets>
 </workbook>`,
     'xl/_rels/workbook.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`,
     'xl/styles.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
@@ -46,6 +48,11 @@ async function createMinimalWorkbook(path: string): Promise<void> {
   <dimension ref="A1:C1"/>
   <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Browser Original</t></is></c><c r="B1"><v>42</v></c><c r="C1"><f>B1*2</f><v>84</v></c></row></sheetData>
 </worksheet>`,
+    'xl/worksheets/sheet2.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1"/>
+  <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Remove this sheet</t></is></c></row></sheetData>
+</worksheet>`,
   }
 
   for (const [name, content] of Object.entries(parts)) zip.file(name, content)
@@ -56,7 +63,9 @@ async function createMinimalWorkbook(path: string): Promise<void> {
 test.describe('Sheets Web', () => {
   test.skip(!sheetsWebUrl, 'SHEETS_WEB_E2E_URL is only set by the Sheets Web browser CI step')
 
-  test('preserves formulas and advanced worksheet journals through the iframe host', async ({ page }) => {
+  test('preserves formulas, worksheet journals, and sheet management through the iframe host', async ({
+    page,
+  }) => {
     test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
 
     const directory = await mkdtemp(join(tmpdir(), 'genoffice-sheets-web-'))
@@ -76,12 +85,13 @@ test.describe('Sheets Web', () => {
     await page.locator('#xlsx-picker').setInputFiles(workbookPath)
     const opened = (await (await openResponsePromise).json()) as {
       sessionId: string
-      sheets: Array<{ id: string; name: string }>
+      sheets: Array<{ id: string; name: string; hidden?: boolean }>
     }
     expect(opened.sessionId).toBeTruthy()
-    expect(opened.sheets[0]?.name).toBe('Sheet1')
+    expect(opened.sheets.map((sheet) => sheet.name)).toEqual(['Sheet1', 'RemoveMe'])
 
     const sheetId = opened.sheets[0]!.id
+    const removeSheetId = opened.sheets[1]!.id
     const initialRange = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
         const api = (window as typeof window & { desktopApi: any }).desktopApi
@@ -142,6 +152,8 @@ test.describe('Sheets Web', () => {
     expect(recalculatedFormula?.number).toBe(100)
     expect(recalculatedFormula?.isFormula).toBe(true)
 
+    const addedSheetId = 'web-added-sheet'
+    const copySheetId = 'web-copy-sheet'
     const saved = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
         const api = (window as typeof window & { desktopApi: any }).desktopApi
@@ -163,6 +175,20 @@ test.describe('Sheets Web', () => {
               writeValue: true,
               value: 50,
             },
+            {
+              sheetId: payload.addedSheetId,
+              row: 0,
+              column: 0,
+              writeValue: true,
+              value: 'Added Web Sheet',
+            },
+            {
+              sheetId: payload.copySheetId,
+              row: 1,
+              column: 0,
+              writeValue: true,
+              value: 'Edited Copy',
+            },
           ],
           structuralOps: [],
           chartEdits: [],
@@ -170,8 +196,20 @@ test.describe('Sheets Web', () => {
           visualAdditions: [],
           tableAdditions: [],
           pivotAdditions: [],
-          sheetOps: [],
-          sheetOrder: [],
+          sheetOps: [
+            { kind: 'rename-sheet', sheetId: payload.sheetId, newName: 'Renamed' },
+            { kind: 'add-sheet', sheetId: payload.addedSheetId, name: 'Added' },
+            {
+              kind: 'duplicate-sheet',
+              sheetId: payload.copySheetId,
+              name: 'Copy',
+              sourceSheetId: payload.sheetId,
+            },
+            { kind: 'remove-sheet', sheetId: payload.removeSheetId },
+            { kind: 'set-sheet-hidden', sheetId: payload.addedSheetId, hidden: true },
+            { kind: 'reorder-sheets' },
+          ],
+          sheetOrder: [payload.copySheetId, payload.sheetId, payload.addedSheetId],
           filterStates: [
             {
               sheetId: payload.sheetId,
@@ -253,16 +291,27 @@ test.describe('Sheets Web', () => {
           definedNamesState: null,
         })
       },
-      { sessionId: opened.sessionId, sheetId },
+      {
+        sessionId: opened.sessionId,
+        sheetId,
+        removeSheetId,
+        addedSheetId,
+        copySheetId,
+      },
     )
 
     expect(saved.canceled).toBe(false)
     expect(saved.touchedEntries).toContain('xl/worksheets/sheet1.xml')
+    expect(saved.file.sheets.map((sheet: any) => sheet.name)).toEqual(['Copy', 'Renamed', 'Added'])
+    expect(saved.file.sheets.find((sheet: any) => sheet.name === 'Added')?.hidden).toBe(true)
     await expect(page.locator('#host-state')).toHaveText('saved', { timeout: 30_000 })
     await expect(page.locator('#file-name')).toHaveText('web-excel-browser-e2e.xlsx')
     await expect(page.locator('#download-button')).toBeEnabled()
 
-    const savedSheetId = saved.file.sheets[0].id
+    const renamedSheetId = saved.file.sheets.find((sheet: any) => sheet.name === 'Renamed')!.id
+    const copySavedSheetId = saved.file.sheets.find((sheet: any) => sheet.name === 'Copy')!.id
+    const addedSavedSheetId = saved.file.sheets.find((sheet: any) => sheet.name === 'Added')!.id
+
     const savedRange = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
         const api = (window as typeof window & { desktopApi: any }).desktopApi
@@ -272,7 +321,7 @@ test.describe('Sheets Web', () => {
           range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
         })
       },
-      { sessionId: saved.file.sessionId, sheetId: savedSheetId },
+      { sessionId: saved.file.sessionId, sheetId: renamedSheetId },
     )
     expect(savedRange.cells.find((cell: any) => cell.row === 0 && cell.column === 0)?.value).toBe(
       'Browser Saved',
@@ -281,6 +330,39 @@ test.describe('Sheets Web', () => {
     const savedFormula = savedRange.cells.find((cell: any) => cell.row === 0 && cell.column === 2)
     expect(savedFormula?.formula).toBe('=B1*2')
     expect(savedFormula?.value).toBe(100)
+
+    const copyRange = await editorFrame.locator('body').evaluate(
+      async (_body, payload) => {
+        const api = (window as typeof window & { desktopApi: any }).desktopApi
+        return api.readWorkbookRange({
+          sessionId: payload.sessionId,
+          sheetId: payload.sheetId,
+          range: { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 },
+        })
+      },
+      { sessionId: saved.file.sessionId, sheetId: copySavedSheetId },
+    )
+    expect(copyRange.cells.find((cell: any) => cell.row === 0 && cell.column === 0)?.value).toBe(
+      'Browser Original',
+    )
+    expect(copyRange.cells.find((cell: any) => cell.row === 1 && cell.column === 0)?.value).toBe(
+      'Edited Copy',
+    )
+
+    const addedRange = await editorFrame.locator('body').evaluate(
+      async (_body, payload) => {
+        const api = (window as typeof window & { desktopApi: any }).desktopApi
+        return api.readWorkbookRange({
+          sessionId: payload.sessionId,
+          sheetId: payload.sheetId,
+          range: { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 },
+        })
+      },
+      { sessionId: saved.file.sessionId, sheetId: addedSavedSheetId },
+    )
+    expect(addedRange.cells.find((cell: any) => cell.row === 0 && cell.column === 0)?.value).toBe(
+      'Added Web Sheet',
+    )
 
     const downloadPromise = page.waitForEvent('download')
     await page.locator('#download-button').click()
@@ -296,11 +378,13 @@ test.describe('Sheets Web', () => {
     expect(worksheetXml).toMatch(/<c r="C1"[^>]*><f>B1\*2<\/f><v>100<\/v><\/c>/)
     expect(worksheetXml).toContain('<sheetProtection sheet="1" objects="1" scenarios="1"/>')
     expect(worksheetXml).toContain('<autoFilter ref="A1:C1">')
-    expect(worksheetXml).toContain('<hyperlink ref="A1" location="Sheet1!B1"/>')
+    expect(worksheetXml).toContain('<hyperlink ref="A1" location="Renamed!B1"/>')
     expect(worksheetXml).toContain('<conditionalFormatting sqref="B1">')
     expect(worksheetXml).toContain('<formula>B1&gt;0</formula>')
     expect(worksheetXml).toContain('<dataValidations count="1">')
-    expect(worksheetXml).toMatch(/<dataValidation\b[^>]*\btype="whole"[^>]*\ballowBlank="1"[^>]*\bsqref="B1"/)
+    expect(worksheetXml).toMatch(
+      /<dataValidation\b[^>]*\btype="whole"[^>]*\ballowBlank="1"[^>]*\bsqref="B1"/,
+    )
     expect(worksheetXml).toContain('<formula1>0</formula1>')
     expect(worksheetXml).toContain('<formula2>100</formula2>')
     expect(worksheetXml).toMatch(/<pageSetup\b[^>]*\borientation="landscape"/)
@@ -322,8 +406,19 @@ test.describe('Sheets Web', () => {
     expect(worksheetRels).toContain('/relationships/comments')
     expect(worksheetRels).toContain('/relationships/vmlDrawing')
 
+    expect(downloadedZip.file('xl/worksheets/sheet2.xml')).toBeNull()
+    const workbookXml = await downloadedZip.file('xl/workbook.xml')?.async('text')
+    expect(workbookXml).toMatch(
+      /<sheets>\s*<sheet\b[^>]*name="Copy"[\s\S]*?<sheet\b[^>]*name="Renamed"[\s\S]*?<sheet\b[^>]*name="Added"[^>]*state="hidden"[^>]*\/>\s*<\/sheets>/,
+    )
+    expect(workbookXml).not.toContain('name="RemoveMe"')
+
+    const workbookRels = await downloadedZip.file('xl/_rels/workbook.xml.rels')?.async('text')
+    expect(workbookRels).not.toContain('Target="worksheets/sheet2.xml"')
+
     const contentTypes = await downloadedZip.file('[Content_Types].xml')?.async('text')
     expect(contentTypes).toContain('spreadsheetml.comments+xml')
     expect(contentTypes).toContain('Extension="vml"')
+    expect(contentTypes).not.toContain('PartName="/xl/worksheets/sheet2.xml"')
   })
 })
