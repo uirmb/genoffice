@@ -28,6 +28,8 @@ type PlannerSheetProtections = Parameters<typeof planCellEditsToXlsx>[9]
 type PlannerVisualAdditions = Parameters<typeof planCellEditsToXlsx>[11]
 type PlannerPageSetupStates = Parameters<typeof planCellEditsToXlsx>[12]
 type PlannerNoteStates = Parameters<typeof planCellEditsToXlsx>[13]
+type PlannerTableAdditions = NonNullable<Parameters<typeof planCellEditsToXlsx>[14]>
+type PlannerSparklineAdditions = NonNullable<Parameters<typeof planCellEditsToXlsx>[19]>
 
 interface SheetPlanContext {
   readonly plan: PlannerSheetPlan | undefined
@@ -82,11 +84,9 @@ function mergeAdditions(plan: MutationPlan): Map<string, string | Uint8Array> {
 
 function hasUnsupportedAdvancedEdits(request: WorkbookSaveRequest): boolean {
   return (
-    request.tableAdditions.length > 0 ||
     request.pivotAdditions.length > 0 ||
     request.pivotCacheRefreshPaths.length > 0 ||
-    request.pivotRefreshUpdates.length > 0 ||
-    request.sparklineAdditions.length > 0
+    request.pivotRefreshUpdates.length > 0
   )
 }
 
@@ -272,6 +272,26 @@ function toPlannerVisualAdditions(
   }))
 }
 
+function toPlannerTableAdditions(
+  request: WorkbookSaveRequest,
+  names: ReadonlyMap<string, string>,
+): PlannerTableAdditions {
+  return request.tableAdditions.map(({ sheetId, ...addition }) => ({
+    sheetName: requiredSheetName(names, sheetId),
+    ...addition,
+  }))
+}
+
+function toPlannerSparklineAdditions(
+  request: WorkbookSaveRequest,
+  names: ReadonlyMap<string, string>,
+): PlannerSparklineAdditions {
+  return request.sparklineAdditions.map(({ sheetId, ...addition }) => ({
+    sheetName: requiredSheetName(names, sheetId),
+    ...addition,
+  }))
+}
+
 function toPlannerCellEdits(
   request: WorkbookSaveRequest,
   names: ReadonlyMap<string, string>,
@@ -428,12 +448,12 @@ export async function saveWorkbookRequestViaEngine(
     toPlannerVisualAdditions(request, sheetContext.plannerNames),
     toPlannerPageSetupStates(request, sheetContext.plannerNames),
     toPlannerNoteStates(request, sheetContext.plannerNames),
-    [],
+    toPlannerTableAdditions(request, sheetContext.plannerNames),
     [],
     [],
     [],
     request.visualEdits,
-    [],
+    toPlannerSparklineAdditions(request, sheetContext.plannerNames),
     toPlannerFormulaValues(request, sheetContext.plannerNames),
   )
 
