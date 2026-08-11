@@ -75,6 +75,43 @@ jobs:
             'http://127.0.0.1:7399/v1/workbooks?name=small.xlsx')
           test "$STATUS" = '422'
 
+      - name: Prepare stale endpoint workspace
+        run: |
+          rm -rf /tmp/genoffice-xlsx-engine-ci
+          mkdir -p /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/workbooks/orphan
+          mkdir -p /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/scratch/orphan
+          mkdir -p /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7395/workbooks/live-sibling
+          printf 'stale' > /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/workbooks/orphan/stale.xlsx
+          printf 'stale' > /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/scratch/orphan/stale.bin
+          printf 'keep' > /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7395/workbooks/live-sibling/keep.txt
+
+      - name: Clean only the bound endpoint workspace
+        env:
+          XLSX_ENGINE_LISTEN: 127.0.0.1:7396
+          XLSX_ENGINE_WORK_ROOT: /tmp/genoffice-xlsx-engine-ci
+          XLSX_ENGINE_MAX_WORKBOOK_MB: 1
+          XLSX_ENGINE_MAX_REQUEST_MB: 8
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine-workspace.log 2>&1 &
+          PID=$!
+          echo "$PID" > /tmp/xlsx-engine-workspace.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7396/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:7396/health >/dev/null
+          test ! -e /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/workbooks/orphan/stale.xlsx
+          test ! -e /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/scratch/orphan/stale.bin
+          test -d /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/workbooks
+          test -d /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/scratch
+          test -f /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7395/workbooks/live-sibling/keep.txt
+          kill -INT "$PID"
+          wait "$PID"
+          test ! -e /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396
+          test -f /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7395/workbooks/live-sibling/keep.txt
+
       - name: Start short-TTL XLSX Engine Service
         env:
           XLSX_ENGINE_LISTEN: 127.0.0.1:7397
@@ -115,6 +152,7 @@ jobs:
           path: |
             /tmp/xlsx-engine-invalid-limit.log
             /tmp/xlsx-engine-limit.log
+            /tmp/xlsx-engine-workspace.log
             /tmp/xlsx-engine-ttl.log
             /tmp/oversized-response.txt
             /tmp/small-response.txt
