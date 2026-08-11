@@ -239,7 +239,7 @@ test.describe('Sheets Web existing Pivot refresh', () => {
       },
     )
 
-    expect(error).toContain('occupied')
+    expect(error).toContain('conflicts with existing worksheet content')
     await expect(page.locator('#download-button')).toBeDisabled()
   })
 })
