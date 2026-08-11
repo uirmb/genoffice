@@ -4,6 +4,7 @@ use std::{
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -33,12 +34,16 @@ const DEFAULT_MAX_WORKBOOK_MB: usize = 100;
 // Archive mutation JSON carries base64 content, so it needs headroom above the
 // raw workbook upload limit while still remaining bounded in production.
 const DEFAULT_MAX_REQUEST_MB: usize = 384;
+const DEFAULT_SESSION_TTL_SECS: u64 = 60 * 60;
+const DEFAULT_CLEANUP_INTERVAL_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkbookSession {
     session_id: String,
     source: SessionSource,
+    #[serde(skip)]
+    last_access: Instant,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,6 +73,7 @@ struct EngineState {
     recalc: RecalcCache,
     files: HashMap<String, PathBuf>,
     metadata: HashMap<String, Value>,
+    last_access: HashMap<String, Instant>,
 }
 
 impl Default for EngineState {
@@ -77,6 +83,7 @@ impl Default for EngineState {
             recalc: RecalcCache::new(),
             files: HashMap::new(),
             metadata: HashMap::new(),
+            last_access: HashMap::new(),
         }
     }
 }
@@ -86,6 +93,8 @@ struct AppState {
     sessions: Arc<MemorySessionStore>,
     engine: Arc<Mutex<EngineState>>,
     max_workbook_bytes: usize,
+    session_ttl: Duration,
+    cleanup_interval: Duration,
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,6 +221,7 @@ async fn create_session(
     let session = WorkbookSession {
         session_id: session_id.clone(),
         source: source.clone(),
+        last_access: Instant::now(),
     };
 
     state
@@ -287,20 +297,30 @@ async fn register_workbook_path(
     let session_id = metadata.session_id.clone();
     let value = web_metadata_value(metadata, &name, &sha256)?;
     engine.files.insert(session_id.clone(), path);
-    engine.metadata.insert(session_id, value.clone());
+    engine.metadata.insert(session_id.clone(), value.clone());
+    engine.last_access.insert(session_id, Instant::now());
     Ok((StatusCode::CREATED, Json(value)))
+}
+
+fn touch_workbook_session(engine: &mut EngineState, session_id: &str) {
+    if engine.files.contains_key(session_id) {
+        engine
+            .last_access
+            .insert(session_id.to_string(), Instant::now());
+    }
 }
 
 async fn get_session_metadata(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let engine = state.engine.lock().await;
+    let mut engine = state.engine.lock().await;
     let metadata = engine
         .metadata
         .get(&session_id)
         .cloned()
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Unknown workbook session.".to_string()))?;
+    touch_workbook_session(&mut engine, &session_id);
     Ok(Json(metadata))
 }
 
@@ -310,6 +330,7 @@ async fn read_range(
     Json(request): Json<ReadRangeRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let mut engine = state.engine.lock().await;
+    touch_workbook_session(&mut engine, &session_id);
     let result = engine
         .workbooks
         .read_range(&session_id, &request.sheet_id, &request.range)
@@ -323,6 +344,7 @@ async fn read_formula_cells(
     Json(request): Json<ReadFormulaCellsRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let mut engine = state.engine.lock().await;
+    touch_workbook_session(&mut engine, &session_id);
     let result = engine
         .workbooks
         .read_formula_cells(&session_id, &request.sheet_id)
@@ -341,6 +363,7 @@ async fn recalc_workbook(
         .get(&session_id)
         .cloned()
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Unknown workbook session.".to_string()))?;
+    touch_workbook_session(&mut engine, &session_id);
     let result = recalc_cells(&mut engine.recalc, &path, &request.edits, &request.reads)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     Ok(Json(serde_json::to_value(result).map_err(internal_error)?))
@@ -435,6 +458,9 @@ async fn archive_save_for_session(
     let value = web_metadata_value(metadata, &name, &sha256)?;
     engine.files.insert(saved_session_id.clone(), target_path);
     engine.metadata.insert(saved_session_id.clone(), value);
+    engine
+        .last_access
+        .insert(saved_session_id.clone(), Instant::now());
     drop(engine);
 
     let mut response = Response::new(Body::from(bytes));
@@ -468,17 +494,14 @@ async fn delete_session(
     let mut engine = state.engine.lock().await;
     let path = engine.files.remove(&session_id);
     engine.metadata.remove(&session_id);
+    engine.last_access.remove(&session_id);
     if let Some(path) = path.as_deref() {
         engine.recalc.purge(path);
     }
     let closed = engine.workbooks.close(&session_id).is_ok();
     drop(engine);
 
-    if let Some(path) = path {
-        if let Some(parent) = path.parent() {
-            let _ = fs::remove_dir_all(parent);
-        }
-    }
+    remove_workbook_directory(path);
 
     if closed {
         StatusCode::NO_CONTENT
@@ -487,13 +510,72 @@ async fn delete_session(
     }
 }
 
+fn remove_workbook_directory(path: Option<PathBuf>) {
+    if let Some(path) = path {
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+}
+
+async fn cleanup_expired_sessions(state: &AppState) {
+    let now = Instant::now();
+    {
+        let mut sessions = state.sessions.sessions.write().await;
+        sessions.retain(|_, session| now.duration_since(session.last_access) < state.session_ttl);
+    }
+
+    let expired_paths = {
+        let mut engine = state.engine.lock().await;
+        let expired_ids = engine
+            .last_access
+            .iter()
+            .filter_map(|(session_id, last_access)| {
+                (now.duration_since(*last_access) >= state.session_ttl).then(|| session_id.clone())
+            })
+            .collect::<Vec<_>>();
+        let mut paths = Vec::with_capacity(expired_ids.len());
+
+        for session_id in expired_ids {
+            engine.last_access.remove(&session_id);
+            let path = engine.files.remove(&session_id);
+            engine.metadata.remove(&session_id);
+            if let Some(path) = path.as_deref() {
+                engine.recalc.purge(path);
+            }
+            let _ = engine.workbooks.close(&session_id);
+            if let Some(path) = path {
+                paths.push(path);
+            }
+        }
+        paths
+    };
+
+    for path in expired_paths {
+        remove_workbook_directory(Some(path));
+    }
+}
+
+async fn session_cleanup_loop(state: AppState) {
+    let mut ticker = tokio::time::interval(state.cleanup_interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        ticker.tick().await;
+        cleanup_expired_sessions(&state).await;
+    }
+}
+
 async fn session_path(state: &AppState, session_id: &str) -> Result<PathBuf, ApiError> {
-    let engine = state.engine.lock().await;
-    engine
+    let mut engine = state.engine.lock().await;
+    let path = engine
         .files
         .get(session_id)
         .cloned()
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "Unknown workbook session.".to_string()))
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Unknown workbook session.".to_string()))?;
+    engine
+        .last_access
+        .insert(session_id.to_string(), Instant::now());
+    Ok(path)
 }
 
 fn write_archive_content(
@@ -592,6 +674,32 @@ fn configured_limit_bytes(name: &str, default_mb: usize) -> Result<usize, io::Er
     })
 }
 
+fn configured_seconds(name: &str, default_seconds: u64) -> Result<Duration, io::Error> {
+    let seconds = match std::env::var(name) {
+        Ok(raw) => raw.parse::<u64>().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{name} must be a positive integer number of seconds."),
+            )
+        })?,
+        Err(std::env::VarError::NotPresent) => default_seconds,
+        Err(error) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Unable to read {name}: {error}"),
+            ))
+        }
+    };
+
+    if seconds == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{name} must be greater than zero."),
+        ));
+    }
+    Ok(Duration::from_secs(seconds))
+}
+
 fn internal_error(error: impl ToString) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
 }
@@ -612,12 +720,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
+    let session_ttl = configured_seconds("XLSX_ENGINE_SESSION_TTL_SECS", DEFAULT_SESSION_TTL_SECS)?;
+    let cleanup_interval = configured_seconds(
+        "XLSX_ENGINE_CLEANUP_INTERVAL_SECS",
+        DEFAULT_CLEANUP_INTERVAL_SECS,
+    )?;
+    if cleanup_interval > session_ttl {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "XLSX_ENGINE_CLEANUP_INTERVAL_SECS must be less than or equal to XLSX_ENGINE_SESSION_TTL_SECS.",
+        )
+        .into());
+    }
 
     let state = AppState {
         sessions: Arc::new(MemorySessionStore::default()),
         engine: Arc::new(Mutex::new(EngineState::default())),
         max_workbook_bytes,
+        session_ttl,
+        cleanup_interval,
     };
+    tokio::spawn(session_cleanup_loop(state.clone()));
 
     let app = Router::new()
         .route("/health", get(health))
@@ -655,9 +778,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = tokio::net::TcpListener::bind(address).await?;
     println!(
-        "xlsx-engine-service listening on http://{address} (workbook max {}MB, request max {}MB)",
+        "xlsx-engine-service listening on http://{address} (workbook max {}MB, request max {}MB, session ttl {}s)",
         max_workbook_bytes / (1024 * 1024),
-        max_request_bytes / (1024 * 1024)
+        max_request_bytes / (1024 * 1024),
+        session_ttl.as_secs()
     );
 
     axum::serve(listener, app)
