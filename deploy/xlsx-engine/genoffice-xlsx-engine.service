@@ -1,0 +1,33 @@
+[Unit]
+Description=GenOffice XLSX Engine Service
+After=network.target
+
+[Service]
+Type=simple
+User=genoffice
+Group=genoffice
+WorkingDirectory=/opt/genoffice
+EnvironmentFile=/etc/genoffice/xlsx-engine.env
+ExecStart=/opt/genoffice/bin/xlsx-engine-service
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30s
+KillSignal=SIGINT
+
+# The engine only needs its private work root plus the installed binary and
+# shared libraries. UC storage/auth are never mounted into this process.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/genoffice-xlsx-engine
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
