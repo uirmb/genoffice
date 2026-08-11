@@ -20,7 +20,7 @@ use ironcalc::{base::Model, export::save_to_xlsx};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 use uuid::Uuid;
 use xlsx_sidecar::{
     archive::{archive_manifest, read_entries_to_dir, save_archive, scan_entries_for_text, EntryContent},
@@ -36,6 +36,8 @@ const DEFAULT_MAX_WORKBOOK_MB: usize = 100;
 const DEFAULT_MAX_REQUEST_MB: usize = 384;
 const DEFAULT_SESSION_TTL_SECS: u64 = 60 * 60;
 const DEFAULT_CLEANUP_INTERVAL_SECS: u64 = 60;
+const DEFAULT_MAX_HEAVY_REQUESTS: usize = 4;
+const DEFAULT_HEAVY_QUEUE_TIMEOUT_SECS: u64 = 15;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +94,9 @@ impl Default for EngineState {
 struct AppState {
     sessions: Arc<MemorySessionStore>,
     engine: Arc<Mutex<EngineState>>,
+    heavy_slots: Arc<Semaphore>,
+    max_heavy_requests: usize,
+    heavy_queue_timeout: Duration,
     max_workbook_bytes: usize,
     session_ttl: Duration,
     cleanup_interval: Duration,
@@ -175,6 +180,9 @@ struct HealthResponse {
     ok: bool,
     service: &'static str,
     session_store: &'static str,
+    max_heavy_requests: usize,
+    available_heavy_slots: usize,
+    heavy_queue_timeout_secs: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -205,11 +213,35 @@ struct ArchiveScanResponse {
 
 type ApiError = (StatusCode, String);
 
+async fn acquire_heavy_permit_with(
+    slots: Arc<Semaphore>,
+    wait: Duration,
+) -> Result<OwnedSemaphorePermit, ApiError> {
+    match tokio::time::timeout(wait, slots.acquire_owned()).await {
+        Ok(Ok(permit)) => Ok(permit),
+        Ok(Err(_)) => Err(internal_error("XLSX engine admission semaphore is closed.")),
+        Err(_) => Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "XLSX engine is busy; no heavy request slot became available within {}s.",
+                wait.as_secs()
+            ),
+        )),
+    }
+}
+
+async fn acquire_heavy_permit(state: &AppState) -> Result<OwnedSemaphorePermit, ApiError> {
+    acquire_heavy_permit_with(state.heavy_slots.clone(), state.heavy_queue_timeout).await
+}
+
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
         service: "xlsx-engine-service",
         session_store: state.sessions.kind(),
+        max_heavy_requests: state.max_heavy_requests,
+        available_heavy_slots: state.heavy_slots.available_permits(),
+        heavy_queue_timeout_secs: state.heavy_queue_timeout.as_secs(),
     })
 }
 
@@ -249,6 +281,7 @@ async fn create_blank_workbook(
     State(state): State<AppState>,
     Query(query): Query<OpenWorkbookQuery>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let _permit = acquire_heavy_permit(&state).await?;
     let name = safe_workbook_name(query.name.as_deref().unwrap_or("Untitled.xlsx"));
     let directory = workbook_directory(&state);
     fs::create_dir_all(&directory).map_err(internal_error)?;
@@ -277,6 +310,7 @@ async fn open_workbook(
         ));
     }
 
+    let _permit = acquire_heavy_permit(&state).await?;
     let name = safe_workbook_name(query.name.as_deref().unwrap_or("workbook.xlsx"));
     let directory = workbook_directory(&state);
     fs::create_dir_all(&directory).map_err(internal_error)?;
@@ -337,6 +371,7 @@ async fn read_range(
     Path(session_id): Path<String>,
     Json(request): Json<ReadRangeRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let _permit = acquire_heavy_permit(&state).await?;
     let mut engine = state.engine.lock().await;
     touch_workbook_session(&mut engine, &session_id);
     let result = engine
@@ -351,6 +386,7 @@ async fn read_formula_cells(
     Path(session_id): Path<String>,
     Json(request): Json<ReadFormulaCellsRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let _permit = acquire_heavy_permit(&state).await?;
     let mut engine = state.engine.lock().await;
     touch_workbook_session(&mut engine, &session_id);
     let result = engine
@@ -365,6 +401,7 @@ async fn recalc_workbook(
     Path(session_id): Path<String>,
     Json(request): Json<RecalcRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let _permit = acquire_heavy_permit(&state).await?;
     let mut engine = state.engine.lock().await;
     let path = engine
         .files
@@ -381,6 +418,7 @@ async fn archive_manifest_for_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
+    let _permit = acquire_heavy_permit(&state).await?;
     let path = session_path(&state, &session_id).await?;
     let entries = archive_manifest(&path)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
@@ -392,6 +430,7 @@ async fn archive_read_for_session(
     Path(session_id): Path<String>,
     Json(request): Json<ArchiveEntriesRequest>,
 ) -> Result<Json<ArchiveReadResponse>, ApiError> {
+    let _permit = acquire_heavy_permit(&state).await?;
     let path = session_path(&state, &session_id).await?;
     let directory = scratch_directory(&state, "read");
     fs::create_dir_all(&directory).map_err(internal_error)?;
@@ -420,6 +459,7 @@ async fn archive_scan_for_session(
     Path(session_id): Path<String>,
     Json(request): Json<ArchiveScanRequest>,
 ) -> Result<Json<ArchiveScanResponse>, ApiError> {
+    let _permit = acquire_heavy_permit(&state).await?;
     let path = session_path(&state, &session_id).await?;
     let matches = scan_entries_for_text(&path, &request.entries, &request.needle)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
@@ -431,6 +471,7 @@ async fn archive_save_for_session(
     Path(session_id): Path<String>,
     Json(request): Json<ArchiveSaveRequest>,
 ) -> Result<Response, ApiError> {
+    let _permit = acquire_heavy_permit(&state).await?;
     let source_path = session_path(&state, &session_id).await?;
     let name = safe_workbook_name(request.name.as_deref().unwrap_or("workbook.xlsx"));
     let directory = workbook_directory(&state);
@@ -735,6 +776,32 @@ fn configured_limit_bytes(name: &str, default_mb: usize) -> Result<usize, io::Er
     })
 }
 
+fn configured_positive_usize(name: &str, default_value: usize) -> Result<usize, io::Error> {
+    let value = match std::env::var(name) {
+        Ok(raw) => raw.parse::<usize>().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{name} must be a positive integer."),
+            )
+        })?,
+        Err(std::env::VarError::NotPresent) => default_value,
+        Err(error) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Unable to read {name}: {error}"),
+            ))
+        }
+    };
+
+    if value == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{name} must be greater than zero."),
+        ));
+    }
+    Ok(value)
+}
+
 fn configured_seconds(name: &str, default_seconds: u64) -> Result<Duration, io::Error> {
     let seconds = match std::env::var(name) {
         Ok(raw) => raw.parse::<u64>().map_err(|_| {
@@ -781,6 +848,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
+    let max_heavy_requests = configured_positive_usize(
+        "XLSX_ENGINE_MAX_HEAVY_REQUESTS",
+        DEFAULT_MAX_HEAVY_REQUESTS,
+    )?;
+    let heavy_queue_timeout = configured_seconds(
+        "XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS",
+        DEFAULT_HEAVY_QUEUE_TIMEOUT_SECS,
+    )?;
     let session_ttl = configured_seconds("XLSX_ENGINE_SESSION_TTL_SECS", DEFAULT_SESSION_TTL_SECS)?;
     let cleanup_interval = configured_seconds(
         "XLSX_ENGINE_CLEANUP_INTERVAL_SECS",
@@ -803,6 +878,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         sessions: Arc::new(MemorySessionStore::default()),
         engine: Arc::new(Mutex::new(EngineState::default())),
+        heavy_slots: Arc::new(Semaphore::new(max_heavy_requests)),
+        max_heavy_requests,
+        heavy_queue_timeout,
         max_workbook_bytes,
         session_ttl,
         cleanup_interval,
@@ -846,10 +924,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state);
 
     println!(
-        "xlsx-engine-service listening on http://{address} (workbook max {}MB, request max {}MB, session ttl {}s)",
+        "xlsx-engine-service listening on http://{address} (workbook max {}MB, request max {}MB, session ttl {}s, heavy slots {}, queue timeout {}s)",
         max_workbook_bytes / (1024 * 1024),
         max_request_bytes / (1024 * 1024),
-        session_ttl.as_secs()
+        session_ttl.as_secs(),
+        max_heavy_requests,
+        heavy_queue_timeout.as_secs()
     );
 
     let result = axum::serve(listener, app)
@@ -865,4 +945,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn heavy_request_admission_times_out_before_work_starts() {
+        let slots = Arc::new(Semaphore::new(1));
+        let held = slots.clone().acquire_owned().await.expect("first permit");
+
+        match acquire_heavy_permit_with(slots.clone(), Duration::from_millis(20)).await {
+            Err((status, message)) => {
+                assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+                assert!(message.contains("busy"));
+            }
+            Ok(_) => panic!("a saturated admission queue must time out"),
+        }
+
+        drop(held);
+        let permit = acquire_heavy_permit_with(slots, Duration::from_millis(20))
+            .await
+            .expect("permit after release");
+        drop(permit);
+    }
 }
