@@ -47,6 +47,94 @@ async function editFirstCell(page: Page, editor: FrameLocator): Promise<void> {
   throw new Error('Worksheet canvas was not found.')
 }
 
+async function installCloseMessageRecorder(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const target = window as Window & {
+      __sheetsCloseMessages?: Array<{
+        type: string
+        requestId?: string
+        reason?: string
+      }>
+    }
+    target.__sheetsCloseMessages = []
+    window.addEventListener('message', (event) => {
+      const message = event.data as {
+        type?: string
+        requestId?: string
+        payload?: { reason?: string }
+      }
+      if (
+        message?.type !== 'office:close-request' &&
+        message?.type !== 'office:close-cancelled'
+      ) {
+        return
+      }
+      target.__sheetsCloseMessages?.push({
+        type: message.type,
+        ...(message.requestId ? { requestId: message.requestId } : {}),
+        ...(message.payload?.reason ? { reason: message.payload.reason } : {}),
+      })
+    })
+  })
+}
+
+async function sendWindowCloseRequest(page: Page, requestId: string): Promise<void> {
+  await page.evaluate((id) => {
+    const frame = document.querySelector<HTMLIFrameElement>('#office-frame')
+    if (!frame?.contentWindow) throw new Error('Sheets iframe is not available.')
+    const targetOrigin = new URL(frame.src, window.location.href).origin
+    frame.contentWindow.postMessage(
+      {
+        protocol: 1,
+        type: 'office:request-close',
+        requestId: id,
+        payload: { reason: 'window-close' },
+      },
+      targetOrigin,
+    )
+  }, requestId)
+}
+
+async function expectCloseMessage(
+  page: Page,
+  type: 'office:close-request' | 'office:close-cancelled',
+  requestId: string,
+  reason: string,
+): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          ({ expectedType, expectedRequestId, expectedReason }) => {
+            const messages = (
+              window as Window & {
+                __sheetsCloseMessages?: Array<{
+                  type: string
+                  requestId?: string
+                  reason?: string
+                }>
+              }
+            ).__sheetsCloseMessages
+            return (
+              messages?.some(
+                (message) =>
+                  message.type === expectedType &&
+                  message.requestId === expectedRequestId &&
+                  message.reason === expectedReason,
+              ) ?? false
+            )
+          },
+          {
+            expectedType: type,
+            expectedRequestId: requestId,
+            expectedReason: reason,
+          },
+        ),
+      { timeout: 20_000 },
+    )
+    .toBe(true)
+}
+
 test.describe('Sheets Web deployable File menu', () => {
   test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is only set by the Sheets Web File UI gate')
 
@@ -145,5 +233,63 @@ test.describe('Sheets Web deployable File menu', () => {
     await expect(editor.locator('.ribbon-tabs .qa-btn').first()).toBeDisabled({ timeout: 20_000 })
     await expect(page.locator('#dirty-state')).toHaveText('clean', { timeout: 20_000 })
     await expect(page.locator('#host-state')).toContainText('close requested', { timeout: 20_000 })
+  })
+
+  test('returns the same requestId for a clean Host window close', async ({ page }) => {
+    await openHost(page)
+    await installCloseMessageRecorder(page)
+
+    await sendWindowCloseRequest(page, 'close-clean-1')
+    await expectCloseMessage(page, 'office:close-request', 'close-clean-1', 'window-close')
+    await expect(page.locator('#host-state')).toContainText('close requested', { timeout: 10_000 })
+  })
+
+  test('cancels one dirty Host close transaction and ignores duplicate requests', async ({ page }) => {
+    const editor = await openHost(page)
+    await openFixture(page)
+    await editFirstCell(page, editor)
+    await installCloseMessageRecorder(page)
+
+    await sendWindowCloseRequest(page, 'close-dirty-1')
+    await sendWindowCloseRequest(page, 'close-dirty-duplicate')
+
+    const dialog = editor.locator('.file-exit-dialog')
+    await expect(dialog).toBeVisible()
+    await expect(editor.locator('.file-exit-dialog')).toHaveCount(1)
+    await dialog.getByRole('button', { name: '取消' }).click()
+
+    await expectCloseMessage(page, 'office:close-cancelled', 'close-dirty-1', 'user-cancelled')
+    await page.waitForTimeout(250)
+    expect(
+      await page.evaluate(() =>
+        (
+          window as Window & {
+            __sheetsCloseMessages?: Array<{ requestId?: string }>
+          }
+        ).__sheetsCloseMessages?.some(
+          (message) => message.requestId === 'close-dirty-duplicate',
+        ) ?? false,
+      ),
+    ).toBe(false)
+
+    await sendWindowCloseRequest(page, 'close-dirty-2')
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: '放弃更改并退出' }).click()
+    await expectCloseMessage(page, 'office:close-request', 'close-dirty-2', 'window-close')
+  })
+
+  test('saves dirty workbook before granting a correlated Host window close', async ({ page }) => {
+    const editor = await openHost(page)
+    await openFixture(page)
+    await editFirstCell(page, editor)
+    await installCloseMessageRecorder(page)
+
+    await sendWindowCloseRequest(page, 'close-save-1')
+    const dialog = editor.locator('.file-exit-dialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: '保存并退出' }).click()
+
+    await expect(page.locator('#dirty-state')).toHaveText('clean', { timeout: 20_000 })
+    await expectCloseMessage(page, 'office:close-request', 'close-save-1', 'window-close')
   })
 })
