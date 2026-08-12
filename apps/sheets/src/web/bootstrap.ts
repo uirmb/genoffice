@@ -3,6 +3,7 @@ import {
   createEmbeddedOfficeRuntime,
   detectWebRuntimeMode,
 } from '@genoffice/web-runtime'
+import { createSheetsWebCloseLifecycle } from './close-lifecycle'
 import { installSheetsWebDesktopAdapters } from './desktop-adapters'
 import { createSheetsWebDesktopController } from './desktop-api'
 import { getXlsxEngineHealth } from './engine-client'
@@ -47,7 +48,10 @@ async function bootstrapWeb(): Promise<void> {
         })
       : null
   const standaloneHost = mode === 'standalone' ? new StandaloneOfficeHost() : null
-  const host = embeddedRuntime?.host ?? standaloneHost
+  const closeLifecycle = embeddedRuntime
+    ? createSheetsWebCloseLifecycle(embeddedRuntime.host, embeddedRuntime.bridge)
+    : null
+  const host = closeLifecycle?.host ?? standaloneHost
   if (!host) throw new Error('Unable to initialize the Sheets web host runtime.')
 
   const hostPolicy = installSheetsWebHostPolicy(mode, embeddedRuntime?.bridge)
@@ -69,6 +73,7 @@ async function bootstrapWeb(): Promise<void> {
     uninstallSnapshotHost()
     controller.destroy()
     hostPolicy.destroy()
+    closeLifecycle?.destroy()
     embeddedRuntime?.destroy()
     standaloneHost?.destroy()
   }
@@ -79,7 +84,8 @@ async function bootstrapWeb(): Promise<void> {
   uninstallFileMenu = installSheetsWebFileMenu()
 
   // Announce readiness only after the shared renderer has mounted and subscribed
-  // to DesktopApi. This keeps office:init from racing the initial blank workbook.
+  // to DesktopApi and the File exit surface is ready. This keeps office:init and
+  // Host window-close requests from racing the initial workbook UI.
   controller.notifyReady()
 }
 
