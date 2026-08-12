@@ -180,11 +180,12 @@ export function installSheetsWebFileMenu(): () => void {
         dispatchSheetsWebFileAction('discard-and-exit')
         return
       }
-      // Save failures and cancellations leave the journal dirty. In that case
-      // this one-shot close attempt simply expires; a later ordinary Save can
-      // never inherit a stale "close after save" flag.
+      // Save failures and cancellations leave the journal dirty. End this
+      // one-shot close transaction explicitly so an embedded Host cannot stay
+      // in waiting-editor forever and a later ordinary Save cannot inherit it.
       if (Date.now() >= deadline) {
         saveExitTimer = null
+        dispatchSheetsWebFileAction('cancel-exit')
         return
       }
       saveExitTimer = setTimeout(waitForClean, 100)
