@@ -30,21 +30,40 @@ async function openFileMenu(editor: FrameLocator): Promise<void> {
   await expect(editor.locator('.sheets-web-file-menu-root .file-menu')).toBeVisible()
 }
 
+async function largestWorksheetCanvas(editor: FrameLocator): Promise<{ x: number; y: number; width: number; height: number }> {
+  let best: { x: number; y: number; width: number; height: number } | null = null
+  await expect
+    .poll(
+      async () => {
+        const canvases = editor.locator('canvas')
+        const count = await canvases.count()
+        best = null
+        let bestArea = 0
+        for (let index = 0; index < count; index += 1) {
+          const box = await canvases.nth(index).boundingBox()
+          if (!box || box.width < 200 || box.height < 80) continue
+          const area = box.width * box.height
+          if (area <= bestArea) continue
+          bestArea = area
+          best = box
+        }
+        return bestArea
+      },
+      { timeout: 15_000 },
+    )
+    .toBeGreaterThan(20_000)
+  if (!best) throw new Error('Worksheet canvas was not found.')
+  return best
+}
+
 async function editFirstCell(page: Page, editor: FrameLocator): Promise<void> {
-  const canvases = editor.locator('canvas')
-  const count = await canvases.count()
-  for (let index = 0; index < count; index += 1) {
-    const box = await canvases.nth(index).boundingBox()
-    if (!box || box.width < 500 || box.height < 300) continue
-    // The worksheet canvas includes a narrow row/column header. A1 is safely
-    // inside this offset on the Univer grid used by Sheets Web.
-    await page.mouse.click(box.x + 90, box.y + 38)
-    await page.keyboard.type('File Menu Dirty', { delay: 20 })
-    await page.keyboard.press('Enter')
-    await expect(editor.locator('.ribbon-tabs .qa-btn').first()).toBeEnabled({ timeout: 10_000 })
-    return
-  }
-  throw new Error('Worksheet canvas was not found.')
+  const box = await largestWorksheetCanvas(editor)
+  // The worksheet canvas includes a narrow row/column header. Keep the click
+  // well inside A1 while remaining valid in smaller CI viewports.
+  await page.mouse.click(box.x + Math.min(90, box.width - 20), box.y + Math.min(38, box.height - 20))
+  await page.keyboard.type('File Menu Dirty', { delay: 20 })
+  await page.keyboard.press('Enter')
+  await expect(editor.locator('.ribbon-tabs .qa-btn').first()).toBeEnabled({ timeout: 10_000 })
 }
 
 async function installCloseMessageRecorder(page: Page): Promise<void> {
