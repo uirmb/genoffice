@@ -8,8 +8,10 @@ export type SheetsWebFileAction =
   | 'export-xlsx'
   | 'save-and-exit'
   | 'discard-and-exit'
+  | 'cancel-exit'
 
 export const SHEETS_WEB_FILE_ACTION_EVENT = 'genoffice:sheets-web-file-action'
+export const SHEETS_WEB_HOST_CLOSE_REQUEST_EVENT = 'genoffice:sheets-web-host-close-request'
 
 export interface SheetsWebSnapshotActionResult {
   canceled: boolean
