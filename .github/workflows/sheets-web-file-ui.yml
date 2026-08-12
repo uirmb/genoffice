@@ -87,7 +87,7 @@ jobs:
           cat /tmp/web-xlsx-host.log
           exit 1
 
-      - name: Browser E2E (File UI)
+      - name: Browser E2E (File UI + Host Close)
         env:
           SHEETS_WEB_E2E_URL: http://127.0.0.1:5275/
           SHEETS_WEB_HOST_E2E_URL: http://127.0.0.1:8082/
