@@ -6,6 +6,8 @@ import {
 import { installSheetsWebDesktopAdapters } from './desktop-adapters'
 import { createSheetsWebDesktopController } from './desktop-api'
 import { getXlsxEngineHealth } from './engine-client'
+import { installSheetsWebSnapshotHost } from './file-actions'
+import { installSheetsWebHostPolicy } from './host-policy'
 import './product-policy.css'
 
 function renderBootstrapError(error: unknown): void {
@@ -24,7 +26,8 @@ function resolveHostOrigin(): string | null {
 
 async function bootstrapWeb(): Promise<void> {
   // Keep the Web product policy consistent with Docs/Slides: the platform owns
-  // persistence and AI is not part of the embedded office surface.
+  // persistence and AI is not part of the embedded office surface unless the
+  // Host explicitly enables it.
   localStorage.setItem('ai-sheets-auto-save', '0')
 
   const health = await getXlsxEngineHealth()
@@ -47,8 +50,10 @@ async function bootstrapWeb(): Promise<void> {
   const host = embeddedRuntime?.host ?? standaloneHost
   if (!host) throw new Error('Unable to initialize the Sheets web host runtime.')
 
+  const hostPolicy = installSheetsWebHostPolicy(mode, embeddedRuntime?.bridge)
   const controller = createSheetsWebDesktopController(host, embeddedRuntime?.bridge)
   installSheetsWebDesktopAdapters(controller.desktopApi, host)
+  const uninstallSnapshotHost = installSheetsWebSnapshotHost(controller.snapshotHost)
 
   // Electron exposes this property as readonly through preload typings. Web
   // installs the same contract before importing the shared renderer.
@@ -56,11 +61,12 @@ async function bootstrapWeb(): Promise<void> {
     configurable: true,
     value: controller.desktopApi,
   })
-  document.documentElement.classList.add('office-web')
   document.documentElement.dataset.xlsxSessionStore = health.sessionStore
 
   const cleanup = (): void => {
+    uninstallSnapshotHost()
     controller.destroy()
+    hostPolicy.destroy()
     embeddedRuntime?.destroy()
     standaloneHost?.destroy()
   }
