@@ -27,16 +27,19 @@ html.office-web:not(.office-can-close) .file-menu-exit {
 
 /* Match the Word/PPT Web File tab position and menu geometry; only the
    product accent differs (Excel green instead of Word blue / PPT orange). */
-html.office-web .sheets-web-file-menu-root {
+html.office-web .file-tab-wrap {
+  position: relative;
+}
+
+/* The Web mount carries both classes. Keep this selector after file-tab-wrap
+   so the generic Word/PPT-compatible wrapper rule cannot move the File tab
+   into normal document flow. */
+html.office-web .sheets-web-file-menu-root.file-tab-wrap {
   position: fixed;
   top: 5px;
   left: 10px;
   z-index: 120;
   font-family: inherit;
-}
-
-html.office-web .file-tab-wrap {
-  position: relative;
 }
 
 html.office-web .ribbon-tab-file {
