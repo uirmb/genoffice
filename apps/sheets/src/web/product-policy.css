@@ -27,16 +27,30 @@ html.office-web:not(.office-can-close) .file-menu-exit {
 
 /* Match the Word/PPT Web File tab position and menu geometry; only the
    product accent differs (Excel green instead of Word blue / PPT orange). */
+html.office-web .sheets-web-file-menu-root {
+  position: fixed;
+  top: 5px;
+  left: 10px;
+  z-index: 120;
+  font-family: inherit;
+}
+
 html.office-web .file-tab-wrap {
   position: relative;
 }
 
 html.office-web .ribbon-tab-file {
+  min-height: 28px;
+  border: 0;
   color: #fff;
   background: var(--excel-green);
   border-radius: 4px;
   padding: 6px 16px;
   margin-right: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
 }
 
 html.office-web .ribbon-tab-file:hover,
@@ -56,6 +70,10 @@ html.office-web .file-menu {
   border-radius: 6px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
   padding: 5px;
+}
+
+html.office-web .file-menu[hidden] {
+  display: none !important;
 }
 
 html.office-web .file-menu button {
@@ -140,9 +158,12 @@ html.office-web .file-exit-actions .primary {
   color: #fff;
 }
 
-/* Browser Web Office has no native titlebar controls to reserve space for. */
+/* Browser Web Office has no native titlebar controls to reserve space for.
+   The Web-owned File tab occupies the same left slot as Word/PPT, so shift
+   the shared Sheets QAT/tab row to start immediately after it. */
 html.office-web .ribbon-tabs-win,
-html.office-web .ribbon-tabs-mac {
+html.office-web .ribbon-tabs-mac,
+html.office-web .ribbon-tabs:not(.ribbon-tabs-win):not(.ribbon-tabs-mac) {
   padding-right: 10px;
-  padding-left: 10px;
+  padding-left: 82px;
 }
