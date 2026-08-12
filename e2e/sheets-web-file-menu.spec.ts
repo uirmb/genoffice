@@ -62,9 +62,9 @@ test.describe('Sheets Web deployable File menu', () => {
     expect(fileBox!.x).toBeLessThan(saveBox!.x)
     expect(Math.abs(fileBox!.y - saveBox!.y)).toBeLessThan(8)
 
-    await expect(editor.locator('.ai-entry')).toBeHidden()
-    await expect(editor.locator('.copilot')).toBeHidden()
-    await expect(editor.locator('.autosave-toggle')).toBeHidden()
+    await expect(editor.locator('.ai-entry:visible')).toHaveCount(0)
+    await expect(editor.locator('.copilot:visible')).toHaveCount(0)
+    await expect(editor.locator('.autosave-toggle:visible')).toHaveCount(0)
     await expect(editor.locator('.workbook-status')).not.toContainText(/AI|Genspark/i)
 
     await openFileMenu(editor)
