@@ -70,16 +70,15 @@ test.describe('Sheets Web deployable File menu', () => {
     await openFileMenu(editor)
     const visibleItems = editor.locator('.sheets-web-file-menu-root .file-menu button:visible')
     await expect(visibleItems).toHaveCount(6)
-    expect(
-      (await visibleItems.allTextContents()).map((value) => value.replace(/\s+/g, ' ').trim()),
-    ).toEqual([
-      '打开 Ctrl+O',
-      '保存 Ctrl+S',
-      '另存为 Ctrl+Shift+S',
-      '保存历史版本',
-      '导出为 XLSX',
-      '退出',
-    ])
+    await expect(visibleItems.nth(0).locator('span').first()).toHaveText('打开')
+    await expect(visibleItems.nth(0).locator('.file-menu-key')).toHaveText('Ctrl+O')
+    await expect(visibleItems.nth(1).locator('span').first()).toHaveText('保存')
+    await expect(visibleItems.nth(1).locator('.file-menu-key')).toHaveText('Ctrl+S')
+    await expect(visibleItems.nth(2).locator('span').first()).toHaveText('另存为')
+    await expect(visibleItems.nth(2).locator('.file-menu-key')).toHaveText('Ctrl+Shift+S')
+    await expect(visibleItems.nth(3)).toHaveText('保存历史版本')
+    await expect(visibleItems.nth(4)).toHaveText('导出为 XLSX')
+    await expect(visibleItems.nth(5)).toHaveText('退出')
   })
 
   test('runs history, XLSX export, and unchanged Save As through the Host', async ({ page }) => {
