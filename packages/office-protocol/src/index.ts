@@ -18,16 +18,16 @@ export const OFFICE_PROTOCOL_VERSION = 1 as const
 export interface OfficeInitPayload {
   kind: OfficeDocumentKind
   mode: OfficeEditorMode
-  locale?: string
+  locale?: string | undefined
   file: OfficeFile
-  capabilities?: Partial<OfficeHostCapabilities>
+  capabilities?: Partial<OfficeHostCapabilities> | undefined
 }
 
 export interface OfficeNewPayload {
   kind: OfficeDocumentKind
   mode: OfficeEditorMode
-  locale?: string
-  capabilities?: Partial<OfficeHostCapabilities>
+  locale?: string | undefined
+  capabilities?: Partial<OfficeHostCapabilities> | undefined
 }
 
 export interface OfficeEditorState {
@@ -35,7 +35,7 @@ export interface OfficeEditorState {
   dirty: boolean
   saving: boolean
   mode: OfficeEditorMode
-  title?: string
+  title?: string | undefined
 }
 
 export interface OfficeProtocolErrorPayload {
@@ -59,13 +59,13 @@ export type HostToEditorMessage =
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:set-locale'
-      requestId?: string
+      requestId?: string | undefined
       payload: { locale: string }
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:set-mode'
-      requestId?: string
+      requestId?: string | undefined
       payload: { mode: OfficeEditorMode }
     }
   | {
@@ -117,7 +117,7 @@ export type HostToEditorMessage =
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:error'
-      requestId?: string
+      requestId?: string | undefined
       payload: OfficeProtocolErrorPayload
     }
 
@@ -147,7 +147,7 @@ export type EditorToHostMessage =
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:save-result'
       requestId: string
-      payload: { ok: boolean; error?: string }
+      payload: { ok: boolean; error?: string | undefined }
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
@@ -156,9 +156,9 @@ export type EditorToHostMessage =
       payload: {
         file: OfficeFileDescriptor
         bytes: ArrayBuffer
-        baseVersion?: string | null
-        mode?: OfficeSaveMode
-        newDocument?: boolean
+        baseVersion?: string | null | undefined
+        mode?: OfficeSaveMode | undefined
+        newDocument?: boolean | undefined
       }
     }
   | {
@@ -168,7 +168,7 @@ export type EditorToHostMessage =
       payload: {
         file: OfficeFileDescriptor
         bytes: ArrayBuffer
-        baseVersion?: string | null
+        baseVersion?: string | null | undefined
       }
     }
   | {
@@ -184,7 +184,7 @@ export type EditorToHostMessage =
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:close-request'
-      requestId?: string
+      requestId?: string | undefined
       payload: { reason: 'file-menu' | 'window-close' }
     }
   | {
@@ -208,7 +208,7 @@ export type EditorToHostMessage =
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:error'
-      requestId?: string
+      requestId?: string | undefined
       payload: OfficeProtocolErrorPayload
     }
 

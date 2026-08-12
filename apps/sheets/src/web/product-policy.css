@@ -1,0 +1,172 @@
+/* Web-only product policy. Electron never imports this stylesheet. */
+
+html.office-web:not(.office-ai-enabled) .ribbon-group:has(.ai-entry),
+html.office-web:not(.office-ai-enabled) .ribbon-group:has(.ai-entry) + .ribbon-sep,
+html.office-web:not(.office-ai-enabled) .copilot,
+html.office-web:not(.office-ai-enabled) .ai-entry {
+  display: none !important;
+}
+
+html.office-web:not(.office-autosave-editor) .autosave-toggle {
+  display: none !important;
+}
+
+html.office-web:not(.office-ai-enabled) .sheet-body,
+html.office-web:not(.office-ai-enabled) .app-shell.copilot-collapsed .sheet-body {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+html.office-web:not(.office-can-open) .file-menu-open,
+html.office-web:not(.office-can-save) .file-menu-save,
+html.office-web:not(.office-can-save-as) .file-menu-save-as,
+html.office-web:not(.office-can-save-history) .file-menu-save-history,
+html.office-web:not(.office-can-export-xlsx) .file-menu-export-xlsx,
+html.office-web:not(.office-can-close) .file-menu-exit {
+  display: none !important;
+}
+
+/* Match the Word/PPT Web File tab position and menu geometry; only the
+   product accent differs (Excel green instead of Word blue / PPT orange). */
+html.office-web .file-tab-wrap {
+  position: relative;
+}
+
+/* The Web mount carries both classes. Keep this selector after file-tab-wrap
+   so the generic Word/PPT-compatible wrapper rule cannot move the File tab
+   into normal document flow. */
+html.office-web .sheets-web-file-menu-root.file-tab-wrap {
+  position: fixed;
+  top: 5px;
+  left: 10px;
+  z-index: 120;
+  font-family: inherit;
+}
+
+html.office-web .ribbon-tab-file {
+  min-height: 28px;
+  border: 0;
+  color: #fff;
+  background: var(--excel-green);
+  border-radius: 4px;
+  padding: 6px 16px;
+  margin-right: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+html.office-web .ribbon-tab-file:hover,
+html.office-web .ribbon-tab-file.open {
+  color: #fff;
+  background: var(--excel-green-dark);
+}
+
+html.office-web .file-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 60;
+  min-width: 210px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  padding: 5px;
+}
+
+html.office-web .file-menu[hidden] {
+  display: none !important;
+}
+
+html.office-web .file-menu button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+html.office-web .file-menu button:hover:not(:disabled) {
+  background: var(--ribbon-hover);
+}
+
+html.office-web .file-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+html.office-web .file-menu-key {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-left: 24px;
+}
+
+html.office-web .file-exit-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 28%);
+}
+
+html.office-web .file-exit-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 24%);
+}
+
+html.office-web .file-exit-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+html.office-web .file-exit-dialog p {
+  margin: 0 0 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+html.office-web .file-exit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+html.office-web .file-exit-actions button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+html.office-web .file-exit-actions .primary {
+  border-color: var(--excel-green);
+  background: var(--excel-green);
+  color: #fff;
+}
+
+/* Browser Web Office has no native titlebar controls to reserve space for.
+   The Web-owned File tab occupies the same left slot as Word/PPT, so shift
+   the shared Sheets QAT/tab row to start immediately after it. */
+html.office-web .ribbon-tabs-win,
+html.office-web .ribbon-tabs-mac,
+html.office-web .ribbon-tabs:not(.ribbon-tabs-win):not(.ribbon-tabs-mac) {
+  padding-right: 10px;
+  padding-left: 82px;
+}

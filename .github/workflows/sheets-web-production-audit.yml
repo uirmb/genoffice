@@ -1,0 +1,81 @@
+name: Sheets Web Production Audit
+
+on:
+  pull_request:
+    branches: [main, agent/ppt-web-foundation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-production-audit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Audit Sheets production dependencies
+        id: audit
+        shell: bash
+        run: |
+          mkdir -p reports
+          set +e
+          npm audit \
+            --omit=dev \
+            --workspace @genoffice/sheets \
+            --json \
+            > reports/sheets-production-audit.json
+          STATUS=$?
+          set -e
+          echo "npm_audit_status=$STATUS" >> "$GITHUB_OUTPUT"
+
+          node <<'NODE'
+          const fs = require('fs')
+          const input = JSON.parse(fs.readFileSync('reports/sheets-production-audit.json', 'utf8'))
+          const vulnerabilities = Object.values(input.vulnerabilities || {})
+            .map((item) => ({
+              name: item.name,
+              severity: item.severity,
+              isDirect: item.isDirect === true,
+              range: item.range,
+              fixAvailable:
+                item.fixAvailable === true ||
+                (item.fixAvailable && typeof item.fixAvailable === 'object'
+                  ? {
+                      name: item.fixAvailable.name,
+                      version: item.fixAvailable.version,
+                      isSemVerMajor: item.fixAvailable.isSemVerMajor === true,
+                    }
+                  : false),
+            }))
+            .sort((a, b) => a.severity.localeCompare(b.severity) || a.name.localeCompare(b.name))
+
+          const summary = {
+            generatedFrom: 'npm audit --omit=dev --workspace @genoffice/sheets',
+            counts: input.metadata?.vulnerabilities || {},
+            vulnerabilities,
+          }
+          fs.writeFileSync(
+            'reports/sheets-production-audit-summary.json',
+            `${JSON.stringify(summary, null, 2)}\n`,
+          )
+          console.log(JSON.stringify(summary, null, 2))
+          NODE
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sheets-production-audit
+          path: |
+            reports/sheets-production-audit.json
+            reports/sheets-production-audit-summary.json
+          retention-days: 14

@@ -1,0 +1,19 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; color: #242424; background: #f5f6f7; }
+button, .button { font: inherit; }
+.app-shell { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100vh; }
+.toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 20px; padding: 10px 14px; border-bottom: 1px solid #d5d9dc; background: #fff; }
+.brand { display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
+.brand strong { color: #185c37; font-size: 14px; }
+.brand span { color: #73777c; font-size: 11px; }
+.actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+button, .button { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 0 12px; border: 1px solid #c8cdd1; border-radius: 5px; background: #fff; color: #242424; cursor: pointer; text-decoration: none; }
+button:hover:not(:disabled), .button:hover { background: #f3f5f4; }
+button:disabled { cursor: default; opacity: .45; }
+.primary { border-color: #217346; background: #217346; color: #fff; }
+.primary:hover { background: #185c37; }
+.status { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 12px; }
+.pill { padding: 3px 8px; border-radius: 999px; background: #eef1f3; color: #61666b; }
+.editor-shell { min-height: 0; padding: 10px; }
+#office-frame { width: 100%; height: 100%; border: 1px solid #d5d9dc; border-radius: 6px; background: #fff; }
+@media (max-width: 980px) { .toolbar { grid-template-columns: 1fr; gap: 8px; } .actions, .status { flex-wrap: wrap; } }

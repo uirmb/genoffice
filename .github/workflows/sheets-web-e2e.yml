@@ -1,0 +1,254 @@
+name: Sheets Web E2E
+
+on:
+  pull_request:
+    branches: [main, agent/ppt-web-foundation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sheets-web-foundation:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Typecheck Sheets
+        run: npm run typecheck -w @genoffice/sheets
+
+      - name: Web client unit tests
+        run: npx vitest run tests/web-engine-client.test.ts
+        working-directory: apps/sheets
+
+      - name: Build XLSX Engine Service
+        run: npm run build:xlsx-engine
+
+      - name: Start XLSX Engine Service
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine.log 2>&1 &
+          echo $! > /tmp/xlsx-engine.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7301/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/xlsx-engine.log
+          exit 1
+
+      - name: Verify session lifecycle
+        run: |
+          SESSION_JSON=$(curl --fail --silent \
+            -H 'content-type: application/json' \
+            -d '{"source":"blank"}' \
+            http://127.0.0.1:7301/v1/sessions)
+          echo "$SESSION_JSON"
+          SESSION_ID=$(node -e "const v=JSON.parse(process.argv[1]); if(!v.sessionId) process.exit(1); process.stdout.write(v.sessionId)" "$SESSION_JSON")
+          curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
+
+      - name: Verify real blank XLSX workbook
+        run: |
+          BLANK=$(curl --fail --silent -X POST \
+            'http://127.0.0.1:7301/v1/workbooks/blank?name=Untitled.xlsx')
+          echo "$BLANK" >/tmp/blank-meta.json
+          SESSION_ID=$(node -e "const v=require('/tmp/blank-meta.json'); if(!v.sessionId||!v.sheets?.length) process.exit(1); process.stdout.write(v.sessionId)")
+          curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
+
+      - name: Verify real XLSX open and lazy range
+        run: |
+          python3 - <<'PY'
+          from zipfile import ZipFile, ZIP_DEFLATED
+
+          parts = {
+            '[Content_Types].xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+            <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+            <Default Extension="xml" ContentType="application/xml"/>
+            <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+            <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+            <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+          </Types>''',
+            '_rels/.rels': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+          </Relationships>''',
+            'xl/workbook.xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+            <sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>
+          </workbook>''',
+            'xl/_rels/workbook.xml.rels': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+            <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+          </Relationships>''',
+            'xl/styles.xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+            <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+            <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+            <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+            <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+          </styleSheet>''',
+            'xl/worksheets/sheet1.xml': '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <dimension ref="A1:B1"/>
+            <sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Web Excel E2E</t></is></c><c r="B1"><v>42</v></c></row></sheetData>
+          </worksheet>''',
+          }
+
+          with ZipFile('/tmp/web-excel-e2e.xlsx', 'w', ZIP_DEFLATED) as archive:
+              for name, content in parts.items():
+                  archive.writestr(name, content)
+          PY
+
+          META=$(curl --fail --silent \
+            --data-binary @/tmp/web-excel-e2e.xlsx \
+            'http://127.0.0.1:7301/v1/workbooks?name=web-excel-e2e.xlsx')
+          echo "$META" > /tmp/workbook-meta.json
+
+          SESSION_ID=$(node -e "const v=require('/tmp/workbook-meta.json'); if(!v.sessionId||!v.sheets?.[0]?.id) process.exit(1); process.stdout.write(v.sessionId)")
+          SHEET_ID=$(node -e "const v=require('/tmp/workbook-meta.json'); process.stdout.write(v.sheets[0].id)")
+
+          RANGE=$(curl --fail --silent \
+            -H 'content-type: application/json' \
+            -H "X-Xlsx-Session: $SESSION_ID" \
+            -d "{\"sheetId\":\"$SHEET_ID\",\"range\":{\"startRow\":0,\"endRow\":0,\"startColumn\":0,\"endColumn\":1}}" \
+            "http://127.0.0.1:7301/v1/sessions/$SESSION_ID/ranges")
+
+          node -e "const v=JSON.parse(process.argv[1]); const a=v.cells?.find(c=>c.row===0&&c.column===0); const b=v.cells?.find(c=>c.row===0&&c.column===1); if(a?.value!=='Web Excel E2E'||b?.value!==42) { console.error(v); process.exit(1) }" "$RANGE"
+          echo "$SESSION_ID" >/tmp/source-session-id
+          echo "$SHEET_ID" >/tmp/source-sheet-id
+
+      - name: Verify XLSX archive save round-trip
+        run: |
+          SESSION_ID=$(cat /tmp/source-session-id)
+          READ=$(curl --fail --silent \
+            -H 'content-type: application/json' \
+            -H "X-Xlsx-Session: $SESSION_ID" \
+            -d '{"entries":["xl/worksheets/sheet1.xml"]}' \
+            "http://127.0.0.1:7301/v1/sessions/$SESSION_ID/archive/read")
+          node - <<'NODE' "$READ"
+          const input = JSON.parse(process.argv[2])
+          const entry = input.entries.find((item) => item.name === 'xl/worksheets/sheet1.xml')
+          if (!entry) process.exit(1)
+          const xml = Buffer.from(entry.contentBase64, 'base64').toString('utf8')
+          const saved = xml.replace('Web Excel E2E', 'Web Excel Saved')
+          const payload = {
+            name: 'saved.xlsx',
+            replacements: [{
+              name: 'xl/worksheets/sheet1.xml',
+              contentBase64: Buffer.from(saved).toString('base64'),
+            }],
+            removals: [],
+            additions: [],
+          }
+          require('fs').writeFileSync('/tmp/save-payload.json', JSON.stringify(payload))
+          NODE
+
+          curl --fail --silent \
+            -D /tmp/save-headers.txt \
+            -o /tmp/saved.xlsx \
+            -H 'content-type: application/json' \
+            -H "X-Xlsx-Session: $SESSION_ID" \
+            --data-binary @/tmp/save-payload.json \
+            "http://127.0.0.1:7301/v1/sessions/$SESSION_ID/archive/save"
+
+          SAVED_SESSION=$(awk 'BEGIN{IGNORECASE=1} /^x-xlsx-session:/ {gsub("\r", "", $2); print $2}' /tmp/save-headers.txt)
+          test -n "$SAVED_SESSION"
+          SAVED_META=$(curl --fail --silent \
+            -H "X-Xlsx-Session: $SAVED_SESSION" \
+            "http://127.0.0.1:7301/v1/sessions/$SAVED_SESSION")
+          SAVED_SHEET=$(node -e "const v=JSON.parse(process.argv[1]); if(!v.sheets?.[0]?.id) process.exit(1); process.stdout.write(v.sheets[0].id)" "$SAVED_META")
+          SAVED_RANGE=$(curl --fail --silent \
+            -H 'content-type: application/json' \
+            -H "X-Xlsx-Session: $SAVED_SESSION" \
+            -d "{\"sheetId\":\"$SAVED_SHEET\",\"range\":{\"startRow\":0,\"endRow\":0,\"startColumn\":0,\"endColumn\":1}}" \
+            "http://127.0.0.1:7301/v1/sessions/$SAVED_SESSION/ranges")
+          node -e "const v=JSON.parse(process.argv[1]); const a=v.cells?.find(c=>c.row===0&&c.column===0); if(a?.value!=='Web Excel Saved') { console.error(v); process.exit(1) }" "$SAVED_RANGE"
+          curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SAVED_SESSION" >/dev/null
+          curl --fail --silent -X DELETE "http://127.0.0.1:7301/v1/sessions/$SESSION_ID" >/dev/null
+
+      - name: Generate compatibility fixtures
+        run: npm run fixtures -w @genoffice/sheets
+
+      - name: Verify Rust-backed compatibility corpus
+        env:
+          XLSX_ENGINE_URL: http://127.0.0.1:7301
+        run: npm run compat:web-engine -w @genoffice/sheets
+
+      - name: Build Sheets Web
+        run: npm run build:web:sheets
+
+      - name: Build XLSX Host Demo
+        run: npm run build:web-xlsx-host
+
+      - name: Start Sheets Web preview
+        run: |
+          npx vite preview --config vite.web.config.ts --host 127.0.0.1 --port 5275 > /tmp/sheets-web.log 2>&1 &
+          echo $! > /tmp/sheets-web.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5275/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/sheets-web.log
+          exit 1
+        working-directory: apps/sheets
+
+      - name: Start XLSX Host Demo preview
+        run: |
+          npx vite preview --config examples/web-xlsx-host/vite.config.ts --host 127.0.0.1 --port 8082 > /tmp/web-xlsx-host.log 2>&1 &
+          echo $! > /tmp/web-xlsx-host.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8082/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/web-xlsx-host.log
+          exit 1
+
+      - name: Browser E2E (Sheets Web)
+        env:
+          SHEETS_WEB_E2E_URL: http://127.0.0.1:5275/
+          SHEETS_WEB_HOST_E2E_URL: http://127.0.0.1:8082/
+        run: |
+          set -o pipefail
+          npx playwright test e2e/sheets-web.spec.ts e2e/sheets-web-defined-names.spec.ts e2e/sheets-web-chart.spec.ts e2e/sheets-web-image.spec.ts e2e/sheets-web-table-sparkline.spec.ts e2e/sheets-web-pivot-read.spec.ts e2e/sheets-web-pivot-refresh.spec.ts --config e2e/playwright.config.ts 2>&1 | tee /tmp/sheets-web-e2e.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sheets-web-foundation-artifacts
+          path: |
+            apps/sheets/reports/web-engine-compatibility.json
+            e2e/test-results
+            e2e/playwright-report
+            test-results
+            playwright-report
+            /tmp/xlsx-engine.log
+            /tmp/sheets-web.log
+            /tmp/web-xlsx-host.log
+            /tmp/sheets-web-e2e.log
+          retention-days: 7

@@ -1,0 +1,221 @@
+name: Sheets Web Engine Limits
+
+on:
+  pull_request:
+    branches: [main, agent/ppt-web-foundation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine-limits:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build XLSX Engine Service
+        run: cargo build --release --manifest-path services/xlsx-engine-service/Cargo.toml
+
+      - name: Verify heavy request admission timeout
+        run: |
+          cargo test --release \
+            --manifest-path services/xlsx-engine-service/Cargo.toml \
+            heavy_request_admission_times_out_before_work_starts
+
+      - name: Reject invalid limit configuration
+        run: |
+          set +e
+          XLSX_ENGINE_LISTEN=127.0.0.1:7398 \
+          XLSX_ENGINE_MAX_WORKBOOK_MB=0 \
+          XLSX_ENGINE_MAX_REQUEST_MB=8 \
+            ./services/xlsx-engine-service/target/release/xlsx-engine-service \
+            > /tmp/xlsx-engine-invalid-limit.log 2>&1
+          STATUS=$?
+          set -e
+          test "$STATUS" -ne 0
+          grep -q 'XLSX_ENGINE_MAX_WORKBOOK_MB must be greater than zero' /tmp/xlsx-engine-invalid-limit.log
+
+      - name: Reject invalid admission configuration
+        run: |
+          set +e
+          XLSX_ENGINE_LISTEN=127.0.0.1:7394 \
+          XLSX_ENGINE_MAX_HEAVY_REQUESTS=0 \
+            ./services/xlsx-engine-service/target/release/xlsx-engine-service \
+            > /tmp/xlsx-engine-invalid-admission.log 2>&1
+          STATUS=$?
+          set -e
+          test "$STATUS" -ne 0
+          grep -q 'XLSX_ENGINE_MAX_HEAVY_REQUESTS must be greater than zero' /tmp/xlsx-engine-invalid-admission.log
+
+          set +e
+          XLSX_ENGINE_LISTEN=127.0.0.1:7394 \
+          XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS=0 \
+            ./services/xlsx-engine-service/target/release/xlsx-engine-service \
+            >> /tmp/xlsx-engine-invalid-admission.log 2>&1
+          STATUS=$?
+          set -e
+          test "$STATUS" -ne 0
+          grep -q 'XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS must be greater than zero' /tmp/xlsx-engine-invalid-admission.log
+
+      - name: Start XLSX Engine Service with a 1MiB workbook limit
+        env:
+          XLSX_ENGINE_LISTEN: 127.0.0.1:7399
+          XLSX_ENGINE_MAX_WORKBOOK_MB: 1
+          XLSX_ENGINE_MAX_REQUEST_MB: 8
+          XLSX_ENGINE_MAX_HEAVY_REQUESTS: 2
+          XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS: 1
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine-limit.log 2>&1 &
+          echo $! > /tmp/xlsx-engine-limit.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7399/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          HEALTH=$(curl --fail --silent http://127.0.0.1:7399/health)
+          node -e "const v=JSON.parse(process.argv[1]); if(v.maxHeavyRequests!==2 || v.heavyQueueTimeoutSecs!==1 || v.availableHeavySlots!==2) process.exit(1)" "$HEALTH"
+
+      - name: Verify request ids and structured logs
+        run: |
+          curl --fail --silent \
+            --dump-header /tmp/health-headers.txt \
+            --header 'X-Request-Id: ci-health-123' \
+            http://127.0.0.1:7399/health \
+            > /tmp/health-response.json
+          grep -qi '^x-request-id: ci-health-123' /tmp/health-headers.txt
+          grep -q '"requestId":"ci-health-123"' /tmp/xlsx-engine-limit.log
+          grep -q '"event":"http_request"' /tmp/xlsx-engine-limit.log
+          grep -q '"path":"/health"' /tmp/xlsx-engine-limit.log
+
+      - name: Verify operational metrics
+        run: |
+          curl --fail --silent \
+            --header 'X-Request-Id: ci-metrics-123' \
+            http://127.0.0.1:7399/metrics \
+            > /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_requests_total ' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_server_errors_total ' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_heavy_admission_rejects_total ' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_heavy_slots 2$' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_heavy_slots_available 2$' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_workbook_sessions ' /tmp/xlsx-engine-metrics.txt
+          grep -q '^genoffice_xlsx_lightweight_sessions ' /tmp/xlsx-engine-metrics.txt
+          grep -q '"requestId":"ci-metrics-123"' /tmp/xlsx-engine-limit.log
+
+      - name: Reject oversized workbook with HTTP 413
+        run: |
+          python3 - <<'PY'
+          with open('/tmp/oversized.xlsx', 'wb') as handle:
+              handle.write(b'X' * (1024 * 1024 + 1))
+          PY
+          STATUS=$(curl --silent \
+            --output /tmp/oversized-response.txt \
+            --write-out '%{http_code}' \
+            --data-binary @/tmp/oversized.xlsx \
+            'http://127.0.0.1:7399/v1/workbooks?name=oversized.xlsx')
+          test "$STATUS" = '413'
+          grep -q 'configured 1MB upload limit' /tmp/oversized-response.txt
+
+      - name: Keep normal requests below the limit reachable
+        run: |
+          STATUS=$(curl --silent \
+            --output /tmp/small-response.txt \
+            --write-out '%{http_code}' \
+            --data-binary 'not-a-real-xlsx' \
+            'http://127.0.0.1:7399/v1/workbooks?name=small.xlsx')
+          test "$STATUS" = '422'
+
+      - name: Prepare stale endpoint workspace
+        run: |
+          rm -rf /tmp/genoffice-xlsx-engine-ci
+          mkdir -p /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/workbooks/orphan
+          mkdir -p /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/scratch/orphan
+          mkdir -p /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7395/workbooks/live-sibling
+          printf 'stale' > /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/workbooks/orphan/stale.xlsx
+          printf 'stale' > /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/scratch/orphan/stale.bin
+          printf 'keep' > /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7395/workbooks/live-sibling/keep.txt
+
+      - name: Clean only the bound endpoint workspace
+        env:
+          XLSX_ENGINE_LISTEN: 127.0.0.1:7396
+          XLSX_ENGINE_WORK_ROOT: /tmp/genoffice-xlsx-engine-ci
+          XLSX_ENGINE_MAX_WORKBOOK_MB: 1
+          XLSX_ENGINE_MAX_REQUEST_MB: 8
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine-workspace.log 2>&1 &
+          PID=$!
+          echo "$PID" > /tmp/xlsx-engine-workspace.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7396/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:7396/health >/dev/null
+          test ! -e /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/workbooks/orphan/stale.xlsx
+          test ! -e /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/scratch/orphan/stale.bin
+          test -d /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/workbooks
+          test -d /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396/scratch
+          test -f /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7395/workbooks/live-sibling/keep.txt
+          kill -INT "$PID"
+          wait "$PID"
+          test ! -e /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7396
+          test -f /tmp/genoffice-xlsx-engine-ci/127_0_0_1_7395/workbooks/live-sibling/keep.txt
+
+      - name: Start short-TTL XLSX Engine Service
+        env:
+          XLSX_ENGINE_LISTEN: 127.0.0.1:7397
+          XLSX_ENGINE_MAX_WORKBOOK_MB: 1
+          XLSX_ENGINE_MAX_REQUEST_MB: 8
+          XLSX_ENGINE_SESSION_TTL_SECS: 1
+          XLSX_ENGINE_CLEANUP_INTERVAL_SECS: 1
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine-ttl.log 2>&1 &
+          echo $! > /tmp/xlsx-engine-ttl.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7397/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/xlsx-engine-ttl.log
+          exit 1
+
+      - name: Expire abandoned workbook sessions
+        run: |
+          BLANK=$(curl --fail --silent -X POST \
+            'http://127.0.0.1:7397/v1/workbooks/blank?name=ttl.xlsx')
+          SESSION_ID=$(node -e "const v=JSON.parse(process.argv[1]); if(!v.sessionId) process.exit(1); process.stdout.write(v.sessionId)" "$BLANK")
+          sleep 3
+          STATUS=$(curl --silent \
+            --output /tmp/expired-session-response.txt \
+            --write-out '%{http_code}' \
+            "http://127.0.0.1:7397/v1/sessions/$SESSION_ID")
+          test "$STATUS" = '404'
+          grep -q 'Unknown workbook session' /tmp/expired-session-response.txt
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sheets-web-engine-limit-logs
+          path: |
+            /tmp/xlsx-engine-invalid-limit.log
+            /tmp/xlsx-engine-invalid-admission.log
+            /tmp/xlsx-engine-limit.log
+            /tmp/xlsx-engine-workspace.log
+            /tmp/xlsx-engine-ttl.log
+            /tmp/health-headers.txt
+            /tmp/health-response.json
+            /tmp/xlsx-engine-metrics.txt
+            /tmp/oversized-response.txt
+            /tmp/small-response.txt
+            /tmp/expired-session-response.txt
+          retention-days: 7

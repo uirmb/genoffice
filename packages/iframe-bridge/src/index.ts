@@ -3,8 +3,8 @@ import { isOfficeProtocolMessage, type OfficeProtocolMessage } from '@genoffice/
 export interface OfficeIframeBridgeOptions {
   targetWindow: Window
   targetOrigin: string
-  sourceWindow?: Window
-  requestTimeoutMs?: number
+  sourceWindow?: Window | undefined
+  requestTimeoutMs?: number | undefined
 }
 
 export type OfficeMessageHandler<TMessage extends OfficeProtocolMessage> = (
