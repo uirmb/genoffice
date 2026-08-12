@@ -42,7 +42,7 @@ function currentWorkbookDirty(): boolean {
   return saveButton ? !saveButton.disabled : false
 }
 
-function createExitDialog(onClose: () => void): HTMLDivElement {
+function createExitDialog(onClose: () => void, onSaveAndExit: () => void): HTMLDivElement {
   const backdrop = document.createElement('div')
   backdrop.className = 'file-exit-backdrop'
 
@@ -73,7 +73,7 @@ function createExitDialog(onClose: () => void): HTMLDivElement {
   save.textContent = t('appFileSaveAndExit')
   save.addEventListener('click', () => {
     onClose()
-    dispatchSheetsWebFileAction('save-and-exit')
+    onSaveAndExit()
   })
 
   actions.append(cancel, discard, save)
@@ -114,6 +114,7 @@ export function installSheetsWebFileMenu(): () => void {
   const elements = createFileMenu()
   document.body.append(elements.root)
   let exitDialog: HTMLDivElement | null = null
+  let saveExitTimer: ReturnType<typeof setTimeout> | null = null
 
   const updateLabels = (): void => {
     elements.trigger.textContent = t('appFileTab')
@@ -156,6 +157,28 @@ export function installSheetsWebFileMenu(): () => void {
     exitDialog = null
   }
 
+  const saveAndExit = (): void => {
+    if (saveExitTimer !== null) clearTimeout(saveExitTimer)
+    dispatchSheetsWebFileAction('save')
+    const deadline = Date.now() + 120_000
+    const waitForClean = (): void => {
+      if (!currentWorkbookDirty()) {
+        saveExitTimer = null
+        dispatchSheetsWebFileAction('discard-and-exit')
+        return
+      }
+      // Save failures and cancellations leave the journal dirty. In that case
+      // this one-shot close attempt simply expires; a later ordinary Save can
+      // never inherit a stale "close after save" flag.
+      if (Date.now() >= deadline) {
+        saveExitTimer = null
+        return
+      }
+      saveExitTimer = setTimeout(waitForClean, 100)
+    }
+    saveExitTimer = setTimeout(waitForClean, 100)
+  }
+
   const requestExit = (): void => {
     closeMenu()
     if (!currentWorkbookDirty()) {
@@ -163,7 +186,7 @@ export function installSheetsWebFileMenu(): () => void {
       return
     }
     closeExitDialog()
-    exitDialog = createExitDialog(closeExitDialog)
+    exitDialog = createExitDialog(closeExitDialog, saveAndExit)
     document.body.append(exitDialog)
   }
 
@@ -194,6 +217,7 @@ export function installSheetsWebFileMenu(): () => void {
     unsubscribeLanguage()
     document.removeEventListener('mousedown', onDocumentPointerDown)
     document.removeEventListener('keydown', onDocumentKeyDown)
+    if (saveExitTimer !== null) clearTimeout(saveExitTimer)
     closeExitDialog()
     elements.root.remove()
   }
