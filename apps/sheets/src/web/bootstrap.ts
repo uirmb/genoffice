@@ -63,7 +63,9 @@ async function bootstrapWeb(): Promise<void> {
   })
   document.documentElement.dataset.xlsxSessionStore = health.sessionStore
 
+  let uninstallFileMenu = (): void => undefined
   const cleanup = (): void => {
+    uninstallFileMenu()
     uninstallSnapshotHost()
     controller.destroy()
     hostPolicy.destroy()
@@ -73,6 +75,8 @@ async function bootstrapWeb(): Promise<void> {
   window.addEventListener('pagehide', cleanup, { once: true })
 
   await import('../renderer/main')
+  const { installSheetsWebFileMenu } = await import('./file-menu')
+  uninstallFileMenu = installSheetsWebFileMenu()
 
   // Announce readiness only after the shared renderer has mounted and subscribed
   // to DesktopApi. This keeps office:init from racing the initial blank workbook.
