@@ -20,8 +20,28 @@ const en = {
 }
 
 type FileStrings = typeof en
+type FileLanguage =
+  | 'zh'
+  | 'en'
+  | 'ja'
+  | 'ko'
+  | 'fr'
+  | 'de'
+  | 'es'
+  | 'th'
+  | 'id'
+  | 'ru'
+  | 'ar'
+  | 'pt'
+  | 'it'
+  | 'pl'
+  | 'nl'
+  | 'ms'
+  | 'he'
+  | 'hi'
+  | 'zh-TW'
 
-export const fileStrings: Record<string, FileStrings> = {
+export const fileStrings = {
   zh: {
     ...en,
     appReadyInitial: '就绪',
@@ -44,22 +64,150 @@ export const fileStrings: Record<string, FileStrings> = {
     appFileActionUnavailable: '当前 Host 不支持此文件操作。',
   },
   en,
-  ja: { ...en, appReadyInitial: '準備完了', appFileTab: 'ファイル', appFileOpen: '開く', appFileSave: '保存', appFileSaveAs: '名前を付けて保存', appFileExit: '終了' },
-  ko: { ...en, appReadyInitial: '준비됨', appFileTab: '파일', appFileOpen: '열기', appFileSave: '저장', appFileSaveAs: '다른 이름으로 저장', appFileExit: '종료' },
-  fr: { ...en, appReadyInitial: 'Prêt', appFileTab: 'Fichier', appFileOpen: 'Ouvrir', appFileSave: 'Enregistrer', appFileSaveAs: 'Enregistrer sous', appFileExit: 'Quitter' },
-  de: { ...en, appReadyInitial: 'Bereit', appFileTab: 'Datei', appFileOpen: 'Öffnen', appFileSave: 'Speichern', appFileSaveAs: 'Speichern unter', appFileExit: 'Beenden' },
-  es: { ...en, appReadyInitial: 'Listo', appFileTab: 'Archivo', appFileOpen: 'Abrir', appFileSave: 'Guardar', appFileSaveAs: 'Guardar como', appFileExit: 'Salir' },
-  th: { ...en, appReadyInitial: 'พร้อม', appFileTab: 'ไฟล์', appFileOpen: 'เปิด', appFileSave: 'บันทึก', appFileSaveAs: 'บันทึกเป็น', appFileExit: 'ออก' },
-  id: { ...en, appReadyInitial: 'Siap', appFileTab: 'File', appFileOpen: 'Buka', appFileSave: 'Simpan', appFileSaveAs: 'Simpan Sebagai', appFileExit: 'Keluar' },
-  ru: { ...en, appReadyInitial: 'Готово', appFileTab: 'Файл', appFileOpen: 'Открыть', appFileSave: 'Сохранить', appFileSaveAs: 'Сохранить как', appFileExit: 'Выход' },
-  ar: { ...en, appReadyInitial: 'جاهز', appFileTab: 'ملف', appFileOpen: 'فتح', appFileSave: 'حفظ', appFileSaveAs: 'حفظ باسم', appFileExit: 'خروج' },
-  pt: { ...en, appReadyInitial: 'Pronto', appFileTab: 'Arquivo', appFileOpen: 'Abrir', appFileSave: 'Salvar', appFileSaveAs: 'Salvar como', appFileExit: 'Sair' },
-  it: { ...en, appReadyInitial: 'Pronto', appFileTab: 'File', appFileOpen: 'Apri', appFileSave: 'Salva', appFileSaveAs: 'Salva con nome', appFileExit: 'Esci' },
-  pl: { ...en, appReadyInitial: 'Gotowe', appFileTab: 'Plik', appFileOpen: 'Otwórz', appFileSave: 'Zapisz', appFileSaveAs: 'Zapisz jako', appFileExit: 'Zakończ' },
-  nl: { ...en, appReadyInitial: 'Gereed', appFileTab: 'Bestand', appFileOpen: 'Openen', appFileSave: 'Opslaan', appFileSaveAs: 'Opslaan als', appFileExit: 'Afsluiten' },
-  ms: { ...en, appReadyInitial: 'Sedia', appFileTab: 'Fail', appFileOpen: 'Buka', appFileSave: 'Simpan', appFileSaveAs: 'Simpan Sebagai', appFileExit: 'Keluar' },
-  he: { ...en, appReadyInitial: 'מוכן', appFileTab: 'קובץ', appFileOpen: 'פתח', appFileSave: 'שמור', appFileSaveAs: 'שמור בשם', appFileExit: 'יציאה' },
-  hi: { ...en, appReadyInitial: 'तैयार', appFileTab: 'फ़ाइल', appFileOpen: 'खोलें', appFileSave: 'सहेजें', appFileSaveAs: 'इस रूप में सहेजें', appFileExit: 'बाहर निकलें' },
+  ja: {
+    ...en,
+    appReadyInitial: '準備完了',
+    appFileTab: 'ファイル',
+    appFileOpen: '開く',
+    appFileSave: '保存',
+    appFileSaveAs: '名前を付けて保存',
+    appFileExit: '終了',
+  },
+  ko: {
+    ...en,
+    appReadyInitial: '준비됨',
+    appFileTab: '파일',
+    appFileOpen: '열기',
+    appFileSave: '저장',
+    appFileSaveAs: '다른 이름으로 저장',
+    appFileExit: '종료',
+  },
+  fr: {
+    ...en,
+    appReadyInitial: 'Prêt',
+    appFileTab: 'Fichier',
+    appFileOpen: 'Ouvrir',
+    appFileSave: 'Enregistrer',
+    appFileSaveAs: 'Enregistrer sous',
+    appFileExit: 'Quitter',
+  },
+  de: {
+    ...en,
+    appReadyInitial: 'Bereit',
+    appFileTab: 'Datei',
+    appFileOpen: 'Öffnen',
+    appFileSave: 'Speichern',
+    appFileSaveAs: 'Speichern unter',
+    appFileExit: 'Beenden',
+  },
+  es: {
+    ...en,
+    appReadyInitial: 'Listo',
+    appFileTab: 'Archivo',
+    appFileOpen: 'Abrir',
+    appFileSave: 'Guardar',
+    appFileSaveAs: 'Guardar como',
+    appFileExit: 'Salir',
+  },
+  th: {
+    ...en,
+    appReadyInitial: 'พร้อม',
+    appFileTab: 'ไฟล์',
+    appFileOpen: 'เปิด',
+    appFileSave: 'บันทึก',
+    appFileSaveAs: 'บันทึกเป็น',
+    appFileExit: 'ออก',
+  },
+  id: {
+    ...en,
+    appReadyInitial: 'Siap',
+    appFileTab: 'File',
+    appFileOpen: 'Buka',
+    appFileSave: 'Simpan',
+    appFileSaveAs: 'Simpan Sebagai',
+    appFileExit: 'Keluar',
+  },
+  ru: {
+    ...en,
+    appReadyInitial: 'Готово',
+    appFileTab: 'Файл',
+    appFileOpen: 'Открыть',
+    appFileSave: 'Сохранить',
+    appFileSaveAs: 'Сохранить как',
+    appFileExit: 'Выход',
+  },
+  ar: {
+    ...en,
+    appReadyInitial: 'جاهز',
+    appFileTab: 'ملف',
+    appFileOpen: 'فتح',
+    appFileSave: 'حفظ',
+    appFileSaveAs: 'حفظ باسم',
+    appFileExit: 'خروج',
+  },
+  pt: {
+    ...en,
+    appReadyInitial: 'Pronto',
+    appFileTab: 'Arquivo',
+    appFileOpen: 'Abrir',
+    appFileSave: 'Salvar',
+    appFileSaveAs: 'Salvar como',
+    appFileExit: 'Sair',
+  },
+  it: {
+    ...en,
+    appReadyInitial: 'Pronto',
+    appFileTab: 'File',
+    appFileOpen: 'Apri',
+    appFileSave: 'Salva',
+    appFileSaveAs: 'Salva con nome',
+    appFileExit: 'Esci',
+  },
+  pl: {
+    ...en,
+    appReadyInitial: 'Gotowe',
+    appFileTab: 'Plik',
+    appFileOpen: 'Otwórz',
+    appFileSave: 'Zapisz',
+    appFileSaveAs: 'Zapisz jako',
+    appFileExit: 'Zakończ',
+  },
+  nl: {
+    ...en,
+    appReadyInitial: 'Gereed',
+    appFileTab: 'Bestand',
+    appFileOpen: 'Openen',
+    appFileSave: 'Opslaan',
+    appFileSaveAs: 'Opslaan als',
+    appFileExit: 'Afsluiten',
+  },
+  ms: {
+    ...en,
+    appReadyInitial: 'Sedia',
+    appFileTab: 'Fail',
+    appFileOpen: 'Buka',
+    appFileSave: 'Simpan',
+    appFileSaveAs: 'Simpan Sebagai',
+    appFileExit: 'Keluar',
+  },
+  he: {
+    ...en,
+    appReadyInitial: 'מוכן',
+    appFileTab: 'קובץ',
+    appFileOpen: 'פתח',
+    appFileSave: 'שמור',
+    appFileSaveAs: 'שמור בשם',
+    appFileExit: 'יציאה',
+  },
+  hi: {
+    ...en,
+    appReadyInitial: 'तैयार',
+    appFileTab: 'फ़ाइल',
+    appFileOpen: 'खोलें',
+    appFileSave: 'सहेजें',
+    appFileSaveAs: 'इस रूप में सहेजें',
+    appFileExit: 'बाहर निकलें',
+  },
   'zh-TW': {
     ...en,
     appReadyInitial: '就緒',
@@ -81,4 +229,4 @@ export const fileStrings: Record<string, FileStrings> = {
     appXlsxExported: 'XLSX 已匯出',
     appFileActionUnavailable: '目前 Host 不支援此檔案操作。',
   },
-}
+} satisfies Record<FileLanguage, FileStrings>
