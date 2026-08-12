@@ -78,11 +78,13 @@ export default defineConfig({
   root: 'src/web',
   plugins: [xlsxGatewayBrowserBoundary(), react()],
   server: {
+    host: '0.0.0.0',
     port: Number(process.env.SHEETS_WEB_PORT) || 5275,
     strictPort: true,
     proxy: xlsxEngineProxy,
   },
   preview: {
+    host: '0.0.0.0',
     port: Number(process.env.SHEETS_WEB_PORT) || 5275,
     strictPort: true,
     proxy: xlsxEngineProxy,
