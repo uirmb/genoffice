@@ -131,4 +131,20 @@ test.describe('Sheets Web deployable File menu', () => {
     await editor.locator('.file-exit-dialog').getByRole('button', { name: '放弃更改并退出' }).click()
     await expect(page.locator('#host-state')).toContainText('close requested', { timeout: 10_000 })
   })
+
+  test('saves dirty workbook before granting File Exit', async ({ page }) => {
+    const editor = await openHost(page)
+    await openFixture(page)
+    await editFirstCell(page, editor)
+
+    await openFileMenu(editor)
+    await editor.locator('.file-menu-exit').click()
+    const dialog = editor.locator('.file-exit-dialog')
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: '保存并退出' }).click()
+
+    await expect(editor.locator('.ribbon-tabs .qa-btn').first()).toBeDisabled({ timeout: 20_000 })
+    await expect(page.locator('#dirty-state')).toHaveText('clean', { timeout: 20_000 })
+    await expect(page.locator('#host-state')).toContainText('close requested', { timeout: 20_000 })
+  })
 })
