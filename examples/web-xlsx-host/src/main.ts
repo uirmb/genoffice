@@ -7,12 +7,18 @@ import {
 } from '@genoffice/office-protocol'
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-const DEFAULT_SHEETS_URL = 'http://127.0.0.1:5275'
 
 function requireElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id)
   if (!element) throw new Error(`Missing #${id}`)
   return element as T
+}
+
+function defaultSheetsUrl(): string {
+  const configured = import.meta.env.VITE_SHEETS_URL
+  if (typeof configured === 'string' && configured.trim()) return configured.trim()
+  const hostname = window.location.hostname || 'localhost'
+  return `${window.location.protocol}//${hostname}:5275`
 }
 
 const frame = requireElement<HTMLIFrameElement>('office-frame')
@@ -27,7 +33,7 @@ const dirtyState = requireElement<HTMLSpanElement>('dirty-state')
 const hostState = requireElement<HTMLSpanElement>('host-state')
 
 const query = new URLSearchParams(window.location.search)
-const sheetsUrl = query.get('sheetsUrl') || DEFAULT_SHEETS_URL
+const sheetsUrl = query.get('sheetsUrl') || defaultSheetsUrl()
 const sheetsOrigin = new URL(sheetsUrl).origin
 
 let editorReady = false
@@ -37,8 +43,10 @@ let mode: OfficeEditorMode = 'edit'
 let locale = 'zh-CN'
 let requestCounter = 0
 let versionCounter = 0
+let historyVersionCounter = 0
 let hostStatus = 'loading'
 const files = new Map<string, OfficeFile>()
+const historyVersions: OfficeFile[] = []
 
 function requestId(prefix: string): string {
   requestCounter += 1
@@ -66,11 +74,31 @@ function render(): void {
   localeButton.textContent = locale === 'zh-CN' ? '切换 English' : '切换中文'
 }
 
+function officeCapabilities() {
+  return {
+    ai: false,
+    open: true,
+    save: true,
+    saveAs: true,
+    saveHistoryVersion: true,
+    exportDocx: false,
+    exportPptx: false,
+    exportXlsx: true,
+    close: true,
+    autoSave: 'host' as const,
+    download: false,
+    print: true,
+    systemFilePicker: true,
+    pageCropMarks: false,
+  }
+}
+
 function sendNew(): void {
   if (!editorReady) return
   currentFile = null
   dirty = false
   versionCounter = 0
+  historyVersionCounter = 0
   setHostState('opening')
   send({
     protocol: OFFICE_PROTOCOL_VERSION,
@@ -80,22 +108,7 @@ function sendNew(): void {
       kind: 'xlsx',
       mode,
       locale,
-      capabilities: {
-        ai: false,
-        open: true,
-        save: true,
-        saveAs: true,
-        saveHistoryVersion: true,
-        exportDocx: false,
-        exportPptx: false,
-        exportXlsx: true,
-        close: true,
-        autoSave: 'host',
-        download: false,
-        print: true,
-        systemFilePicker: true,
-        pageCropMarks: false,
-      },
+      capabilities: officeCapabilities(),
     },
   })
   render()
@@ -112,36 +125,28 @@ function sendInit(): void {
       kind: 'xlsx',
       mode,
       locale,
-      capabilities: {
-        ai: false,
-        open: true,
-        save: true,
-        saveAs: true,
-        saveHistoryVersion: true,
-        exportDocx: false,
-        exportPptx: false,
-        exportXlsx: true,
-        close: true,
-        autoSave: 'host',
-        download: false,
-        print: true,
-        systemFilePicker: true,
-        pageCropMarks: false,
-      },
+      capabilities: officeCapabilities(),
       file: { ...currentFile, bytes: currentFile.bytes.slice(0) },
     },
   })
 }
 
-function downloadCurrentFile(): void {
-  if (!currentFile) return
-  const blob = new Blob([currentFile.bytes], { type: currentFile.mimeType || XLSX_MIME })
+function downloadBytes(bytes: ArrayBuffer, name: string, mimeType = XLSX_MIME): void {
+  const blob = new Blob([bytes], { type: mimeType })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = currentFile.name
+  anchor.download = name
+  anchor.style.display = 'none'
+  document.body.append(anchor)
   anchor.click()
+  anchor.remove()
   setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function downloadCurrentFile(): void {
+  if (!currentFile) return
+  downloadBytes(currentFile.bytes, currentFile.name, currentFile.mimeType || XLSX_MIME)
 }
 
 async function toOfficeFile(file: File): Promise<OfficeFile> {
@@ -292,6 +297,62 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
       render()
       break
     }
+    case 'office:save-history-version': {
+      if (!currentFile) {
+        send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:save-history-version-result',
+          requestId: message.requestId,
+          payload: { ok: false, code: 'NOT_FOUND', error: 'Save the workbook before creating history.' },
+        })
+        break
+      }
+      historyVersionCounter += 1
+      const bytes = message.payload.bytes.slice(0)
+      const history: OfficeFile = {
+        ...currentFile,
+        id: `history:${currentFile.id}:${historyVersionCounter}`,
+        size: bytes.byteLength,
+        version: `history-${historyVersionCounter}`,
+        bytes,
+      }
+      historyVersions.push(history)
+      send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:save-history-version-result',
+        requestId: message.requestId,
+        payload: { ok: true },
+      })
+      setHostState(`history saved (${historyVersionCounter})`)
+      render()
+      break
+    }
+    case 'office:export-document': {
+      if (message.payload.format !== 'xlsx') {
+        send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:export-document-result',
+          requestId: message.requestId,
+          payload: { ok: false, code: 'SAVE_FAILED', error: 'Demo Host only exports XLSX.' },
+        })
+        break
+      }
+      const exportName = normalizeXlsxName(message.payload.file.name || 'Untitled.xlsx')
+      downloadBytes(message.payload.bytes.slice(0), exportName, XLSX_MIME)
+      send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:export-document-result',
+        requestId: message.requestId,
+        payload: { ok: true },
+      })
+      setHostState('exported')
+      render()
+      break
+    }
+    case 'office:close-request':
+      setHostState('close requested')
+      render()
+      break
     case 'office:save-result':
       setHostState(message.payload.ok ? 'saved' : `save failed: ${message.payload.error ?? ''}`)
       render()
@@ -326,6 +387,7 @@ picker.addEventListener('change', async () => {
   files.set(currentFile.id, currentFile)
   dirty = false
   versionCounter = 1
+  historyVersionCounter = 0
   render()
   sendInit()
 })
