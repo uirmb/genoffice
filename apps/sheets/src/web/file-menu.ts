@@ -1,5 +1,9 @@
 import { t } from '../renderer/i18n/locale'
-import { dispatchSheetsWebFileAction, type SheetsWebFileAction } from './file-actions'
+import {
+  dispatchSheetsWebFileAction,
+  SHEETS_WEB_HOST_CLOSE_REQUEST_EVENT,
+  type SheetsWebFileAction,
+} from './file-actions'
 
 interface FileMenuElements {
   root: HTMLDivElement
@@ -42,7 +46,11 @@ function currentWorkbookDirty(): boolean {
   return saveButton ? !saveButton.disabled : false
 }
 
-function createExitDialog(onClose: () => void, onSaveAndExit: () => void): HTMLDivElement {
+function createExitDialog(
+  onCancel: () => void,
+  onDiscardAndExit: () => void,
+  onSaveAndExit: () => void,
+): HTMLDivElement {
   const backdrop = document.createElement('div')
   backdrop.className = 'file-exit-backdrop'
 
@@ -60,27 +68,21 @@ function createExitDialog(onClose: () => void, onSaveAndExit: () => void): HTMLD
 
   const cancel = button('')
   cancel.textContent = t('appFileCancel')
-  cancel.addEventListener('click', onClose)
+  cancel.addEventListener('click', onCancel)
 
   const discard = button('')
   discard.textContent = t('appFileDiscardAndExit')
-  discard.addEventListener('click', () => {
-    onClose()
-    dispatchSheetsWebFileAction('discard-and-exit')
-  })
+  discard.addEventListener('click', onDiscardAndExit)
 
   const save = button('primary')
   save.textContent = t('appFileSaveAndExit')
-  save.addEventListener('click', () => {
-    onClose()
-    onSaveAndExit()
-  })
+  save.addEventListener('click', onSaveAndExit)
 
   actions.append(cancel, discard, save)
   dialog.append(heading, message, actions)
   backdrop.append(dialog)
   backdrop.addEventListener('mousedown', (event) => {
-    if (event.target === backdrop) onClose()
+    if (event.target === backdrop) onCancel()
   })
   return backdrop
 }
@@ -157,7 +159,18 @@ export function installSheetsWebFileMenu(): () => void {
     exitDialog = null
   }
 
+  const cancelExit = (): void => {
+    closeExitDialog()
+    dispatchSheetsWebFileAction('cancel-exit')
+  }
+
+  const discardAndExit = (): void => {
+    closeExitDialog()
+    dispatchSheetsWebFileAction('discard-and-exit')
+  }
+
   const saveAndExit = (): void => {
+    closeExitDialog()
     if (saveExitTimer !== null) clearTimeout(saveExitTimer)
     dispatchSheetsWebFileAction('save')
     const deadline = Date.now() + 120_000
@@ -185,8 +198,8 @@ export function installSheetsWebFileMenu(): () => void {
       dispatchSheetsWebFileAction('discard-and-exit')
       return
     }
-    closeExitDialog()
-    exitDialog = createExitDialog(closeExitDialog, saveAndExit)
+    if (exitDialog) return
+    exitDialog = createExitDialog(cancelExit, discardAndExit, saveAndExit)
     document.body.append(exitDialog)
   }
 
@@ -198,14 +211,18 @@ export function installSheetsWebFileMenu(): () => void {
   elements.exportXlsx.addEventListener('click', () => run('export-xlsx'))
   elements.exit.addEventListener('click', requestExit)
 
+  const handleHostCloseRequest = (): void => {
+    requestExit()
+  }
+  window.addEventListener(SHEETS_WEB_HOST_CLOSE_REQUEST_EVENT, handleHostCloseRequest)
+
   const onDocumentPointerDown = (event: MouseEvent): void => {
     if (!elements.root.contains(event.target as Node)) closeMenu()
   }
   const onDocumentKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') {
-      closeMenu()
-      closeExitDialog()
-    }
+    if (event.key !== 'Escape') return
+    closeMenu()
+    if (exitDialog) cancelExit()
   }
   document.addEventListener('mousedown', onDocumentPointerDown)
   document.addEventListener('keydown', onDocumentKeyDown)
@@ -215,6 +232,7 @@ export function installSheetsWebFileMenu(): () => void {
 
   return () => {
     unsubscribeLanguage()
+    window.removeEventListener(SHEETS_WEB_HOST_CLOSE_REQUEST_EVENT, handleHostCloseRequest)
     document.removeEventListener('mousedown', onDocumentPointerDown)
     document.removeEventListener('keydown', onDocumentKeyDown)
     if (saveExitTimer !== null) clearTimeout(saveExitTimer)
