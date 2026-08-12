@@ -1,0 +1,112 @@
+name: Sheets Web File UI
+
+on:
+  pull_request:
+    branches: [main, agent/ppt-web-foundation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sheets-web-file-ui:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Typecheck Sheets
+        run: npm run typecheck -w @genoffice/sheets
+
+      - name: Generate Sheets fixtures
+        run: npm run fixtures -w @genoffice/sheets
+
+      - name: Build XLSX Engine Service
+        run: npm run build:xlsx-engine
+
+      - name: Start XLSX Engine Service
+        run: |
+          ./services/xlsx-engine-service/target/release/xlsx-engine-service > /tmp/xlsx-engine.log 2>&1 &
+          echo $! > /tmp/xlsx-engine.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:7301/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/xlsx-engine.log
+          exit 1
+
+      - name: Build Sheets Web
+        run: npm run build:web:sheets
+
+      - name: Build XLSX Host Demo
+        run: npm run build:web-xlsx-host
+
+      - name: Start Sheets Web preview
+        run: |
+          npx vite preview --config vite.web.config.ts --host 127.0.0.1 --port 5275 > /tmp/sheets-web.log 2>&1 &
+          echo $! > /tmp/sheets-web.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5275/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/sheets-web.log
+          exit 1
+        working-directory: apps/sheets
+
+      - name: Start XLSX Host Demo preview
+        run: |
+          npx vite preview --config examples/web-xlsx-host/vite.config.ts --host 127.0.0.1 --port 8082 > /tmp/web-xlsx-host.log 2>&1 &
+          echo $! > /tmp/web-xlsx-host.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8082/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/web-xlsx-host.log
+          exit 1
+
+      - name: Browser E2E (File UI)
+        env:
+          SHEETS_WEB_E2E_URL: http://127.0.0.1:5275/
+          SHEETS_WEB_HOST_E2E_URL: http://127.0.0.1:8082/
+        run: |
+          set -o pipefail
+          npx playwright test e2e/sheets-web-file-menu.spec.ts --config e2e/playwright.config.ts 2>&1 | tee /tmp/sheets-web-file-ui.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sheets-web-file-ui-artifacts
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+            test-results
+            playwright-report
+            /tmp/xlsx-engine.log
+            /tmp/sheets-web.log
+            /tmp/web-xlsx-host.log
+            /tmp/sheets-web-file-ui.log
+          retention-days: 7
