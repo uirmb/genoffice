@@ -6,6 +6,7 @@
  * per call so refs and state never go stale.
  */
 import type { WorkbookFile, WorkbookFilterState } from '../shared/desktop-api'
+import { getSheetsWebSnapshotHost } from '../web/file-actions'
 import {
   isSheetRemoved,
   toSaveChartEdits,
@@ -39,14 +40,25 @@ export interface SaveContext {
   openLazyWorkbook: (opened: WorkbookFile) => void
 }
 
+export type WorkbookFileActionMode =
+  | 'save'
+  | 'save-as'
+  | 'save-history'
+  | 'export-xlsx'
+  | 'recovery'
+
 /**
  * mode 'recovery': assemble the very same payload but hand it to the
  * crash-recovery writer instead of the save pipeline — no dialogs, no status
  * messages, no session swap, the opened file untouched.
+ *
+ * 'save-history' and 'export-xlsx' also keep the opened workbook untouched:
+ * Sheets Web materializes a preservation snapshot in a temporary Engine
+ * session, then delegates persistence/export to the Office Host protocol.
  */
 export async function handleSave(
   ctx: SaveContext,
-  mode: 'save' | 'save-as' | 'recovery',
+  mode: WorkbookFileActionMode,
   quiet = false,
 ): Promise<void> {
   const state = ctx.lazyWorkbookRef.current
@@ -105,12 +117,10 @@ export async function handleSave(
         }),
   )
   // The gateway fails closed when these additions ride with structural or
-  // sheet changes (their coordinates entangle). Instead of bouncing the
-  // user, hold them back and save in two sequential phases: structure
-  // first, then the additions against the reopened session. Pre-existing
-  // sheet ids are stable across saves (`sheet-<sheetId attr>`), so the
-  // held ops stay addressable — ops on sheets created this session are
-  // the exception and keep the explicit error.
+  // sheet changes (their coordinates entangle). Ordinary Save runs these as
+  // two renderer phases; non-destructive History/Export hands the complete
+  // request to the Web snapshot host, which performs the same split in a
+  // temporary Engine session before talking to the platform Host.
   const hasShifts = structuralOps.length > 0 || sheetOps.length > 0
   const heldPivots = hasShifts ? pivotAdditions : []
   const heldTables = structuralOps.length > 0 ? tableAdditions : []
@@ -150,9 +160,9 @@ export async function handleSave(
     visualEdits.length +
     tableAdditions.length +
     pivotAdditions.length
-  // Save As is also a file operation: an unchanged workbook still needs to
-  // reach the Web DesktopApi so the Host can create a distinct result file.
-  if (total === 0 && mode !== 'save-as') {
+  // Save As / History / Export are file operations: an unchanged workbook
+  // still needs to reach the Host so it can create a result/version/export.
+  if (total === 0 && mode !== 'save-as' && mode !== 'save-history' && mode !== 'export-xlsx') {
     if (mode !== 'recovery') ctx.setMessage(t('appNoEditsToSave'))
     return
   }
@@ -174,7 +184,7 @@ export async function handleSave(
   }
   const payload = {
     sessionId: state.file.sessionId,
-    mode: mode === 'recovery' ? ('save' as const) : mode,
+    mode: mode === 'save-as' ? ('save-as' as const) : ('save' as const),
     edits,
     structuralOps,
     chartEdits,
@@ -202,6 +212,40 @@ export async function handleSave(
     await window.desktopApi.writeWorkbookRecovery(payload).catch(() => ({ ok: false }))
     return
   }
+
+  if (mode === 'save-history' || mode === 'export-xlsx') {
+    const snapshotHost = getSheetsWebSnapshotHost()
+    if (!snapshotHost) {
+      const unavailable = t('appFileActionUnavailable')
+      ctx.setMessage(unavailable)
+      if (!quiet) showToast(unavailable, 'error')
+      return
+    }
+    try {
+      ctx.setMessage(
+        mode === 'save-history' ? t('appSavingHistoryVersion') : t('appExportingXlsx'),
+      )
+      const result =
+        mode === 'save-history'
+          ? await snapshotHost.saveHistoryVersion(payload)
+          : await snapshotHost.exportXlsx(payload)
+      if (result.canceled) {
+        ctx.setMessage(t('appSaveCanceled'))
+        return
+      }
+      const message =
+        mode === 'save-history' ? t('appHistoryVersionSaved') : t('appXlsxExported')
+      ctx.setMessage(message)
+      if (!quiet) showToast(message)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : ''
+      const failed = localizeSaveError(message) ?? (message || t('appSaveFailed'))
+      ctx.setMessage(failed)
+      if (!quiet) showToast(failed, 'error')
+    }
+    return
+  }
+
   try {
     ctx.setMessage(t('appSavingEdits', { count: total }))
     const result = await window.desktopApi.saveWorkbookEdits({
