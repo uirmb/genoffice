@@ -160,14 +160,16 @@ Completed in the alignment branch:
 - latest Word Host-close lifecycle carried into the integrated branch;
 - browser Demo Hosts updated for the stable protocol;
 - UC XLSX reference Bridge migrated from `requestSelectedFileAccess/readSelectedFile/pickSaveDestination/saveResultFile` to the stable UC RPC boundary;
-- Sheets image insertion migrated to the stable asset picker.
+- Sheets image insertion migrated to the stable asset picker;
+- Sheets document switching made transactional: candidate parse and Host bind both complete before the active workbook changes, while parse/bind failure preserves the previous workbook;
+- successful Sheets history-version saves apply the Host-returned latest descriptor/version;
+- protocol regression tests added for stable wire translation and Sheets parse/bind transaction behavior.
 
 Remaining work before the protocol migration is complete:
 
-- make Docs/Slides/Sheets editor adapters call the stable Host API directly rather than relying on runtime compatibility translation;
+- make the remaining Docs/Slides editor adapters call the stable Host API directly rather than relying on runtime compatibility translation;
 - finish strict editor-load acknowledgement for every document-open path, especially Word where the renderer parse step occurs after the Web adapter creates its open result;
-- keep the old document active in Sheets until the candidate workbook session has parsed and bound successfully, then dispose the old session;
-- update E2E coverage for selected/cancelled/open-failed/bind-failed flows, duplicate pending selections, Save As new identity, history-version updates, download invariants and structured UC errors;
+- extend E2E coverage for duplicate pending selections, Save As new identity, history-version updates, download invariants and structured UC errors;
 - integrate the stable UC Host capabilities into the actual UC Web OS plugin source;
 - audit and remediate production dependency vulnerabilities;
 - measure/tune Web bundle loading rather than adding speculative chunking;
