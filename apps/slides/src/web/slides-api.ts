@@ -145,12 +145,12 @@ async function selectedToOfficeFile(
 ): Promise<OfficeFile> {
   if (selected.transport === 'buffer' && selected.bytes) {
     return {
-      id: selected.id,
-      name: selected.name,
-      mimeType: selected.mimeType,
+      ...selected,
+      mimeType: selected.mimeType || PPTX_MIME,
       size: selected.size ?? selected.bytes.byteLength,
       version: selected.version ?? null,
       bytes: selected.bytes.slice(0),
+      transport: 'buffer',
     }
   }
   return host.readFile(selected.id)
@@ -175,6 +175,23 @@ function isImageMime(mime: string): boolean {
 function safeName(name: string | undefined, fallback: string): string {
   const value = (name || fallback).trim()
   return /\.pptx$/i.test(value) ? value : `${value}.pptx`
+}
+
+function hostPickerFailure(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string }
+  error.code = code
+  return error
+}
+
+function officeDescriptor(file: OfficeFile, fallbackMime: string): OfficeFileDescriptor {
+  const { bytes: _bytes, ...descriptor } = file
+  return {
+    ...descriptor,
+    mimeType: file.mimeType || fallbackMime,
+    size: file.size ?? file.bytes.byteLength,
+    version: file.version ?? null,
+    transport: 'buffer',
+  }
 }
 
 export interface SlidesWebController {
@@ -257,18 +274,13 @@ export function createSlidesWebController(
   }
 
   const openOfficeFile = async (file: OfficeFile, fitWidthPx: number): Promise<OpenResult> =>
-    replaceOpenedFromBytes(file.bytes.slice(0), fitWidthPx, {
-      id: file.id,
-      name: file.name,
-      mimeType: file.mimeType || PPTX_MIME,
-      size: file.size ?? file.bytes.byteLength,
-      version: file.version ?? null,
-    })
+    replaceOpenedFromBytes(file.bytes.slice(0), fitWidthPx, officeDescriptor(file, PPTX_MIME))
 
   const openSelected = async (fitWidthPx: number): Promise<OpenResult | null> => {
     if (host.pickDocument && host.confirmDocumentOpened && host.releasePickedDocument) {
       const picked = await host.pickDocument({ accept: [PPTX_MIME, '.pptx'] })
       if (picked.status === 'cancelled') return null
+      if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)
 
       let bound = false
       try {
@@ -276,10 +288,16 @@ export function createSlidesWebController(
         const binding = await host.confirmDocumentOpened(picked.selectionId)
         if (!binding.ok) {
           await host.releasePickedDocument?.(picked.selectionId)
-          return null
+          throw hostPickerFailure(
+            binding.code ?? 'FILE_BIND_FAILED',
+            binding.error || 'The Host could not bind the selected presentation.',
+          )
         }
         bound = true
-        const file = binding.file ?? picked.file
+        const pickedDescriptor = officeDescriptor(picked.file, PPTX_MIME)
+        const file: OfficeFileDescriptor = binding.file
+          ? { ...pickedDescriptor, ...binding.file, transport: 'buffer' }
+          : pickedDescriptor
         session = {
           opened,
           fitWidthPx,
@@ -362,6 +380,7 @@ export function createSlidesWebController(
       mimeType: PPTX_MIME,
       size: bytes.byteLength,
       version: null,
+      transport: 'buffer',
     }
     const file: OfficeFileDescriptor = {
       ...fallback,
@@ -439,6 +458,7 @@ export function createSlidesWebController(
       mimeType: PPTX_MIME,
       size: bytes.byteLength,
       version: null,
+      transport: 'buffer',
     }
     const result = await download.call(host, {
       format: 'pptx',
@@ -869,7 +889,9 @@ export function createSlidesWebController(
           multiple: false,
           accept: [...IMAGE_MIMES, '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'],
         })
-        if (picked.status === 'cancelled' || !picked.files[0]) return null
+        if (picked.status === 'cancelled') return null
+        if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)
+        if (!picked.files[0]) throw new Error('Host returned an empty selected asset result.')
         file = picked.files[0]
       } else {
         const selected = await host.pickFile({

@@ -20,6 +20,7 @@ function createHarness(
     mimeType: DOCX_MIME,
     size: 6,
     version: 'v1',
+    transport: 'buffer',
     bytes: bytesOf('source'),
   }
 
@@ -315,6 +316,7 @@ describe('Docs web desktop adapter', () => {
         mimeType: candidate.mimeType,
         size: candidate.size,
         version: candidate.version,
+        transport: 'buffer',
       },
     })
 
@@ -327,6 +329,23 @@ describe('Docs web desktop adapter', () => {
     expect(confirmed).toEqual({ ok: true })
     expect(host.confirmDocumentOpened).toHaveBeenCalledWith('selection-2')
     expect(host.setTitle).toHaveBeenCalledWith(candidate.name)
+
+    destroy()
+  })
+
+  it('propagates a failed document picker without reading selection fields', async () => {
+    const { controller, host, destroy } = createHarness()
+    vi.mocked(host.pickDocument!).mockResolvedValue({
+      status: 'failed',
+      code: 'PERMISSION_DENIED',
+      error: 'The Host denied document selection.',
+    })
+
+    await expect(controller.desktopApi.openDocx()).rejects.toMatchObject({
+      code: 'PERMISSION_DENIED',
+      message: 'The Host denied document selection.',
+    })
+    expect(host.confirmDocumentOpened).not.toHaveBeenCalled()
 
     destroy()
   })

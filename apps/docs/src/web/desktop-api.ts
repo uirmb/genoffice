@@ -93,6 +93,23 @@ function unavailable(message: string): Promise<never> {
   return Promise.reject(new Error(message))
 }
 
+function hostPickerFailure(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string }
+  error.code = code
+  return error
+}
+
+function officeDescriptor(file: OfficeFile, fallbackMime: string): OfficeFileDescriptor {
+  const { bytes: _bytes, ...descriptor } = file
+  return {
+    ...descriptor,
+    mimeType: file.mimeType || fallbackMime,
+    size: file.size ?? file.bytes.byteLength,
+    version: file.version ?? null,
+    transport: 'buffer',
+  }
+}
+
 function createProjectApi(): ProjectApi {
   return {
     resolveChat: async ({ tempChatId }) => ({
@@ -207,15 +224,7 @@ export function createDocsWebDesktopController(
   const setCurrentFile = async (file: OfficeFile): Promise<OpenFileResult> => {
     const bytes = file.bytes.slice(0)
     current = {
-      file: {
-        id: file.id,
-        ...(file.nodeId ? { nodeId: file.nodeId } : {}),
-        ...(file.tenantId ? { tenantId: file.tenantId } : {}),
-        name: file.name,
-        mimeType: file.mimeType || DOCX_MIME,
-        size: file.size ?? bytes.byteLength,
-        version: file.version ?? null,
-      },
+      file: officeDescriptor(file, DOCX_MIME),
       path: virtualPath(file),
       hash: await sha256(bytes),
       bytes,
@@ -228,6 +237,7 @@ export function createDocsWebDesktopController(
     if (host.pickDocument && host.confirmDocumentOpened && host.releasePickedDocument) {
       const picked = await host.pickDocument({ accept: [DOCX_MIME, '.docx'] })
       if (picked.status === 'cancelled') return null
+      if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)
       pendingDocumentSelections.set(picked.selectionId, picked.file)
       return fileToOpenResult(picked.file, picked.selectionId)
     }
@@ -253,6 +263,7 @@ export function createDocsWebDesktopController(
       mimeType: DOCX_MIME,
       size: data.byteLength,
       version: null,
+      transport: 'buffer',
     }
     const file: OfficeFileDescriptor = {
       ...fallbackFile,
@@ -344,17 +355,12 @@ export function createDocsWebDesktopController(
       if (!result.ok) return { ok: false, error: result.error }
 
       const bytes = candidate.bytes.slice(0)
-      const bound = result.file ?? candidate
+      const candidateDescriptor = officeDescriptor(candidate, DOCX_MIME)
+      const bound: OfficeFileDescriptor = result.file
+        ? { ...candidateDescriptor, ...result.file, transport: 'buffer' }
+        : candidateDescriptor
       current = {
-        file: {
-          id: bound.id,
-          ...(bound.nodeId ? { nodeId: bound.nodeId } : {}),
-          ...(bound.tenantId ? { tenantId: bound.tenantId } : {}),
-          name: bound.name,
-          mimeType: bound.mimeType || DOCX_MIME,
-          size: bound.size ?? bytes.byteLength,
-          version: bound.version ?? null,
-        },
+        file: bound,
         path: virtualPath(bound),
         hash: await sha256(bytes),
         bytes,
@@ -430,6 +436,7 @@ export function createDocsWebDesktopController(
         mimeType: DOCX_MIME,
         size: data.byteLength,
         version: null,
+        transport: 'buffer',
       }
       const result = await download.call(host, {
         format: 'docx',
@@ -484,7 +491,9 @@ export function createDocsWebDesktopController(
       let file: OfficeFile
       if (host.pickAssets) {
         const picked = await host.pickAssets({ multiple: false, accept: [...IMAGE_MIMES] })
-        if (picked.status === 'cancelled' || !picked.files[0]) return null
+        if (picked.status === 'cancelled') return null
+        if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)
+        if (!picked.files[0]) throw new Error('Host returned an empty selected asset result.')
         file = picked.files[0]
       } else {
         const selected = await host.pickFile({ multiple: false, accept: [...IMAGE_MIMES] })
