@@ -1,4 +1,4 @@
-import type { OfficeHostApi, SelectedOfficeFile } from '@genoffice/office-host-api'
+import type { OfficeFile, OfficeHostApi, SelectedOfficeFile } from '@genoffice/office-host-api'
 import {
   localImageResultSchema,
   type LocalImageRequest,
@@ -49,7 +49,17 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-async function selectedBytes(
+function validateOfficeImage(file: OfficeFile): ArrayBuffer {
+  if ((file.size ?? file.bytes.byteLength) > MAX_LOCAL_IMAGE_BYTES) {
+    throw new Error('Image exceeds 20MB and cannot be inserted.')
+  }
+  if (file.bytes.byteLength > MAX_LOCAL_IMAGE_BYTES) {
+    throw new Error('Image exceeds 20MB and cannot be inserted.')
+  }
+  return file.bytes
+}
+
+async function legacySelectedBytes(
   host: OfficeHostApi,
   selected: SelectedOfficeFile,
 ): Promise<ArrayBuffer> {
@@ -60,28 +70,36 @@ async function selectedBytes(
   return (await host.readFile(selected.id)).bytes
 }
 
-/**
- * Web cannot dereference an Electron absolute path. It delegates image choice
- * to the Office Host instead: standalone uses the browser picker, while an
- * embedded UC/Web OS host can return a platform file or token through the same
- * office:pick-file / office:read-file contract.
- */
-export async function readLocalImageViaHost(
-  host: OfficeHostApi,
-  _request: LocalImageRequest,
-): Promise<LocalImageResult> {
+async function pickImageBytes(host: OfficeHostApi): Promise<ArrayBuffer> {
+  if (host.pickAssets) {
+    const result = await host.pickAssets({ multiple: false, accept: IMAGE_ACCEPT })
+    if (result.status === 'cancelled' || !result.files[0]) {
+      throw new Error('Image selection was cancelled.')
+    }
+    return validateOfficeImage(result.files[0])
+  }
+
+  // Protocol-v1 compatibility only. Stable embedded Office hosts expose
+  // pickAssets and always return read-only buffer content directly.
   const selected = await host.pickFile({
     multiple: false,
     accept: IMAGE_ACCEPT,
     mode: 'file',
   })
   if (!selected?.[0]) throw new Error('Image selection was cancelled.')
+  return legacySelectedBytes(host, selected[0])
+}
 
-  const buffer = await selectedBytes(host, selected[0])
-  if (buffer.byteLength > MAX_LOCAL_IMAGE_BYTES) {
-    throw new Error('Image exceeds 20MB and cannot be inserted.')
-  }
-
+/**
+ * Web cannot dereference an Electron absolute path. Embedded Office delegates
+ * image selection to the Host's read-only asset picker; the selection does not
+ * bind/change the current workbook or acquire a write token.
+ */
+export async function readLocalImageViaHost(
+  host: OfficeHostApi,
+  _request: LocalImageRequest,
+): Promise<LocalImageResult> {
+  const buffer = await pickImageBytes(host)
   const bytes = new Uint8Array(buffer)
   const mediaType = sniffImageType(bytes)
   if (!mediaType) throw new Error('The selected file is not a PNG/JPEG/GIF image.')
