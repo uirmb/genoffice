@@ -6,6 +6,7 @@ import type {
   ExportDocumentInput,
   ExportDocumentResult,
   OfficeFile,
+  OfficeFileDescriptor,
   OfficeHostApi,
   PickAssetsOptions,
   PickAssetsResult,
@@ -98,7 +99,7 @@ async function browserFileToOfficeFile(file: File): Promise<OfficeFile> {
   }
 }
 
-function descriptorOf(file: OfficeFile): DocumentOpenedResult['file'] {
+function descriptorOf(file: OfficeFile): OfficeFileDescriptor {
   return {
     id: file.id,
     ...(file.nodeId ? { nodeId: file.nodeId } : {}),
