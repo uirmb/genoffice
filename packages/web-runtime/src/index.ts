@@ -115,7 +115,10 @@ function legacyPickUsesAssets(options: PickFileOptions): boolean {
   if (options.multiple === true) return true
   return Boolean(
     options.accept?.some(
-      (value) => value === 'image/*' || value.startsWith('image/') || /^\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(value),
+      (value) =>
+        value === 'image/*' ||
+        value.startsWith('image/') ||
+        /^\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(value),
     ),
   )
 }
