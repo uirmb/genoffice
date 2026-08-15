@@ -110,6 +110,15 @@ function descriptorOf(file: OfficeFile): DocumentOpenedResult['file'] {
   }
 }
 
+function legacyPickUsesAssets(options: PickFileOptions): boolean {
+  if (options.multiple === true) return true
+  return Boolean(
+    options.accept?.some(
+      (value) => value === 'image/*' || value.startsWith('image/') || /^\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(value),
+    ),
+  )
+}
+
 export class StandaloneOfficeHost implements OfficeHostApi {
   private readonly files = new Map<string, OfficeFile>()
   private readonly pendingDocuments = new Map<string, OfficeFile>()
@@ -222,6 +231,16 @@ export class StandaloneOfficeHost implements OfficeHostApi {
 
   /** @deprecated Compatibility generic picker. */
   async pickFile(options: PickFileOptions): Promise<SelectedOfficeFile[] | null> {
+    if (options.mode !== 'folder' && legacyPickUsesAssets(options)) {
+      const result = await this.pickAssets({ multiple: options.multiple, accept: options.accept })
+      if (result.status === 'cancelled') return null
+      return result.files.map((file) => ({
+        ...descriptorOf(file),
+        transport: 'buffer',
+        bytes: file.bytes.slice(0),
+      }))
+    }
+
     const files = await pickBrowserFiles(options)
     if (!files?.length) return null
 
@@ -279,6 +298,9 @@ export interface EmbeddedOfficeRuntimeOptions {
 }
 
 export class EmbeddedOfficeHost implements OfficeHostApi {
+  private legacyPendingDocumentSelectionId: string | null = null
+  private legacyDocumentBind: Promise<DocumentOpenedResult> | null = null
+
   constructor(
     private readonly bridge: EditorIframeBridge,
     private readonly locale?: string,
@@ -288,7 +310,24 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
     return this.locale || document.documentElement.lang || navigator.language || 'en'
   }
 
+  private async consumeLegacyDocumentBind(): Promise<DocumentOpenedResult | null> {
+    const pending = this.legacyDocumentBind
+    if (!pending) return null
+    const result = await pending
+    if (this.legacyDocumentBind === pending) this.legacyDocumentBind = null
+    return result
+  }
+
   async saveDocument(input: SaveDocumentInput): Promise<SaveDocumentResult> {
+    const bindResult = await this.consumeLegacyDocumentBind()
+    if (bindResult && !bindResult.ok) {
+      return {
+        ok: false,
+        code: bindResult.code || 'FILE_BIND_FAILED',
+        error: bindResult.error || 'The selected document could not be bound as current.',
+      }
+    }
+
     const requestId = createOfficeRequestId('save')
     const bytes = input.bytes.slice(0)
     const response = await this.bridge.request<
@@ -313,6 +352,15 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
   }
 
   async saveHistoryVersion(input: SaveHistoryVersionInput): Promise<SaveHistoryVersionResult> {
+    const bindResult = await this.consumeLegacyDocumentBind()
+    if (bindResult && !bindResult.ok) {
+      return {
+        ok: false,
+        code: bindResult.code || 'FILE_BIND_FAILED',
+        error: bindResult.error || 'The selected document could not be bound as current.',
+      }
+    }
+
     const requestId = createOfficeRequestId('history')
     const bytes = input.bytes.slice(0)
     const response = await this.bridge.request<
@@ -423,37 +471,50 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
     })
   }
 
-  /** @deprecated Compatibility alias for old Host implementations. */
+  /** @deprecated Runtime compatibility alias; wire protocol uses download-document. */
   async exportDocument(input: ExportDocumentInput): Promise<ExportDocumentResult> {
-    const requestId = createOfficeRequestId('export')
-    const bytes = input.bytes.slice(0)
-    const response = await this.bridge.request<
-      Extract<HostToEditorMessage, { type: 'office:export-document-result' }>
-    >(
-      {
-        protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:export-document',
-        requestId,
-        payload: { format: input.format, file: input.file, bytes },
-      },
-      'office:export-document-result',
-      [bytes],
-    )
-    return response.payload
+    return this.downloadDocument(input)
   }
 
-  /** @deprecated Compatibility alias for old Host implementations. */
+  /** @deprecated Runtime compatibility alias; wire protocol uses close-approved. */
   async requestClose(): Promise<void> {
-    this.bridge.send({
-      protocol: OFFICE_PROTOCOL_VERSION,
-      type: 'office:close-request',
-      payload: { reason: 'file-menu' },
-    })
+    await this.approveClose()
   }
 
-  /** @deprecated Use pickDocument/pickAssets. */
+  /**
+   * @deprecated Editor compatibility shim. Embedded wire traffic is translated
+   * to pick-assets or transactional pick-document; only folder-mode callers
+   * still use the old generic wire message.
+   */
   async pickFile(options: PickFileOptions): Promise<SelectedOfficeFile[] | null> {
-    const requestId = createOfficeRequestId('pick')
+    if (options.mode !== 'folder' && legacyPickUsesAssets(options)) {
+      const result = await this.pickAssets({ multiple: options.multiple, accept: options.accept })
+      if (result.status === 'cancelled') return null
+      return result.files.map((file) => ({
+        ...descriptorOf(file),
+        transport: 'buffer',
+        bytes: file.bytes.slice(0),
+      }))
+    }
+
+    if (options.mode !== 'folder') {
+      if (this.legacyPendingDocumentSelectionId) {
+        await this.releasePickedDocument(this.legacyPendingDocumentSelectionId)
+        this.legacyPendingDocumentSelectionId = null
+      }
+      const result = await this.pickDocument({ accept: options.accept })
+      if (result.status === 'cancelled') return null
+      this.legacyPendingDocumentSelectionId = result.selectionId
+      return [
+        {
+          ...descriptorOf(result.file),
+          transport: 'buffer',
+          bytes: result.file.bytes.slice(0),
+        },
+      ]
+    }
+
+    const requestId = createOfficeRequestId('pick-legacy')
     const response = await this.bridge.request<
       Extract<HostToEditorMessage, { type: 'office:pick-file-result' }>
     >(
@@ -494,11 +555,24 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
   }
 
   setTitle(title: string): void {
+    if (this.legacyPendingDocumentSelectionId) {
+      const selectionId = this.legacyPendingDocumentSelectionId
+      this.legacyPendingDocumentSelectionId = null
+      this.legacyDocumentBind = this.confirmDocumentOpened(selectionId)
+    }
     this.bridge.send({
       protocol: OFFICE_PROTOCOL_VERSION,
       type: 'office:title-change',
       payload: { title },
     })
+  }
+
+  destroy(): void {
+    if (this.legacyPendingDocumentSelectionId) {
+      void this.releasePickedDocument(this.legacyPendingDocumentSelectionId)
+      this.legacyPendingDocumentSelectionId = null
+    }
+    this.legacyDocumentBind = null
   }
 }
 
@@ -531,6 +605,9 @@ export function createEmbeddedOfficeRuntime(
   return {
     bridge,
     host,
-    destroy: () => bridge.destroy(),
+    destroy: () => {
+      host.destroy()
+      bridge.destroy()
+    },
   }
 }
