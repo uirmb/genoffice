@@ -179,12 +179,12 @@ export interface SelectedOfficeAssets {
 
 export interface CancelledOfficeAssetsSelection {
   status: 'cancelled'
-  files: never[]
+  files: []
 }
 
 export interface FailedOfficeAssetsSelection {
   status: 'failed'
-  files: never[]
+  files: []
   code: string
   error: string
 }

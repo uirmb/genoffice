@@ -41,7 +41,7 @@ function createHarness(
     })),
     confirmDocumentOpened: vi.fn(async () => ({ ok: true })),
     releasePickedDocument: vi.fn(async () => {}),
-    pickAssets: vi.fn(async () => ({ status: 'cancelled' as const, files: [] })),
+    pickAssets: vi.fn(async () => ({ status: 'cancelled' as const, files: [] as [] })),
     downloadDocument: vi.fn(async () => ({ ok: true })),
     approveClose: vi.fn(async () => {}),
     cancelClose: vi.fn(async () => {}),
@@ -346,6 +346,25 @@ describe('Docs web desktop adapter', () => {
       message: 'The Host denied document selection.',
     })
     expect(host.confirmDocumentOpened).not.toHaveBeenCalled()
+
+    destroy()
+  })
+
+  it('distinguishes cancelled asset selection from a structured Host failure', async () => {
+    const { controller, host, destroy } = createHarness()
+
+    await expect(controller.desktopApi.pickImage()).resolves.toBeNull()
+
+    vi.mocked(host.pickAssets!).mockResolvedValue({
+      status: 'failed',
+      files: [] as [],
+      code: 'ASSET_ACCESS_DENIED',
+      error: 'The Host denied asset access.',
+    })
+    await expect(controller.desktopApi.pickImage()).rejects.toMatchObject({
+      code: 'ASSET_ACCESS_DENIED',
+      message: 'The Host denied asset access.',
+    })
 
     destroy()
   })
