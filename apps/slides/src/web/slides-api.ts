@@ -266,6 +266,43 @@ export function createSlidesWebController(
     })
 
   const openSelected = async (fitWidthPx: number): Promise<OpenResult | null> => {
+    if (host.pickDocument && host.confirmDocumentOpened && host.releasePickedDocument) {
+      const picked = await host.pickDocument({ accept: [PPTX_MIME, '.pptx'] })
+      if (picked.status === 'cancelled') return null
+
+      let bound = false
+      try {
+        const opened = await openPptx(new Uint8Array(picked.file.bytes))
+        const binding = await host.confirmDocumentOpened(picked.selectionId)
+        if (!binding.ok) {
+          await host.releasePickedDocument?.(picked.selectionId)
+          return null
+        }
+        bound = true
+        const file = binding.file ?? picked.file
+        session = {
+          opened,
+          fitWidthPx,
+          undoStack: [],
+          redoStack: [],
+          transformPreviewSnapshot: null,
+        }
+        currentFile = {
+          ...file,
+          mimeType: file.mimeType || PPTX_MIME,
+          size: picked.file.bytes.byteLength,
+        }
+        lastFitWidthPx = fitWidthPx
+        setDirtyState(false)
+        host.setTitle(currentFile.name)
+        return openResult()!
+      } catch (error) {
+        if (!bound) await host.releasePickedDocument?.(picked.selectionId).catch(() => {})
+        throw error
+      }
+    }
+
+    // Compatibility only for older custom hosts.
     const selected = await host.pickFile({
       multiple: false,
       accept: [PPTX_MIME, '.pptx'],
@@ -379,13 +416,17 @@ export function createSlidesWebController(
       bytes: bytesToArrayBuffer(bytes),
       baseVersion: currentFile.version ?? null,
     })
+    if (result.ok && result.file) {
+      currentFile = { ...result.file, mimeType: result.file.mimeType || PPTX_MIME }
+      host.setTitle(currentFile.name)
+    }
     return { ok: result.ok, error: result.error }
   }
 
   const exportPptx = async (): Promise<{ ok: boolean; error?: string }> => {
     if (!session) return { ok: false, error: 'No presentation is open.' }
-    if (!host.exportDocument)
-      return { ok: false, error: 'PPTX export is not supported by this host.' }
+    const download = host.downloadDocument ?? host.exportDocument
+    if (!download) return { ok: false, error: 'PPTX export is not supported by this host.' }
     const bytes = await savePptx(session.opened)
     const descriptor: OfficeFileDescriptor = currentFile ?? {
       id: `export:${Date.now()}`,
@@ -394,7 +435,7 @@ export function createSlidesWebController(
       size: bytes.byteLength,
       version: null,
     }
-    const result = await host.exportDocument({
+    const result = await download.call(host, {
       format: 'pptx',
       file: {
         ...descriptor,
@@ -817,13 +858,23 @@ export function createSlidesWebController(
       if (mode !== 'edit' || !session) return null
       const slide = requireSlide(slideIndex)
       if (!slide) return null
-      const selected = await host.pickFile({
-        multiple: false,
-        accept: [...IMAGE_MIMES, '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'],
-        mode: 'file',
-      })
-      if (!selected?.[0]) return null
-      const file = await selectedToOfficeFile(host, selected[0])
+      let file: OfficeFile
+      if (host.pickAssets) {
+        const picked = await host.pickAssets({
+          multiple: false,
+          accept: [...IMAGE_MIMES, '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'],
+        })
+        if (picked.status === 'cancelled' || !picked.files[0]) return null
+        file = picked.files[0]
+      } else {
+        const selected = await host.pickFile({
+          multiple: false,
+          accept: [...IMAGE_MIMES, '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'],
+          mode: 'file',
+        })
+        if (!selected?.[0]) return null
+        file = await selectedToOfficeFile(host, selected[0])
+      }
       const ext = extensionOf(file)
       if (
         !isImageMime(file.mimeType) &&
@@ -962,18 +1013,25 @@ export function createSlidesWebController(
     saveHistoryVersion,
     exportPptx,
     requestHostClose: async () => {
-      if (bridge && pendingHostCloseRequest) {
+      if (pendingHostCloseRequest) {
         const request = pendingHostCloseRequest
         pendingHostCloseRequest = null
-        bridge.send({
-          protocol: OFFICE_PROTOCOL_VERSION,
-          type: 'office:close-request',
-          requestId: request.requestId,
-          payload: { reason: request.reason },
-        })
-        return
+        if (host.approveClose) {
+          await host.approveClose(request.requestId)
+          return
+        }
+        if (bridge) {
+          bridge.send({
+            protocol: OFFICE_PROTOCOL_VERSION,
+            type: 'office:close-request',
+            requestId: request.requestId,
+            payload: { reason: request.reason },
+          })
+          return
+        }
       }
-      await host.requestClose?.()
+      if (host.approveClose) await host.approveClose()
+      else await host.requestClose?.()
     },
     onHostCloseRequest: (handler: () => void) => {
       hostCloseRequestHandlers.add(handler)
@@ -981,10 +1039,14 @@ export function createSlidesWebController(
       return () => hostCloseRequestHandlers.delete(handler)
     },
     cancelHostCloseRequest: () => {
-      if (!bridge || !pendingHostCloseRequest) return
+      if (!pendingHostCloseRequest) return
       const request = pendingHostCloseRequest
       pendingHostCloseRequest = null
-      bridge.send({
+      if (host.cancelClose) {
+        void host.cancelClose(request.requestId)
+        return
+      }
+      bridge?.send({
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:close-cancelled',
         requestId: request.requestId,

@@ -33,6 +33,17 @@ function createHarness(
   const host: OfficeHostApi = {
     getLocale: vi.fn(async () => 'zh-CN'),
     saveDocument,
+    pickDocument: vi.fn(async () => ({
+      status: 'cancelled' as const,
+      selectionId: null,
+      file: null,
+    })),
+    confirmDocumentOpened: vi.fn(async () => ({ ok: true })),
+    releasePickedDocument: vi.fn(async () => {}),
+    pickAssets: vi.fn(async () => ({ status: 'cancelled' as const, files: [] })),
+    downloadDocument: vi.fn(async () => ({ ok: true })),
+    approveClose: vi.fn(async () => {}),
+    cancelClose: vi.fn(async () => {}),
     pickFile: vi.fn(async () => null),
     readFile: vi.fn(async () => initialFile),
     setDirty: vi.fn(),
@@ -252,7 +263,7 @@ describe('Docs web desktop adapter', () => {
   })
 
   it('routes the parent window close request through the guarded editor lifecycle', async () => {
-    const { controller, send, emit, destroy } = createHarness()
+    const { controller, host, emit, destroy } = createHarness()
     const requested = vi.fn()
     const off = controller.desktopApi.onHostCloseRequest?.(requested)
 
@@ -265,12 +276,7 @@ describe('Docs web desktop adapter', () => {
     expect(requested).toHaveBeenCalledTimes(1)
 
     await controller.desktopApi.requestHostClose?.()
-    expect(send).toHaveBeenCalledWith({
-      protocol: OFFICE_PROTOCOL_VERSION,
-      type: 'office:close-request',
-      requestId: 'window-close-1',
-      payload: { reason: 'window-close' },
-    })
+    expect(host.approveClose).toHaveBeenCalledWith('window-close-1')
 
     emit({
       protocol: OFFICE_PROTOCOL_VERSION,
@@ -279,14 +285,51 @@ describe('Docs web desktop adapter', () => {
       payload: { reason: 'window-close' },
     })
     controller.desktopApi.cancelHostCloseRequest?.()
-    expect(send).toHaveBeenCalledWith({
-      protocol: OFFICE_PROTOCOL_VERSION,
-      type: 'office:close-cancelled',
-      requestId: 'window-close-2',
-      payload: { reason: 'user-cancelled' },
-    })
+    expect(host.cancelClose).toHaveBeenCalledWith('window-close-2')
 
     off?.()
+    destroy()
+  })
+
+  it('keeps a picked document pending until the renderer confirms it opened', async () => {
+    const { controller, host, destroy } = createHarness()
+    const candidate: OfficeFile = {
+      id: 'doc-2',
+      nodeId: 'doc-2',
+      name: '候选文档.docx',
+      mimeType: DOCX_MIME,
+      size: 9,
+      version: 7,
+      bytes: bytesOf('candidate'),
+      transport: 'buffer',
+    }
+    vi.mocked(host.pickDocument!).mockResolvedValue({
+      status: 'selected',
+      selectionId: 'selection-2',
+      file: candidate,
+    })
+    vi.mocked(host.confirmDocumentOpened!).mockResolvedValue({
+      ok: true,
+      file: {
+        id: candidate.id,
+        nodeId: candidate.nodeId,
+        name: candidate.name,
+        mimeType: candidate.mimeType,
+        size: candidate.size,
+        version: candidate.version,
+      },
+    })
+
+    const picked = await controller.desktopApi.openDocx()
+    expect(picked?.selectionId).toBe('selection-2')
+    expect(host.confirmDocumentOpened).not.toHaveBeenCalled()
+    expect(host.setTitle).not.toHaveBeenCalledWith(candidate.name)
+
+    const confirmed = await controller.desktopApi.confirmOpenDocx?.('selection-2')
+    expect(confirmed).toEqual({ ok: true })
+    expect(host.confirmDocumentOpened).toHaveBeenCalledWith('selection-2')
+    expect(host.setTitle).toHaveBeenCalledWith(candidate.name)
+
     destroy()
   })
 

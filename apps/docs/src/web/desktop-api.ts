@@ -119,6 +119,7 @@ export function createDocsWebDesktopController(
   bridge?: EditorIframeBridge,
 ): DocsWebDesktopController {
   let current: WebDocumentContext | null = null
+  const pendingDocumentSelections = new Map<string, OfficeFile>()
   let pendingOpen: OpenFileResult | null = null
   let initialOpenResolve: ((result: OpenFileResult | null) => void) | null = null
   let readyNotified = false
@@ -189,11 +190,27 @@ export function createDocsWebDesktopController(
         }
       : null
 
+  const fileToOpenResult = async (
+    file: OfficeFile,
+    selectionId?: string,
+  ): Promise<OpenFileResult> => {
+    const bytes = file.bytes.slice(0)
+    return {
+      path: virtualPath(file),
+      name: file.name,
+      data: bytes,
+      hash: await sha256(bytes),
+      ...(selectionId ? { selectionId } : {}),
+    }
+  }
+
   const setCurrentFile = async (file: OfficeFile): Promise<OpenFileResult> => {
     const bytes = file.bytes.slice(0)
     current = {
       file: {
         id: file.id,
+        ...(file.nodeId ? { nodeId: file.nodeId } : {}),
+        ...(file.tenantId ? { tenantId: file.tenantId } : {}),
         name: file.name,
         mimeType: file.mimeType || DOCX_MIME,
         size: file.size ?? bytes.byteLength,
@@ -208,6 +225,14 @@ export function createDocsWebDesktopController(
   }
 
   const openSelectedDocx = async (): Promise<OpenFileResult | null> => {
+    if (host.pickDocument && host.confirmDocumentOpened && host.releasePickedDocument) {
+      const picked = await host.pickDocument({ accept: [DOCX_MIME, '.docx'] })
+      if (picked.status === 'cancelled') return null
+      pendingDocumentSelections.set(picked.selectionId, picked.file)
+      return fileToOpenResult(picked.file, picked.selectionId)
+    }
+
+    // Compatibility only for custom/older hosts that have not implemented the stable API.
     const selected = await host.pickFile({
       multiple: false,
       accept: [DOCX_MIME, '.docx'],
@@ -302,6 +327,38 @@ export function createDocsWebDesktopController(
     reportDirtyChange: (dirty) => host.setDirty(dirty),
     canAutoPersistPathlessDocument: () => false,
     openDocx: openSelectedDocx,
+    confirmOpenDocx: async (selectionId) => {
+      const candidate = pendingDocumentSelections.get(selectionId)
+      if (!candidate || !host.confirmDocumentOpened) {
+        return { ok: false, error: 'The pending document selection is no longer available.' }
+      }
+      const result = await host.confirmDocumentOpened(selectionId)
+      if (!result.ok) return { ok: false, error: result.error }
+
+      const bytes = candidate.bytes.slice(0)
+      const bound = result.file ?? candidate
+      current = {
+        file: {
+          id: bound.id,
+          ...(bound.nodeId ? { nodeId: bound.nodeId } : {}),
+          ...(bound.tenantId ? { tenantId: bound.tenantId } : {}),
+          name: bound.name,
+          mimeType: bound.mimeType || DOCX_MIME,
+          size: bound.size ?? bytes.byteLength,
+          version: bound.version ?? null,
+        },
+        path: virtualPath(bound),
+        hash: await sha256(bytes),
+        bytes,
+      }
+      pendingDocumentSelections.delete(selectionId)
+      host.setTitle(current.file.name)
+      return { ok: true }
+    },
+    releaseOpenDocx: async (selectionId) => {
+      pendingDocumentSelections.delete(selectionId)
+      await host.releasePickedDocument?.(selectionId)
+    },
     openDocxPath: async (path) => (current?.path === path ? contextToOpenResult() : null),
     consumePendingOpenDocx: async () => {
       const value = pendingOpen
@@ -346,10 +403,16 @@ export function createDocsWebDesktopController(
         bytes: data,
         baseVersion: current.file.version ?? null,
       })
+      if (result.ok && result.file) {
+        current.file = { ...result.file, mimeType: result.file.mimeType || DOCX_MIME }
+        current.path = virtualPath(current.file)
+        host.setTitle(current.file.name)
+      }
       return { ok: result.ok, error: result.error }
     },
     exportDocx: async (defaultName, data) => {
-      if (!host.exportDocument) {
+      const download = host.downloadDocument ?? host.exportDocument
+      if (!download) {
         return { ok: false, error: 'DOCX export is not supported by this host.' }
       }
       const descriptor: OfficeFileDescriptor = current?.file ?? {
@@ -359,7 +422,7 @@ export function createDocsWebDesktopController(
         size: data.byteLength,
         version: null,
       }
-      const result = await host.exportDocument({
+      const result = await download.call(host, {
         format: 'docx',
         file: { ...descriptor, name: defaultName, size: data.byteLength },
         bytes: data,
@@ -367,18 +430,25 @@ export function createDocsWebDesktopController(
       return { ok: result.ok, error: result.error }
     },
     requestHostClose: async () => {
-      if (bridge && pendingHostCloseRequest) {
+      if (pendingHostCloseRequest) {
         const request = pendingHostCloseRequest
         pendingHostCloseRequest = null
-        bridge.send({
-          protocol: OFFICE_PROTOCOL_VERSION,
-          type: 'office:close-request',
-          requestId: request.requestId,
-          payload: { reason: request.reason },
-        })
-        return
+        if (host.approveClose) {
+          await host.approveClose(request.requestId)
+          return
+        }
+        if (bridge) {
+          bridge.send({
+            protocol: OFFICE_PROTOCOL_VERSION,
+            type: 'office:close-request',
+            requestId: request.requestId,
+            payload: { reason: request.reason },
+          })
+          return
+        }
       }
-      await host.requestClose?.()
+      if (host.approveClose) await host.approveClose()
+      else await host.requestClose?.()
     },
     onHostCloseRequest: (handler) => {
       hostCloseRequestHandlers.add(handler)
@@ -386,10 +456,14 @@ export function createDocsWebDesktopController(
       return () => hostCloseRequestHandlers.delete(handler)
     },
     cancelHostCloseRequest: () => {
-      if (!bridge || !pendingHostCloseRequest) return
+      if (!pendingHostCloseRequest) return
       const request = pendingHostCloseRequest
       pendingHostCloseRequest = null
-      bridge.send({
+      if (host.cancelClose) {
+        void host.cancelClose(request.requestId)
+        return
+      }
+      bridge?.send({
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:close-cancelled',
         requestId: request.requestId,
@@ -398,9 +472,16 @@ export function createDocsWebDesktopController(
     },
     getRecentFiles: async () => [],
     pickImage: async (): Promise<PickImageResult | null> => {
-      const selected = await host.pickFile({ multiple: false, accept: [...IMAGE_MIMES] })
-      if (!selected?.[0]) return null
-      const file = await selectedToOfficeFile(host, selected[0])
+      let file: OfficeFile
+      if (host.pickAssets) {
+        const picked = await host.pickAssets({ multiple: false, accept: [...IMAGE_MIMES] })
+        if (picked.status === 'cancelled' || !picked.files[0]) return null
+        file = picked.files[0]
+      } else {
+        const selected = await host.pickFile({ multiple: false, accept: [...IMAGE_MIMES] })
+        if (!selected?.[0]) return null
+        file = await selectedToOfficeFile(host, selected[0])
+      }
       if (!IMAGE_MIMES.includes(file.mimeType as (typeof IMAGE_MIMES)[number])) {
         throw new Error(`Unsupported image type: ${file.mimeType}`)
       }
@@ -580,6 +661,10 @@ export function createDocsWebDesktopController(
       closeSaveHandlers.clear()
       hostCloseRequestHandlers.clear()
       pendingHostCloseRequest = null
+      for (const selectionId of pendingDocumentSelections.keys()) {
+        void host.releasePickedDocument?.(selectionId)
+      }
+      pendingDocumentSelections.clear()
       aiStreamHandlers.clear()
     },
   }
