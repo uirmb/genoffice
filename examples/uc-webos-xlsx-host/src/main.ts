@@ -15,6 +15,7 @@ import {
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const DEFAULT_SHEETS_URL = 'http://127.0.0.1:5275'
 const DEFAULT_PLUGIN_ID = 'thirdparty.plugin.excel-online'
+const INVALID_FILENAME_CHARS = new Set(['\\', '/', ':', '*', '?', '"', '<', '>', '|'])
 
 interface UcRpcResponse {
   type: 'uc-plugin-rpc-response'
@@ -64,8 +65,9 @@ function versionValue(value: unknown): OfficeFileVersion | undefined {
 }
 
 function normalizeXlsxName(value: string): string {
-  const cleaned = value
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+  const cleaned = [...value]
+    .map((char) => (char.charCodeAt(0) <= 0x1f || INVALID_FILENAME_CHARS.has(char) ? ' ' : char))
+    .join('')
     .replace(/\s+/g, ' ')
     .trim()
   if (!cleaned) throw new Error('文件名不能为空。')
