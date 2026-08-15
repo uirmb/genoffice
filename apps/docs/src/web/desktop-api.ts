@@ -245,6 +245,7 @@ export function createDocsWebDesktopController(
   const saveWithName = async (
     name: string,
     data: ArrayBuffer,
+    saveMode: 'save' | 'saveAs' = 'save',
   ): Promise<{ ok: boolean; path?: string; error?: string; reason?: 'external-modified' }> => {
     const fallbackFile: OfficeFileDescriptor = current?.file ?? {
       id: `new:${Date.now()}`,
@@ -267,6 +268,7 @@ export function createDocsWebDesktopController(
         file,
         bytes: data,
         baseVersion: current?.file.version ?? null,
+        mode: saveMode,
         newDocument,
       })
       if (!result.ok) {
@@ -278,7 +280,13 @@ export function createDocsWebDesktopController(
         }
       }
 
-      const savedFile = result.file ?? file
+      if (!result.file) {
+        const error = 'Host reported a successful save without the latest file descriptor.'
+        reportHostSaveResult(false, error)
+        return { ok: false, error }
+      }
+
+      const savedFile = result.file
       const oldPath = current?.path
       current = {
         file: savedFile,
@@ -385,14 +393,15 @@ export function createDocsWebDesktopController(
       renameHandlers.add(handler)
       return () => renameHandlers.delete(handler)
     },
-    saveDocx: async (_path, data) => saveWithName(current?.file.name ?? 'Untitled.docx', data),
+    saveDocx: async (_path, data) =>
+      saveWithName(current?.file.name ?? 'Untitled.docx', data, 'save'),
     writeRecoveryCopy: async () => ({ ok: true }),
     onTeardown: (handler) => {
       teardownHandlers.add(handler)
       return () => teardownHandlers.delete(handler)
     },
-    saveDocxAs: async (defaultName, data) => saveWithName(defaultName, data),
-    saveDocxNew: async (defaultName, data) => saveWithName(defaultName, data),
+    saveDocxAs: async (defaultName, data) => saveWithName(defaultName, data, 'saveAs'),
+    saveDocxNew: async (defaultName, data) => saveWithName(defaultName, data, 'save'),
     saveHistoryVersion: async (_defaultName, data) => {
       if (!current) return { ok: false, error: 'Save the new document before creating history.' }
       if (!host.saveHistoryVersion) {

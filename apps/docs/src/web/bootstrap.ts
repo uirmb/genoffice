@@ -5,7 +5,7 @@ import {
 } from '@genoffice/web-runtime'
 import './product-policy.css'
 import { createDocsWebDesktopController } from './desktop-api'
-import { installWebHostPolicy, installWebSaveModeAdapter } from './host-policy'
+import { installWebHostPolicy } from './host-policy'
 
 function renderBootstrapError(error: unknown): void {
   const root = document.getElementById('root')
@@ -48,12 +48,10 @@ async function bootstrapWeb(): Promise<void> {
 
   const hostPolicy = installWebHostPolicy(mode, embeddedRuntime?.bridge)
   const controller = createDocsWebDesktopController(host, embeddedRuntime?.bridge)
-  const uninstallSaveMode = installWebSaveModeAdapter(controller, host)
   window.desktop = controller.desktopApi
   window.projectApi = controller.projectApi
 
   const cleanup = () => {
-    uninstallSaveMode()
     hostPolicy.destroy()
     controller.destroy()
     embeddedRuntime?.destroy()

@@ -3,7 +3,7 @@ import type { OfficeFile, OfficeHostApi, SaveDocumentInput } from '@genoffice/of
 import { OFFICE_PROTOCOL_VERSION, type HostToEditorMessage } from '@genoffice/office-protocol'
 import type { EditorIframeBridge } from '@genoffice/web-runtime'
 import { createDocsWebDesktopController } from '../src/web/desktop-api'
-import { installWebHostPolicy, installWebSaveModeAdapter } from '../src/web/host-policy'
+import { installWebHostPolicy } from '../src/web/host-policy'
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
@@ -62,13 +62,11 @@ function createHarness(
 
   const policy = installWebHostPolicy('embedded', bridge)
   const controller = createDocsWebDesktopController(host, bridge)
-  const uninstallSaveMode = installWebSaveModeAdapter(controller, host)
   const emit = (message: HostToEditorMessage) => {
     if (incoming.size === 0) throw new Error('Bridge handler is not registered')
     for (const handler of incoming) handler(message)
   }
   const destroy = () => {
-    uninstallSaveMode()
     policy.destroy()
     controller.destroy()
   }
@@ -329,6 +327,27 @@ describe('Docs web desktop adapter', () => {
     expect(confirmed).toEqual({ ok: true })
     expect(host.confirmDocumentOpened).toHaveBeenCalledWith('selection-2')
     expect(host.setTitle).toHaveBeenCalledWith(candidate.name)
+
+    destroy()
+  })
+
+  it('rejects a Host save success that omits the authoritative file descriptor', async () => {
+    const { controller, emit, initialFile, host, destroy } = createHarness(async () => ({
+      ok: true,
+    }))
+    const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:init',
+      requestId: 'init-missing-save-file',
+      payload: { kind: 'docx', mode: 'edit', file: initialFile },
+    })
+    const opened = await pendingOpen
+
+    const result = await controller.desktopApi.saveDocx(opened!.path, bytesOf('edited'))
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('latest file descriptor')
+    expect(host.setTitle).toHaveBeenCalledTimes(1)
 
     destroy()
   })

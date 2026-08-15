@@ -385,9 +385,14 @@ export function createSlidesWebController(
         reportPendingHostSave(false, result.error)
         return { ok: false, error: result.error || 'Save failed.' }
       }
+      if (!result.file) {
+        const error = 'Host reported a successful save without the latest file descriptor.'
+        reportPendingHostSave(false, error)
+        return { ok: false, error }
+      }
       currentFile = {
-        ...(result.file ?? file),
-        mimeType: result.file?.mimeType || PPTX_MIME,
+        ...result.file,
+        mimeType: result.file.mimeType || PPTX_MIME,
         size: bytes.byteLength,
       }
       commitSaved(session.opened)
