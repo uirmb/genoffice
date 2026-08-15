@@ -1,4 +1,4 @@
-import type { OfficeEditorMode, OfficeFile } from '@genoffice/office-host-api'
+import type { OfficeEditorMode, OfficeFile, OfficeFileDescriptor } from '@genoffice/office-host-api'
 import {
   OFFICE_PROTOCOL_VERSION,
   isOfficeProtocolMessage,
@@ -47,14 +47,15 @@ let historyVersionCounter = 0
 let hostStatus = 'loading'
 const files = new Map<string, OfficeFile>()
 const historyVersions: OfficeFile[] = []
+const pendingDocuments = new Map<string, OfficeFile>()
 
 function requestId(prefix: string): string {
   requestCounter += 1
   return `${prefix}-${requestCounter}`
 }
 
-function send(message: HostToEditorMessage): void {
-  frame.contentWindow?.postMessage(message, sheetsOrigin)
+function send(message: HostToEditorMessage, transfer: Transferable[] = []): void {
+  frame.contentWindow?.postMessage(message, sheetsOrigin, transfer)
 }
 
 function setHostState(value: string): void {
@@ -78,6 +79,8 @@ function officeCapabilities() {
   return {
     ai: false,
     open: true,
+    openDocument: true,
+    pickAssets: true,
     save: true,
     saveAs: true,
     saveHistoryVersion: true,
@@ -86,10 +89,20 @@ function officeCapabilities() {
     exportXlsx: true,
     close: true,
     autoSave: 'host' as const,
-    download: false,
+    download: true,
     print: true,
     systemFilePicker: true,
     pageCropMarks: false,
+  }
+}
+
+function descriptorOf(file: OfficeFile): OfficeFileDescriptor {
+  return {
+    id: file.id,
+    name: file.name,
+    mimeType: file.mimeType,
+    size: file.size,
+    version: file.version,
   }
 }
 
@@ -117,18 +130,22 @@ function sendNew(): void {
 function sendInit(): void {
   if (!editorReady || !currentFile) return
   setHostState('opening')
-  send({
-    protocol: OFFICE_PROTOCOL_VERSION,
-    type: 'office:init',
-    requestId: requestId('init'),
-    payload: {
-      kind: 'xlsx',
-      mode,
-      locale,
-      capabilities: officeCapabilities(),
-      file: { ...currentFile, bytes: currentFile.bytes.slice(0) },
+  const bytes = currentFile.bytes.slice(0)
+  send(
+    {
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:init',
+      requestId: requestId('init'),
+      payload: {
+        kind: 'xlsx',
+        mode,
+        locale,
+        capabilities: officeCapabilities(),
+        file: { ...currentFile, bytes, transport: 'buffer' },
+      },
     },
-  })
+    [bytes],
+  )
 }
 
 function downloadBytes(bytes: ArrayBuffer, name: string, mimeType = XLSX_MIME): void {
@@ -158,12 +175,135 @@ async function toOfficeFile(file: File): Promise<OfficeFile> {
     size: bytes.byteLength,
     version: 'v1',
     bytes,
+    transport: 'buffer',
   }
 }
 
 function normalizeXlsxName(value: string): string {
   const name = value.trim()
   return /\.xlsx$/i.test(name) ? name : `${name}.xlsx`
+}
+
+async function pickBrowserFiles(options: {
+  accept?: string[] | undefined
+  multiple?: boolean | undefined
+}): Promise<File[] | null> {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = options.multiple === true
+  if (options.accept?.length) input.accept = options.accept.join(',')
+  input.style.display = 'none'
+  document.body.append(input)
+
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: File[] | null) => {
+      if (settled) return
+      settled = true
+      input.remove()
+      resolve(value)
+    }
+    input.addEventListener('change', () => finish(input.files ? [...input.files] : null), {
+      once: true,
+    })
+    input.addEventListener('cancel', () => finish(null), { once: true })
+    input.click()
+  })
+}
+
+async function pickDocument(
+  message: Extract<EditorToHostMessage, { type: 'office:pick-document' }>,
+): Promise<void> {
+  const selected = await pickBrowserFiles({ accept: message.payload.accept, multiple: false })
+  if (!selected?.[0]) {
+    send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:pick-document-result',
+      requestId: message.requestId,
+      payload: { status: 'cancelled', selectionId: null, file: null },
+    })
+    return
+  }
+
+  const file = await toOfficeFile(selected[0])
+  const selectionId = `selection:${crypto.randomUUID()}`
+  pendingDocuments.set(selectionId, file)
+  const bytes = file.bytes.slice(0)
+  send(
+    {
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:pick-document-result',
+      requestId: message.requestId,
+      payload: {
+        status: 'selected',
+        selectionId,
+        file: { ...file, bytes, transport: 'buffer' },
+      },
+    },
+    [bytes],
+  )
+}
+
+function bindDocument(
+  message: Extract<EditorToHostMessage, { type: 'office:document-opened' }>,
+): void {
+  const file = pendingDocuments.get(message.payload.selectionId)
+  if (!file) {
+    send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:document-opened-result',
+      requestId: message.requestId,
+      payload: { ok: false, code: 'NOT_FOUND', error: 'Document selection expired.' },
+    })
+    return
+  }
+
+  pendingDocuments.delete(message.payload.selectionId)
+  currentFile = file
+  files.set(file.id, file)
+  dirty = false
+  versionCounter = 1
+  historyVersionCounter = 0
+  send({
+    protocol: OFFICE_PROTOCOL_VERSION,
+    type: 'office:document-opened-result',
+    requestId: message.requestId,
+    payload: { ok: true, file: descriptorOf(file) },
+  })
+  setHostState('opened')
+  render()
+}
+
+async function pickAssets(
+  message: Extract<EditorToHostMessage, { type: 'office:pick-assets' }>,
+): Promise<void> {
+  const selected = await pickBrowserFiles(message.payload)
+  if (!selected?.length) {
+    send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:pick-assets-result',
+      requestId: message.requestId,
+      payload: { status: 'cancelled', files: [] },
+    })
+    return
+  }
+
+  const officeFiles: OfficeFile[] = []
+  for (const browserFile of selected) officeFiles.push(await toOfficeFile(browserFile))
+  const responseFiles = officeFiles.map((file) => ({
+    ...file,
+    bytes: file.bytes.slice(0),
+    transport: 'buffer' as const,
+  }))
+  send(
+    {
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:pick-assets-result',
+      requestId: message.requestId,
+      payload: { status: 'selected', files: responseFiles },
+    },
+    responseFiles.map((file) => file.bytes),
+  )
 }
 
 async function handleEditorMessage(message: EditorToHostMessage): Promise<void> {
@@ -174,80 +314,29 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
       setHostState('ready')
       render()
       sendNew()
-      break
+      return
     case 'office:dirty-change':
       dirty = message.payload.dirty
       render()
-      break
+      return
     case 'office:title-change':
       if (currentFile) currentFile = { ...currentFile, name: message.payload.title }
       render()
-      break
-    case 'office:pick-file': {
-      const input = document.createElement('input')
-      input.type = 'file'
-      input.multiple = message.payload.multiple === true
-      if (message.payload.accept?.length) input.accept = message.payload.accept.join(',')
-      input.addEventListener(
-        'change',
-        async () => {
-          const selected = input.files?.[0]
-          if (!selected) {
-            send({
-              protocol: OFFICE_PROTOCOL_VERSION,
-              type: 'office:pick-file-result',
-              requestId: message.requestId,
-              payload: { files: null },
-            })
-            return
-          }
-          const officeFile = await toOfficeFile(selected)
-          files.set(officeFile.id, officeFile)
-          send({
-            protocol: OFFICE_PROTOCOL_VERSION,
-            type: 'office:pick-file-result',
-            requestId: message.requestId,
-            payload: {
-              files: [
-                {
-                  id: officeFile.id,
-                  name: officeFile.name,
-                  mimeType: officeFile.mimeType,
-                  size: officeFile.size,
-                  version: officeFile.version,
-                  transport: 'token',
-                  token: `demo:${officeFile.id}`,
-                },
-              ],
-            },
-          })
-        },
-        { once: true },
-      )
-      input.click()
-      break
-    }
-    case 'office:read-file': {
-      const stored = files.get(message.payload.fileId)
-      if (!stored) {
-        send({
-          protocol: OFFICE_PROTOCOL_VERSION,
-          type: 'office:error',
-          requestId: message.requestId,
-          payload: { code: 'NOT_FOUND', message: 'Demo XLSX file was not found.' },
-        })
-        return
-      }
-      send({
-        protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:read-file-result',
-        requestId: message.requestId,
-        payload: { file: { ...stored, bytes: stored.bytes.slice(0) } },
-      })
-      break
-    }
+      return
+    case 'office:pick-document':
+      await pickDocument(message)
+      return
+    case 'office:document-opened':
+      bindDocument(message)
+      return
+    case 'office:document-open-failed':
+      pendingDocuments.delete(message.payload.selectionId)
+      return
+    case 'office:pick-assets':
+      await pickAssets(message)
+      return
     case 'office:save-document': {
-      const saveAs = message.payload.mode === 'saveAs'
+      const saveAs = message.payload.mode === 'saveAs' || message.payload.newDocument === true || !currentFile
       let name = currentFile?.name ?? message.payload.file.name ?? 'Untitled.xlsx'
       if (saveAs) {
         const requested = window.prompt('另存为文件名', name)
@@ -260,14 +349,14 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
           })
           setHostState('ready')
           render()
-          break
+          return
         }
         name = normalizeXlsxName(requested)
       }
 
       versionCounter += 1
       const bytes = message.payload.bytes.slice(0)
-      const id = saveAs || !currentFile ? `xlsx:${crypto.randomUUID()}` : currentFile.id
+      const id = saveAs ? `xlsx:${crypto.randomUUID()}` : currentFile?.id || `xlsx:${crypto.randomUUID()}`
       currentFile = {
         id,
         name,
@@ -275,6 +364,7 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
         size: bytes.byteLength,
         version: `v${versionCounter}`,
         bytes,
+        transport: 'buffer',
       }
       files.set(id, currentFile)
       dirty = false
@@ -282,20 +372,11 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:save-document-result',
         requestId: message.requestId,
-        payload: {
-          ok: true,
-          file: {
-            id,
-            name,
-            mimeType: XLSX_MIME,
-            size: bytes.byteLength,
-            version: currentFile.version,
-          },
-        },
+        payload: { ok: true, file: descriptorOf(currentFile) },
       })
       setHostState('saved')
       render()
-      break
+      return
     }
     case 'office:save-history-version': {
       if (!currentFile) {
@@ -305,70 +386,147 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
           requestId: message.requestId,
           payload: { ok: false, code: 'NOT_FOUND', error: 'Save the workbook before creating history.' },
         })
-        break
+        return
       }
       historyVersionCounter += 1
+      versionCounter += 1
       const bytes = message.payload.bytes.slice(0)
-      const history: OfficeFile = {
+      historyVersions.push({
         ...currentFile,
         id: `history:${currentFile.id}:${historyVersionCounter}`,
         size: bytes.byteLength,
         version: `history-${historyVersionCounter}`,
         bytes,
+        transport: 'buffer',
+      })
+      currentFile = {
+        ...currentFile,
+        size: bytes.byteLength,
+        version: `v${versionCounter}`,
+        bytes,
+        transport: 'buffer',
       }
-      historyVersions.push(history)
+      files.set(currentFile.id, currentFile)
       send({
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:save-history-version-result',
         requestId: message.requestId,
-        payload: { ok: true },
+        payload: { ok: true, file: descriptorOf(currentFile) },
       })
       setHostState(`history saved (${historyVersionCounter})`)
       render()
-      break
+      return
     }
-    case 'office:export-document': {
+    case 'office:download-document': {
       if (message.payload.format !== 'xlsx') {
         send({
           protocol: OFFICE_PROTOCOL_VERSION,
-          type: 'office:export-document-result',
+          type: 'office:download-document-result',
           requestId: message.requestId,
-          payload: { ok: false, code: 'SAVE_FAILED', error: 'Demo Host only exports XLSX.' },
+          payload: { ok: false, code: 'DOWNLOAD_FAILED', error: 'Demo Host only downloads XLSX.' },
         })
-        break
+        return
       }
-      const exportName = normalizeXlsxName(message.payload.file.name || 'Untitled.xlsx')
-      downloadBytes(message.payload.bytes.slice(0), exportName, XLSX_MIME)
+      const name = normalizeXlsxName(message.payload.file.name || 'Untitled.xlsx')
+      downloadBytes(message.payload.bytes.slice(0), name, XLSX_MIME)
+      send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:download-document-result',
+        requestId: message.requestId,
+        payload: { ok: true },
+      })
+      setHostState('downloaded')
+      render()
+      return
+    }
+    case 'office:close-approved':
+      setHostState(`close approved (${message.payload.reason})`)
+      render()
+      return
+    case 'office:close-cancelled':
+      setHostState('close cancelled')
+      render()
+      return
+
+    // ---- protocol-v1 compatibility aliases ----
+    case 'office:pick-file': {
+      const selected = await pickBrowserFiles(message.payload)
+      const officeFiles: OfficeFile[] = []
+      for (const browserFile of selected || []) {
+        const file = await toOfficeFile(browserFile)
+        files.set(file.id, file)
+        officeFiles.push(file)
+      }
+      const responseFiles = officeFiles.map((file) => ({
+        ...descriptorOf(file),
+        transport: 'buffer' as const,
+        bytes: file.bytes.slice(0),
+      }))
+      send(
+        {
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:pick-file-result',
+          requestId: message.requestId,
+          payload: { files: responseFiles.length ? responseFiles : null },
+        },
+        responseFiles.flatMap((file) => (file.bytes ? [file.bytes] : [])),
+      )
+      return
+    }
+    case 'office:read-file': {
+      const stored = files.get(message.payload.fileId)
+      if (!stored) {
+        send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:error',
+          requestId: message.requestId,
+          payload: { code: 'NOT_FOUND', message: 'Demo XLSX file was not found.' },
+        })
+        return
+      }
+      const bytes = stored.bytes.slice(0)
+      send(
+        {
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:read-file-result',
+          requestId: message.requestId,
+          payload: { file: { ...stored, bytes, transport: 'buffer' } },
+        },
+        [bytes],
+      )
+      return
+    }
+    case 'office:export-document': {
+      const name = normalizeXlsxName(message.payload.file.name || 'Untitled.xlsx')
+      downloadBytes(message.payload.bytes.slice(0), name, XLSX_MIME)
       send({
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:export-document-result',
         requestId: message.requestId,
         payload: { ok: true },
       })
-      setHostState('exported')
+      setHostState('downloaded')
       render()
-      break
+      return
     }
     case 'office:close-request':
-      setHostState('close requested')
+      setHostState(`close approved (${message.payload.reason})`)
       render()
-      break
+      return
     case 'office:save-result':
       setHostState(message.payload.ok ? 'saved' : `save failed: ${message.payload.error ?? ''}`)
       render()
-      break
+      return
     case 'office:state-result':
       dirty = message.payload.dirty
       mode = message.payload.mode
       setHostState(message.payload.saving ? 'saving' : hostStatus)
       render()
-      break
+      return
     case 'office:error':
       setHostState(`error: ${message.payload.message}`)
       console.error('[GenOffice Excel Web]', message.payload)
-      break
-    default:
-      break
+      return
   }
 }
 
