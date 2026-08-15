@@ -1,24 +1,37 @@
 import type {
+  DocumentOpenedResult,
+  DownloadDocumentResult,
+  ExportDocumentResult,
   OfficeDocumentKind,
   OfficeEditorMode,
   OfficeExportFormat,
   OfficeFile,
   OfficeFileDescriptor,
+  OfficeFileVersion,
   OfficeHostCapabilities,
   OfficeSaveMode,
-  ExportDocumentResult,
+  PickAssetsOptions,
+  PickAssetsResult,
+  PickDocumentOptions,
+  PickDocumentResult,
   PickFileOptions,
   SaveDocumentResult,
   SaveHistoryVersionResult,
   SelectedOfficeFile,
 } from '@genoffice/office-host-api'
 
+/**
+ * Protocol v1 is intentionally retained while the stable file lifecycle is
+ * introduced additively. Legacy pick-file/read-file/export-document and
+ * close-request messages remain compatibility aliases until all callers move.
+ */
 export const OFFICE_PROTOCOL_VERSION = 1 as const
 
 export interface OfficeInitPayload {
   kind: OfficeDocumentKind
   mode: OfficeEditorMode
   locale?: string | undefined
+  /** Initial content is already materialized; the editor must not read it again. */
   file: OfficeFile
   capabilities?: Partial<OfficeHostCapabilities> | undefined
 }
@@ -86,6 +99,24 @@ export type HostToEditorMessage =
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:pick-document-result'
+      requestId: string
+      payload: PickDocumentResult
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:document-opened-result'
+      requestId: string
+      payload: DocumentOpenedResult
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:pick-assets-result'
+      requestId: string
+      payload: PickAssetsResult
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:save-document-result'
       requestId: string
       payload: SaveDocumentResult
@@ -96,6 +127,19 @@ export type HostToEditorMessage =
       requestId: string
       payload: SaveHistoryVersionResult
     }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:download-document-result'
+      requestId: string
+      payload: DownloadDocumentResult
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:error'
+      requestId?: string | undefined
+      payload: OfficeProtocolErrorPayload
+    }
+  // ---- v1 compatibility aliases ----
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:export-document-result'
@@ -113,12 +157,6 @@ export type HostToEditorMessage =
       type: 'office:read-file-result'
       requestId: string
       payload: { file: OfficeFile }
-    }
-  | {
-      protocol: typeof OFFICE_PROTOCOL_VERSION
-      type: 'office:error'
-      requestId?: string | undefined
-      payload: OfficeProtocolErrorPayload
     }
 
 export type EditorToHostMessage =
@@ -151,12 +189,36 @@ export type EditorToHostMessage =
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:pick-document'
+      requestId: string
+      payload: PickDocumentOptions
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:document-opened'
+      requestId: string
+      payload: { selectionId: string }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:document-open-failed'
+      requestId: string
+      payload: { selectionId: string; code?: string | undefined; message?: string | undefined }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:pick-assets'
+      requestId: string
+      payload: PickAssetsOptions
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:save-document'
       requestId: string
       payload: {
         file: OfficeFileDescriptor
         bytes: ArrayBuffer
-        baseVersion?: string | null | undefined
+        baseVersion?: OfficeFileVersion | undefined
         mode?: OfficeSaveMode | undefined
         newDocument?: boolean | undefined
       }
@@ -168,9 +230,38 @@ export type EditorToHostMessage =
       payload: {
         file: OfficeFileDescriptor
         bytes: ArrayBuffer
-        baseVersion?: string | null | undefined
+        baseVersion?: OfficeFileVersion | undefined
       }
     }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:download-document'
+      requestId: string
+      payload: {
+        format: OfficeExportFormat
+        file: OfficeFileDescriptor
+        bytes: ArrayBuffer
+      }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:close-approved'
+      requestId: string
+      payload: { reason: 'file-menu' | 'window-close' }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:close-cancelled'
+      requestId: string
+      payload: { reason: 'user-cancelled' }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:error'
+      requestId?: string | undefined
+      payload: OfficeProtocolErrorPayload
+    }
+  // ---- v1 compatibility aliases ----
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:export-document'
@@ -189,12 +280,6 @@ export type EditorToHostMessage =
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION
-      type: 'office:close-cancelled'
-      requestId: string
-      payload: { reason: 'user-cancelled' }
-    }
-  | {
-      protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:pick-file'
       requestId: string
       payload: PickFileOptions
@@ -204,12 +289,6 @@ export type EditorToHostMessage =
       type: 'office:read-file'
       requestId: string
       payload: { fileId: string }
-    }
-  | {
-      protocol: typeof OFFICE_PROTOCOL_VERSION
-      type: 'office:error'
-      requestId?: string | undefined
-      payload: OfficeProtocolErrorPayload
     }
 
 export type OfficeProtocolMessage = HostToEditorMessage | EditorToHostMessage
