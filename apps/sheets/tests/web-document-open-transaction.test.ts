@@ -86,10 +86,7 @@ function createBridge() {
   }
 }
 
-async function initializeOldWorkbook(
-  host: OfficeHostApi,
-  bridge: ReturnType<typeof createBridge>,
-) {
+async function initializeOldWorkbook(host: OfficeHostApi, bridge: ReturnType<typeof createBridge>) {
   engine.openXlsxWorkbookBytes.mockResolvedValueOnce(workbook('old-session', 'old.xlsx'))
   const controller = createSheetsWebDesktopController(host, bridge.bridge)
 
