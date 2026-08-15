@@ -19,30 +19,67 @@ function createCloseAwareHost(
   getPendingRequestId: () => string | null,
   clearPendingRequest: () => void,
 ): OfficeHostApi {
+  const approveClose = async (explicitRequestId?: string): Promise<void> => {
+    const requestId = explicitRequestId ?? getPendingRequestId()
+    if (!requestId) {
+      if (baseHost.approveClose) await baseHost.approveClose()
+      else await baseHost.requestClose?.()
+      return
+    }
+
+    clearPendingRequest()
+    if (baseHost.approveClose) {
+      await baseHost.approveClose(requestId)
+      return
+    }
+    bridge.send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:close-approved',
+      requestId,
+      payload: { reason: 'window-close' },
+    })
+  }
+
+  const cancelClose = async (requestId: string): Promise<void> => {
+    clearPendingRequest()
+    if (baseHost.cancelClose) {
+      await baseHost.cancelClose(requestId)
+      return
+    }
+    bridge.send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:close-cancelled',
+      requestId,
+      payload: { reason: 'user-cancelled' },
+    })
+  }
+
   return {
     getLocale: () => baseHost.getLocale(),
     saveDocument: (input) => baseHost.saveDocument(input),
     ...(baseHost.saveHistoryVersion
       ? { saveHistoryVersion: (input) => baseHost.saveHistoryVersion!(input) }
       : {}),
+    ...(baseHost.downloadDocument
+      ? { downloadDocument: (input) => baseHost.downloadDocument!(input) }
+      : {}),
     ...(baseHost.exportDocument
       ? { exportDocument: (input) => baseHost.exportDocument!(input) }
       : {}),
-    requestClose: async () => {
-      const requestId = getPendingRequestId()
-      if (!requestId) {
-        await baseHost.requestClose?.()
-        return
-      }
-
-      clearPendingRequest()
-      bridge.send({
-        protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:close-request',
-        requestId,
-        payload: { reason: 'window-close' },
-      })
-    },
+    ...(baseHost.pickDocument
+      ? { pickDocument: (options) => baseHost.pickDocument!(options) }
+      : {}),
+    ...(baseHost.confirmDocumentOpened
+      ? { confirmDocumentOpened: (selectionId) => baseHost.confirmDocumentOpened!(selectionId) }
+      : {}),
+    ...(baseHost.releasePickedDocument
+      ? { releasePickedDocument: (selectionId) => baseHost.releasePickedDocument!(selectionId) }
+      : {}),
+    ...(baseHost.pickAssets ? { pickAssets: (options) => baseHost.pickAssets!(options) } : {}),
+    approveClose,
+    cancelClose,
+    // v1 compatibility for renderer code that still calls requestClose().
+    requestClose: () => approveClose(),
     pickFile: (options) => baseHost.pickFile(options),
     readFile: (fileId) => baseHost.readFile(fileId),
     setDirty: (dirty) => baseHost.setDirty(dirty),
@@ -84,13 +121,7 @@ export function createSheetsWebCloseLifecycle(
     if (action !== 'cancel-exit' || pendingHostCloseRequestId === null) return
 
     const requestId = pendingHostCloseRequestId
-    clearPendingRequest()
-    bridge.send({
-      protocol: OFFICE_PROTOCOL_VERSION,
-      type: 'office:close-cancelled',
-      requestId,
-      payload: { reason: 'user-cancelled' },
-    })
+    void host.cancelClose?.(requestId)
   }
   window.addEventListener(SHEETS_WEB_FILE_ACTION_EVENT, handleFileAction)
 
