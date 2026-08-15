@@ -84,7 +84,7 @@ async function selectedToOfficeFile(
   selected: SelectedOfficeFile,
 ): Promise<OfficeFile> {
   if (selected.transport === 'buffer' && selected.bytes) {
-    return { ...selected, bytes: selected.bytes }
+    return { ...selected, transport: 'buffer', bytes: selected.bytes }
   }
   return host.readFile(selected.id)
 }
