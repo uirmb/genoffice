@@ -1,0 +1,139 @@
+name: Validate Office picker failure alignment v3
+
+on:
+  push:
+    branches:
+      - agent/office-file-protocol-failed-results
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout patch carrier
+        uses: actions/checkout@v4
+        with:
+          ref: agent/office-file-protocol-failed-results
+          fetch-depth: 0
+
+      - name: Apply protocol patch and canonical fixture fixes
+        shell: bash
+        run: |
+          cp .github/workflows/office-file-protocol-failed-results.yml /tmp/patch-source.yml
+          git checkout -B agent/office-file-protocol-alignment origin/agent/office-file-protocol-alignment
+          python <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          source = Path('/tmp/patch-source.yml').read_text()
+          start = source.index("          python <<'PY'\n") + len("          python <<'PY'\n")
+          end = source.index("\n          PY\n", start)
+          script = textwrap.dedent(source[start:end])
+          docs_start = script.index('# 3) Docs:')
+          slides_start = script.index('# 4) Slides:', docs_start)
+          docs = script[docs_start:slides_start].replace('expected=2,', 'expected=1,', 1)
+          script = script[:docs_start] + docs + script[slides_start:]
+          exec(compile(script, '<office-picker-patch>', 'exec'), {'__name__': '__main__'})
+
+          def replace(path, old, new, expected=1):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{path}: expected {expected} matches, found {count}: {old!r}')
+              p.write_text(text.replace(old, new))
+
+          # Empty picker results are runtime-empty arrays while remaining easy to construct in TS tests.
+          replace('packages/office-host-api/src/index.ts', '  files: []\n', '  files: never[]\n', 2)
+
+          # Remaining DOCX export fallback is also a canonical descriptor.
+          replace(
+              'apps/docs/src/web/desktop-api.ts',
+              """        mimeType: DOCX_MIME,\n        size: data.byteLength,\n        version: null,\n      }\n      const result = await download.call(host, {\n""",
+              """        mimeType: DOCX_MIME,\n        size: data.byteLength,\n        version: null,\n        transport: 'buffer',\n      }\n      const result = await download.call(host, {\n""",
+          )
+
+          replace(
+              'apps/docs/tests/web-host-lifecycle.test.ts',
+              """      version: 'v7',\n      bytes: bytesOf('source'),\n""",
+              """      version: 'v7',\n      transport: 'buffer',\n      bytes: bytesOf('source'),\n""",
+          )
+
+          # Wire-protocol fixtures intentionally spell out the complete canonical descriptor.
+          replace(
+              'apps/docs/tests/web-runtime-protocol.test.ts',
+              """            size: 3,\n            version: 7,\n          },\n""",
+              """            size: 3,\n            version: 7,\n            transport: 'buffer',\n          },\n""",
+          )
+          replace(
+              'apps/docs/tests/web-runtime-protocol.test.ts',
+              """            size: message.payload.bytes.byteLength,\n            version: 8,\n          },\n""",
+              """            size: message.payload.bytes.byteLength,\n            version: 8,\n            transport: 'buffer',\n          },\n""",
+          )
+          replace(
+              'apps/docs/tests/web-runtime-protocol.test.ts',
+              """        mimeType: DOCX_MIME,\n        version: 7,\n      },\n      bytes: bytes(9, 9, 9),\n""",
+              """        mimeType: DOCX_MIME,\n        size: 3,\n        version: 7,\n        transport: 'buffer',\n      },\n      bytes: bytes(9, 9, 9),\n""",
+          )
+          replace(
+              'apps/docs/tests/web-runtime-protocol.test.ts',
+              """        name: 'download.docx',\n        mimeType: DOCX_MIME,\n      },\n      bytes: bytes(1, 2),\n""",
+              """        name: 'download.docx',\n        mimeType: DOCX_MIME,\n        size: 2,\n        version: null,\n        transport: 'buffer',\n      },\n      bytes: bytes(1, 2),\n""",
+          )
+          PY
+
+      - name: Format touched files
+        run: |
+          npx prettier --write \
+            packages/office-host-api/src/index.ts \
+            packages/web-runtime/src/index.ts \
+            apps/docs/src/web/desktop-api.ts \
+            apps/docs/tests/web-desktop-api.test.ts \
+            apps/docs/tests/web-host-lifecycle.test.ts \
+            apps/docs/tests/web-runtime-protocol.test.ts \
+            apps/slides/src/web/slides-api.ts \
+            apps/sheets/src/web/desktop-api.ts \
+            apps/sheets/src/web/local-image.ts
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Targeted protocol tests
+        run: |
+          npm run test -w @genoffice/docs -- --run tests/web-desktop-api.test.ts tests/web-host-lifecycle.test.ts tests/web-runtime-protocol.test.ts
+          npm run test -w @genoffice/slides -- --run tests/web-slides-api.test.ts
+
+      - name: Repository tests
+        run: npm test
+
+      - name: Diff check
+        run: git diff --check
+
+      - name: Commit validated patch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            packages/office-host-api/src/index.ts \
+            packages/web-runtime/src/index.ts \
+            apps/docs/src/web/desktop-api.ts \
+            apps/docs/tests/web-desktop-api.test.ts \
+            apps/docs/tests/web-host-lifecycle.test.ts \
+            apps/docs/tests/web-runtime-protocol.test.ts \
+            apps/slides/src/web/slides-api.ts \
+            apps/sheets/src/web/desktop-api.ts \
+            apps/sheets/src/web/local-image.ts
+          git commit -m 'fix(web): distinguish picker failures and preserve file descriptors'
+          git push origin HEAD:agent/office-file-protocol-alignment
