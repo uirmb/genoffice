@@ -6,15 +6,7 @@ import {
 } from '../shared/desktop-api'
 
 const MAX_LOCAL_IMAGE_BYTES = 20 * 1024 * 1024
-const IMAGE_ACCEPT = [
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-]
+const IMAGE_ACCEPT = ['image/png', 'image/jpeg', 'image/gif', '.png', '.jpg', '.jpeg', '.gif']
 
 function sniffImageType(bytes: Uint8Array): LocalImageResult['mediaType'] | null {
   if (
@@ -73,9 +65,15 @@ async function legacySelectedBytes(
 async function pickImageBytes(host: OfficeHostApi): Promise<ArrayBuffer> {
   if (host.pickAssets) {
     const result = await host.pickAssets({ multiple: false, accept: IMAGE_ACCEPT })
-    if (result.status === 'cancelled' || !result.files[0]) {
+    if (result.status === 'cancelled') {
       throw new Error('Image selection was cancelled.')
     }
+    if (result.status === 'failed') {
+      const error = new Error(result.error) as Error & { code: string }
+      error.code = result.code
+      throw error
+    }
+    if (!result.files[0]) throw new Error('Host returned an empty selected asset result.')
     return validateOfficeImage(result.files[0])
   }
 

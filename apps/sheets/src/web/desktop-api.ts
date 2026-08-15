@@ -81,6 +81,12 @@ function noopUnsubscribe(): () => void {
   return () => undefined
 }
 
+function hostPickerFailure(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string }
+  error.code = code
+  return error
+}
+
 function hasWorkbookMutations(request: WorkbookSaveRequest): boolean {
   return (
     request.edits.length > 0 ||
@@ -141,23 +147,28 @@ async function selectedToOfficeFile(
   return host.readFile(selected.id)
 }
 
-function officeDescriptor(file: OfficeFile | null, workbook: WorkbookFile): OfficeFileDescriptor {
+function officeDescriptor(
+  file: OfficeFile | null,
+  workbook: WorkbookFile,
+  sizeOverride?: number,
+): OfficeFileDescriptor {
   if (file) {
+    const { bytes: _bytes, ...descriptor } = file
     return {
-      id: file.id,
-      ...(file.nodeId ? { nodeId: file.nodeId } : {}),
-      ...(file.tenantId ? { tenantId: file.tenantId } : {}),
-      name: file.name,
+      ...descriptor,
       mimeType: file.mimeType || XLSX_MIME,
-      ...(file.size === undefined ? {} : { size: file.size }),
-      ...(file.version === undefined ? {} : { version: file.version }),
+      size: sizeOverride ?? file.size ?? file.bytes.byteLength,
+      version: file.version ?? null,
+      transport: 'buffer',
     }
   }
   return {
     id: `new:${crypto.randomUUID()}`,
     name: workbook.name,
     mimeType: XLSX_MIME,
+    size: sizeOverride ?? 0,
     version: null,
+    transport: 'buffer',
   }
 }
 
@@ -321,6 +332,7 @@ export function createSheetsWebDesktopController(
     if (host.pickDocument && host.confirmDocumentOpened && host.releasePickedDocument) {
       const picked = await host.pickDocument({ accept: [XLSX_MIME, '.xlsx'] })
       if (picked.status === 'cancelled') return null
+      if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)
 
       let candidate: WorkbookFile | null = null
       let bound = false
@@ -328,8 +340,9 @@ export function createSheetsWebDesktopController(
         candidate = await openXlsxWorkbookBytes(picked.file.name, picked.file.bytes.slice(0))
         const bindResult = await host.confirmDocumentOpened(picked.selectionId)
         if (!bindResult.ok) {
-          throw new Error(
-            `${bindResult.code ?? 'FILE_BIND_FAILED'}: ${bindResult.error || 'The Host could not bind the selected workbook.'}`,
+          throw hostPickerFailure(
+            bindResult.code ?? 'FILE_BIND_FAILED',
+            bindResult.error || 'The Host could not bind the selected workbook.',
           )
         }
         bound = true
@@ -468,7 +481,11 @@ export function createSheetsWebDesktopController(
       saving = true
       const materialized = await materializeWorkbook(request)
       try {
-        const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook ?? materialized.file)
+        const descriptor = officeDescriptor(
+          currentOfficeFile,
+          activeWorkbook ?? materialized.file,
+          materialized.bytes.byteLength,
+        )
         const result = await host.saveHistoryVersion({
           file: descriptor,
           bytes: materialized.bytes.slice(0),
@@ -504,7 +521,11 @@ export function createSheetsWebDesktopController(
       const materialized = await materializeWorkbook(request)
       try {
         const workbook = activeWorkbook ?? materialized.file
-        const descriptor = officeDescriptor(currentOfficeFile, workbook)
+        const descriptor = officeDescriptor(
+          currentOfficeFile,
+          workbook,
+          materialized.bytes.byteLength,
+        )
         const input = {
           format: 'xlsx' as const,
           file: { ...descriptor, name: descriptor.name || 'Untitled.xlsx' },
@@ -639,7 +660,11 @@ export function createSheetsWebDesktopController(
                 touchedEntries: [] as readonly string[],
               }
             : await saveWorkbookRequestViaEngine(request, activeWorkbook, activeWorkbook.name)
-        const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook)
+        const descriptor = officeDescriptor(
+          currentOfficeFile,
+          activeWorkbook,
+          saved.bytes.byteLength,
+        )
         const result = await host.saveDocument({
           file: descriptor,
           bytes: saved.bytes.slice(0),

@@ -76,16 +76,22 @@ export interface OfficeFileDescriptor {
   /** Optional explicit UC identity while legacy callers still consume id. */
   nodeId?: string | undefined
   tenantId?: string | undefined
+  /** Parent FsNode identity when the Host exposes it. */
+  parentId?: string | null | undefined
   name: string
   mimeType: string
-  size?: number | undefined
-  version?: OfficeFileVersion | undefined
+  /** Canonical descriptors always carry the byte size represented by this revision. */
+  size: number
+  /** Canonical descriptors always carry a Host-supplied version, or null when none exists yet. */
+  version: OfficeFileVersion
+  /** Host timestamp for the represented revision, normally an ISO-8601 string. */
+  updatedAt?: string | undefined
+  /** Stable office:* file transport is always an in-memory buffer. */
+  transport: 'buffer'
 }
 
 export interface OfficeFile extends OfficeFileDescriptor {
   bytes: ArrayBuffer
-  /** Stable office:* transport is always in-memory bytes. */
-  transport?: 'buffer' | undefined
 }
 
 export interface SaveDocumentInput {
@@ -157,12 +163,34 @@ export interface CancelledOfficeDocumentSelection {
   file: null
 }
 
-export type PickDocumentResult = SelectedOfficeDocument | CancelledOfficeDocumentSelection
+export interface FailedOfficeDocumentSelection {
+  status: 'failed'
+  code: string
+  error: string
+}
 
-export interface PickAssetsResult {
-  status: 'selected' | 'cancelled'
+export type PickDocumentResult =
+  SelectedOfficeDocument | CancelledOfficeDocumentSelection | FailedOfficeDocumentSelection
+
+export interface SelectedOfficeAssets {
+  status: 'selected'
   files: OfficeFile[]
 }
+
+export interface CancelledOfficeAssetsSelection {
+  status: 'cancelled'
+  files: []
+}
+
+export interface FailedOfficeAssetsSelection {
+  status: 'failed'
+  files: []
+  code: string
+  error: string
+}
+
+export type PickAssetsResult =
+  SelectedOfficeAssets | CancelledOfficeAssetsSelection | FailedOfficeAssetsSelection
 
 export interface DocumentOpenedResult {
   ok: boolean
@@ -179,7 +207,7 @@ export interface PickFileOptions {
 }
 
 /** Legacy token transport retained only for old callers. New Office flows use buffer bytes only. */
-export interface SelectedOfficeFile extends OfficeFileDescriptor {
+export type SelectedOfficeFile = Omit<OfficeFileDescriptor, 'transport'> & {
   transport: 'buffer' | 'token'
   bytes?: ArrayBuffer | undefined
   token?: string | undefined

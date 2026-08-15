@@ -77,6 +77,7 @@ function createBridge() {
             mimeType: DOCX_MIME,
             size: 3,
             version: 7,
+            transport: 'buffer',
           },
         },
       } satisfies HostToEditorMessage
@@ -96,6 +97,7 @@ function createBridge() {
             mimeType: message.payload.file.mimeType,
             size: message.payload.bytes.byteLength,
             version: 8,
+            transport: 'buffer',
           },
         },
       } satisfies HostToEditorMessage
@@ -163,7 +165,9 @@ describe('EmbeddedOfficeHost stable wire protocol compatibility', () => {
         id: 'doc-1',
         name: 'picked.docx',
         mimeType: DOCX_MIME,
+        size: 3,
         version: 7,
+        transport: 'buffer',
       },
       bytes: bytes(9, 9, 9),
       baseVersion: 7,
@@ -190,6 +194,9 @@ describe('EmbeddedOfficeHost stable wire protocol compatibility', () => {
         id: 'doc-1',
         name: 'download.docx',
         mimeType: DOCX_MIME,
+        size: 2,
+        version: null,
+        transport: 'buffer',
       },
       bytes: bytes(1, 2),
     })

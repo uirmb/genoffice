@@ -104,11 +104,20 @@ function descriptorOf(file: OfficeFile): OfficeFileDescriptor {
     id: file.id,
     ...(file.nodeId ? { nodeId: file.nodeId } : {}),
     ...(file.tenantId ? { tenantId: file.tenantId } : {}),
+    ...(file.parentId !== undefined ? { parentId: file.parentId } : {}),
     name: file.name,
     mimeType: file.mimeType,
-    ...(file.size === undefined ? {} : { size: file.size }),
-    ...(file.version === undefined ? {} : { version: file.version }),
+    size: file.size,
+    version: file.version,
+    ...(file.updatedAt ? { updatedAt: file.updatedAt } : {}),
+    transport: 'buffer',
   }
+}
+
+function pickerFailure(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string }
+  error.code = code
+  return error
 }
 
 function legacyPickUsesAssets(options: PickFileOptions): boolean {
@@ -174,16 +183,24 @@ export class StandaloneOfficeHost implements OfficeHostApi {
   }
 
   async pickDocument(options: PickDocumentOptions): Promise<PickDocumentResult> {
-    const files = await pickBrowserFiles({ multiple: false, accept: options.accept })
-    if (!files?.[0]) return { status: 'cancelled', selectionId: null, file: null }
+    try {
+      const files = await pickBrowserFiles({ multiple: false, accept: options.accept })
+      if (!files?.[0]) return { status: 'cancelled', selectionId: null, file: null }
 
-    const file = await browserFileToOfficeFile(files[0])
-    const selectionId = `selection:${randomSuffix()}`
-    this.pendingDocuments.set(selectionId, file)
-    return {
-      status: 'selected',
-      selectionId,
-      file: { ...file, bytes: file.bytes.slice(0), transport: 'buffer' },
+      const file = await browserFileToOfficeFile(files[0])
+      const selectionId = `selection:${randomSuffix()}`
+      this.pendingDocuments.set(selectionId, file)
+      return {
+        status: 'selected',
+        selectionId,
+        file: { ...file, bytes: file.bytes.slice(0), transport: 'buffer' },
+      }
+    } catch (error) {
+      return {
+        status: 'failed',
+        code: 'PICK_DOCUMENT_FAILED',
+        error: error instanceof Error ? error.message : String(error),
+      }
     }
   }
 
@@ -206,15 +223,24 @@ export class StandaloneOfficeHost implements OfficeHostApi {
   }
 
   async pickAssets(options: PickAssetsOptions): Promise<PickAssetsResult> {
-    const files = await pickBrowserFiles(options)
-    if (!files?.length) return { status: 'cancelled', files: [] }
+    try {
+      const files = await pickBrowserFiles(options)
+      if (!files?.length) return { status: 'cancelled', files: [] }
 
-    const selected: OfficeFile[] = []
-    for (const file of files) {
-      const officeFile = await browserFileToOfficeFile(file)
-      selected.push({ ...officeFile, bytes: officeFile.bytes.slice(0), transport: 'buffer' })
+      const selected: OfficeFile[] = []
+      for (const file of files) {
+        const officeFile = await browserFileToOfficeFile(file)
+        selected.push({ ...officeFile, bytes: officeFile.bytes.slice(0), transport: 'buffer' })
+      }
+      return { status: 'selected', files: selected }
+    } catch (error) {
+      return {
+        status: 'failed',
+        files: [],
+        code: 'PICK_ASSETS_FAILED',
+        error: error instanceof Error ? error.message : String(error),
+      }
     }
-    return { status: 'selected', files: selected }
   }
 
   async approveClose(_requestId?: string): Promise<void> {
@@ -238,6 +264,7 @@ export class StandaloneOfficeHost implements OfficeHostApi {
     if (options.mode !== 'folder' && legacyPickUsesAssets(options)) {
       const result = await this.pickAssets({ multiple: options.multiple, accept: options.accept })
       if (result.status === 'cancelled') return null
+      if (result.status === 'failed') throw pickerFailure(result.code, result.error)
       return result.files.map((file) => ({
         ...descriptorOf(file),
         transport: 'buffer',
@@ -494,6 +521,7 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
     if (options.mode !== 'folder' && legacyPickUsesAssets(options)) {
       const result = await this.pickAssets({ multiple: options.multiple, accept: options.accept })
       if (result.status === 'cancelled') return null
+      if (result.status === 'failed') throw pickerFailure(result.code, result.error)
       return result.files.map((file) => ({
         ...descriptorOf(file),
         transport: 'buffer',
@@ -508,6 +536,7 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
       }
       const result = await this.pickDocument({ accept: options.accept })
       if (result.status === 'cancelled') return null
+      if (result.status === 'failed') throw pickerFailure(result.code, result.error)
       this.legacyPendingDocumentSelectionId = result.selectionId
       return [
         {
