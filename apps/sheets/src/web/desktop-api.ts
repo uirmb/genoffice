@@ -1,4 +1,9 @@
-import type { AiChatResponse, AiSettings, AiStreamChunk, GenSparkAccountStatus } from '@genoffice/ai-provider'
+import type {
+  AiChatResponse,
+  AiSettings,
+  AiStreamChunk,
+  GenSparkAccountStatus,
+} from '@genoffice/ai-provider'
 import type {
   OfficeEditorMode,
   OfficeFile,
@@ -194,7 +199,9 @@ export function createSheetsWebDesktopController(
   host: OfficeHostApi,
   bridge?: EditorIframeBridge,
 ): SheetsWebDesktopController {
-  let currentLanguage = normalizeLanguage(document.documentElement.lang || navigator.language || 'en')
+  let currentLanguage = normalizeLanguage(
+    document.documentElement.lang || navigator.language || 'en',
+  )
   let currentMode: OfficeEditorMode = 'edit'
   let currentTitle = 'Untitled.xlsx'
   let currentOfficeFile: OfficeFile | null = null
@@ -394,7 +401,9 @@ export function createSheetsWebDesktopController(
     emitOpen()
   }
 
-  const materializeWorkbook = async (request: WorkbookSaveRequest): Promise<MaterializedWorkbook> => {
+  const materializeWorkbook = async (
+    request: WorkbookSaveRequest,
+  ): Promise<MaterializedWorkbook> => {
     if (currentMode !== 'edit') throw new Error('Workbook is read-only.')
     if (!activeWorkbook) throw new Error('No active workbook session.')
 
@@ -424,16 +433,14 @@ export function createSheetsWebDesktopController(
       pivotAdditions: heldPivots.length > 0 ? [] : request.pivotAdditions,
       definedNamesState: null,
     }
-    const first = await saveWorkbookRequestViaEngine(firstRequest, activeWorkbook, activeWorkbook.name)
+    const first = await saveWorkbookRequestViaEngine(
+      firstRequest,
+      activeWorkbook,
+      activeWorkbook.name,
+    )
     try {
       const second = await saveWorkbookRequestViaEngine(
-        emptySecondPhaseRequest(
-          first.file.sessionId,
-          request,
-          heldTables,
-          heldPivots,
-          heldNames,
-        ),
+        emptySecondPhaseRequest(first.file.sessionId, request, heldTables, heldPivots, heldNames),
         first.file,
         activeWorkbook.name,
       )
@@ -481,7 +488,9 @@ export function createSheetsWebDesktopController(
           return { canceled: false }
         }
         if (result.code === 'CANCELLED') return { canceled: true }
-        throw new Error(`${result.code ?? 'SAVE_FAILED'}: ${result.error || 'The Host could not save a history version.'}`)
+        throw new Error(
+          `${result.code ?? 'SAVE_FAILED'}: ${result.error || 'The Host could not save a history version.'}`,
+        )
       } finally {
         saving = false
         await deleteXlsxSession(materialized.file.sessionId).catch(() => undefined)
@@ -506,7 +515,9 @@ export function createSheetsWebDesktopController(
           : await host.exportDocument!(input)
         if (result.ok) return { canceled: false }
         if (result.code === 'CANCELLED') return { canceled: true }
-        throw new Error(`${result.code ?? 'DOWNLOAD_FAILED'}: ${result.error || 'The Host could not download this workbook.'}`)
+        throw new Error(
+          `${result.code ?? 'DOWNLOAD_FAILED'}: ${result.error || 'The Host could not download this workbook.'}`,
+        )
       } finally {
         saving = false
         await deleteXlsxSession(materialized.file.sessionId).catch(() => undefined)

@@ -135,7 +135,10 @@ function rpcError(error: unknown): UcRpcError {
   const value = asRecord(error)
   const code = stringValue(value.code) || stringValue(value.errorCode) || 'UC_RPC_FAILED'
   const message =
-    stringValue(value.message) || stringValue(value.error) || JSON.stringify(error) || 'UC RPC failed.'
+    stringValue(value.message) ||
+    stringValue(value.error) ||
+    JSON.stringify(error) ||
+    'UC RPC failed.'
   return new UcRpcError(code, message)
 }
 
@@ -280,10 +283,14 @@ function fileDescriptorFromUc(
   }
 }
 
-async function officeFileFromUc(value: unknown, fallbackName = 'workbook.xlsx'): Promise<OfficeFile> {
+async function officeFileFromUc(
+  value: unknown,
+  fallbackName = 'workbook.xlsx',
+): Promise<OfficeFile> {
   const root = asRecord(value)
   const candidate = fileRecord(value)
-  const blob = candidate.blob instanceof Blob ? candidate.blob : root.blob instanceof Blob ? root.blob : null
+  const blob =
+    candidate.blob instanceof Blob ? candidate.blob : root.blob instanceof Blob ? root.blob : null
   if (!blob) throw new Error('UC 未返回可读取的文件 Blob。')
   const descriptor = fileDescriptorFromUc(value, null, fallbackName)
   return {
@@ -557,8 +564,11 @@ async function saveOfficeDocument(
 
   try {
     const bytes = message.payload.bytes.slice(0)
-    const filename = normalizeXlsxName(message.payload.file.name || currentFile?.name || 'workbook.xlsx')
-    const saveAs = message.payload.mode === 'saveAs' || message.payload.newDocument === true || !currentFile
+    const filename = normalizeXlsxName(
+      message.payload.file.name || currentFile?.name || 'workbook.xlsx',
+    )
+    const saveAs =
+      message.payload.mode === 'saveAs' || message.payload.newDocument === true || !currentFile
     const blob = new Blob([bytes], { type: XLSX_MIME })
 
     const result = saveAs
@@ -704,10 +714,14 @@ async function downloadOfficeDocument(
   }
 }
 
-function isAssetLegacyPick(message: Extract<EditorToHostMessage, { type: 'office:pick-file' }>): boolean {
+function isAssetLegacyPick(
+  message: Extract<EditorToHostMessage, { type: 'office:pick-file' }>,
+): boolean {
   return (
     message.payload.multiple === true ||
-    Boolean(message.payload.accept?.some((value) => value.startsWith('image/') || value === 'image/*'))
+    Boolean(
+      message.payload.accept?.some((value) => value.startsWith('image/') || value === 'image/*'),
+    )
   )
 }
 
@@ -893,7 +907,8 @@ window.addEventListener('message', (event) => {
       if (!pending) return
       pendingRpc.delete(message.id)
       window.clearTimeout(pending.timer)
-      if (message.error !== undefined && message.error !== null) pending.reject(rpcError(message.error))
+      if (message.error !== undefined && message.error !== null)
+        pending.reject(rpcError(message.error))
       else pending.resolve(ucResult(message as UcRpcResponse))
     }
     return
