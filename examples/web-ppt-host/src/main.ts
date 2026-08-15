@@ -1,8 +1,10 @@
 import type {
   OfficeEditorMode,
   OfficeFile,
+  OfficeFileDescriptor,
+  PickAssetsOptions,
+  PickDocumentOptions,
   PickFileOptions,
-  SelectedOfficeFile,
 } from '@genoffice/office-host-api'
 import {
   OFFICE_PROTOCOL_VERSION,
@@ -46,17 +48,24 @@ let mode: OfficeEditorMode = 'edit'
 let locale = 'zh-CN'
 let requestCounter = 0
 let versionCounter = 1
-let pendingPicker: { requestId: string; options: PickFileOptions } | null = null
 const files = new Map<string, OfficeFile>()
 const history = new Map<string, ArrayBuffer[]>()
+const pendingDocuments = new Map<string, OfficeFile>()
+
+type PendingPicker =
+  | { kind: 'document'; requestId: string; options: PickDocumentOptions }
+  | { kind: 'assets'; requestId: string; options: PickAssetsOptions }
+  | { kind: 'legacy'; requestId: string; options: PickFileOptions }
+
+let pendingPicker: PendingPicker | null = null
 
 function requestId(prefix: string): string {
   requestCounter += 1
   return `${prefix}-${requestCounter}`
 }
 
-function send(message: HostToEditorMessage): void {
-  frame.contentWindow?.postMessage(message, slidesOrigin)
+function send(message: HostToEditorMessage, transfer: Transferable[] = []): void {
+  frame.contentWindow?.postMessage(message, slidesOrigin, transfer)
 }
 
 function setHostState(value: string): void {
@@ -78,6 +87,8 @@ function capabilities() {
   return {
     ai: false,
     open: true,
+    openDocument: true,
+    pickAssets: true,
     save: true,
     saveAs: true,
     saveHistoryVersion: true,
@@ -85,10 +96,20 @@ function capabilities() {
     exportPptx: true,
     close: true,
     autoSave: 'host' as const,
-    download: false,
+    download: true,
     print: false,
     systemFilePicker: true,
     pageCropMarks: false,
+  }
+}
+
+function descriptorOf(file: OfficeFile): OfficeFileDescriptor {
+  return {
+    id: file.id,
+    name: file.name,
+    mimeType: file.mimeType,
+    size: file.size,
+    version: file.version,
   }
 }
 
@@ -115,27 +136,34 @@ function sendNew(): void {
 function sendInit(): void {
   if (!editorReady || !currentFile) return
   setHostState('opening')
-  send({
-    protocol: OFFICE_PROTOCOL_VERSION,
-    type: 'office:init',
-    requestId: requestId('init'),
-    payload: {
-      kind: 'pptx',
-      mode,
-      locale,
-      capabilities: capabilities(),
-      file: { ...currentFile, bytes: currentFile.bytes.slice(0) },
+  const bytes = currentFile.bytes.slice(0)
+  send(
+    {
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:init',
+      requestId: requestId('init'),
+      payload: {
+        kind: 'pptx',
+        mode,
+        locale,
+        capabilities: capabilities(),
+        file: { ...currentFile, bytes, transport: 'buffer' },
+      },
     },
-  })
+    [bytes],
+  )
 }
 
 function downloadBytes(name: string, mimeType: string, bytes: ArrayBuffer): void {
-  const blob = new Blob([bytes], { type: mimeType })
+  const blob = new Blob([bytes], { type: mimeType || PPTX_MIME })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = name
+  anchor.style.display = 'none'
+  document.body.append(anchor)
   anchor.click()
+  anchor.remove()
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
@@ -153,6 +181,7 @@ async function browserFileToOfficeFile(file: File, prefix: string): Promise<Offi
     size: bytes.byteLength,
     version: 'v1',
     bytes,
+    transport: 'buffer',
   }
 }
 
@@ -162,45 +191,106 @@ function closePicker(): void {
   pickerDialog.hidden = true
 }
 
-async function completePicker(fileList: FileList | null): Promise<void> {
-  if (!pendingPicker) return
-  const { requestId: pickerRequestId, options } = pendingPicker
-  const selected: SelectedOfficeFile[] = []
+function openPicker(pending: PendingPicker): void {
+  pendingPicker = pending
+  const options = pending.options
+  assetPicker.accept = options.accept?.join(',') ?? ''
+  assetPicker.multiple = pending.kind === 'assets' ? Boolean(options.multiple) : false
+  pickerDescription.textContent =
+    pending.kind === 'document'
+      ? '编辑器请求打开另一个 PPTX。这里用本地文件模拟系统文件选择器。'
+      : pending.kind === 'assets'
+        ? `编辑器请求选择${options.multiple ? '多个素材' : '一个素材'}。这里用本地文件模拟系统素材选择器。`
+        : `兼容调用请求选择${options.multiple ? '多个文件' : '一个文件'}。`
+  pickerDialog.hidden = false
+}
 
+async function completePicker(fileList: FileList | null): Promise<void> {
+  const pending = pendingPicker
+  if (!pending) return
+
+  if (pending.kind === 'document') {
+    const browserFile = fileList?.item(0)
+    if (!browserFile) {
+      send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-document-result',
+        requestId: pending.requestId,
+        payload: { status: 'cancelled', selectionId: null, file: null },
+      })
+      closePicker()
+      return
+    }
+    const file = await browserFileToOfficeFile(browserFile, 'ppt')
+    file.mimeType = browserFile.type || PPTX_MIME
+    const selectionId = `selection:${crypto.randomUUID()}`
+    pendingDocuments.set(selectionId, file)
+    const bytes = file.bytes.slice(0)
+    send(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-document-result',
+        requestId: pending.requestId,
+        payload: {
+          status: 'selected',
+          selectionId,
+          file: { ...file, bytes, transport: 'buffer' },
+        },
+      },
+      [bytes],
+    )
+    closePicker()
+    return
+  }
+
+  const officeFiles: OfficeFile[] = []
   if (fileList) {
-    const limit = options.multiple ? fileList.length : Math.min(fileList.length, 1)
+    const limit = pending.options.multiple ? fileList.length : Math.min(fileList.length, 1)
     for (let index = 0; index < limit; index += 1) {
       const browserFile = fileList.item(index)
       if (!browserFile) continue
-      const officeFile = await browserFileToOfficeFile(browserFile, 'asset')
-      files.set(officeFile.id, officeFile)
-      selected.push({
-        id: officeFile.id,
-        name: officeFile.name,
-        mimeType: officeFile.mimeType,
-        size: officeFile.size,
-        version: officeFile.version,
-        transport: 'buffer',
-        bytes: officeFile.bytes.slice(0),
-      })
+      officeFiles.push(await browserFileToOfficeFile(browserFile, 'asset'))
     }
   }
 
-  send({
-    protocol: OFFICE_PROTOCOL_VERSION,
-    type: 'office:pick-file-result',
-    requestId: pickerRequestId,
-    payload: { files: selected.length > 0 ? selected : null },
-  })
-  closePicker()
-}
+  if (pending.kind === 'assets') {
+    const responseFiles = officeFiles.map((file) => ({
+      ...file,
+      bytes: file.bytes.slice(0),
+      transport: 'buffer' as const,
+    }))
+    send(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-assets-result',
+        requestId: pending.requestId,
+        payload: {
+          status: responseFiles.length ? 'selected' : 'cancelled',
+          files: responseFiles,
+        },
+      },
+      responseFiles.map((file) => file.bytes),
+    )
+    closePicker()
+    return
+  }
 
-function openPicker(requestIdValue: string, options: PickFileOptions): void {
-  pendingPicker = { requestId: requestIdValue, options }
-  assetPicker.accept = options.accept?.join(',') ?? ''
-  assetPicker.multiple = Boolean(options.multiple)
-  pickerDescription.textContent = `编辑器请求选择${options.multiple ? '文件' : '一个文件'}。这里用本地文件模拟 Web OS 文件管理器。`
-  pickerDialog.hidden = false
+  for (const file of officeFiles) files.set(file.id, file)
+  const legacyFiles = officeFiles.map((file) => ({
+    ...descriptorOf(file),
+    transport: 'buffer' as const,
+    bytes: file.bytes.slice(0),
+  }))
+  send(
+    {
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:pick-file-result',
+      requestId: pending.requestId,
+      payload: { files: legacyFiles.length ? legacyFiles : null },
+    },
+    legacyFiles.flatMap((file) => (file.bytes ? [file.bytes] : [])),
+  )
+  closePicker()
 }
 
 function saveCancelled(requestIdValue: string): void {
@@ -216,28 +306,60 @@ function saveCancelled(requestIdValue: string): void {
 async function handleEditorMessage(message: EditorToHostMessage): Promise<void> {
   switch (message.type) {
     case 'office:ready':
-      if (message.payload.kind !== 'pptx') break
+      if (message.payload.kind !== 'pptx') return
       editorReady = true
       setHostState('ready')
       render()
       if (currentFile) sendInit()
       else sendNew()
-      break
-
+      return
     case 'office:dirty-change':
       dirty = message.payload.dirty
       render()
-      break
-
+      return
     case 'office:title-change':
       if (currentFile) currentFile = { ...currentFile, name: message.payload.title }
       render()
-      break
-
+      return
+    case 'office:pick-document':
+      openPicker({ kind: 'document', requestId: message.requestId, options: message.payload })
+      return
+    case 'office:document-opened': {
+      const selected = pendingDocuments.get(message.payload.selectionId)
+      if (!selected) {
+        send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:document-opened-result',
+          requestId: message.requestId,
+          payload: { ok: false, code: 'NOT_FOUND', error: 'Document selection expired.' },
+        })
+        return
+      }
+      pendingDocuments.delete(message.payload.selectionId)
+      currentFile = selected
+      files.set(selected.id, selected)
+      dirty = false
+      versionCounter = 1
+      send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:document-opened-result',
+        requestId: message.requestId,
+        payload: { ok: true, file: descriptorOf(selected) },
+      })
+      setHostState('opened')
+      render()
+      return
+    }
+    case 'office:document-open-failed':
+      pendingDocuments.delete(message.payload.selectionId)
+      return
+    case 'office:pick-assets':
+      openPicker({ kind: 'assets', requestId: message.requestId, options: message.payload })
+      return
     case 'office:save-document': {
       const bytes = message.payload.bytes.slice(0)
       const needsDestination =
-        Boolean(message.payload.newDocument) || message.payload.mode === 'saveAs'
+        Boolean(message.payload.newDocument) || message.payload.mode === 'saveAs' || !currentFile
       let targetName = message.payload.file.name || currentFile?.name || 'Untitled.pptx'
       if (needsDestination) {
         const requested = window.prompt(
@@ -246,24 +368,24 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
         )
         if (requested === null || !requested.trim()) {
           saveCancelled(message.requestId)
-          break
+          return
         }
         targetName = /\.pptx$/i.test(requested.trim())
           ? requested.trim()
           : `${requested.trim()}.pptx`
-        versionCounter = 1
-      } else {
-        versionCounter += 1
+        versionCounter = 0
       }
 
+      versionCounter += 1
       const saved: OfficeFile = {
         ...message.payload.file,
-        id: needsDestination ? `ppt:${crypto.randomUUID()}` : message.payload.file.id,
+        id: needsDestination ? `ppt:${crypto.randomUUID()}` : currentFile?.id || message.payload.file.id,
         name: targetName,
         mimeType: PPTX_MIME,
         size: bytes.byteLength,
         version: `v${versionCounter}`,
         bytes,
+        transport: 'buffer',
       }
       currentFile = saved
       files.set(saved.id, saved)
@@ -272,65 +394,80 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:save-document-result',
         requestId: message.requestId,
-        payload: {
-          ok: true,
-          file: {
-            id: saved.id,
-            name: saved.name,
-            mimeType: saved.mimeType,
-            size: saved.size,
-            version: saved.version,
-          },
-        },
+        payload: { ok: true, file: descriptorOf(saved) },
       })
       setHostState('saved')
       render()
-      break
+      return
     }
-
     case 'office:save-history-version': {
-      const key = message.payload.file.id
+      if (!currentFile) {
+        send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:save-history-version-result',
+          requestId: message.requestId,
+          payload: { ok: false, code: 'NOT_FOUND', error: 'Save the presentation before creating history.' },
+        })
+        return
+      }
+      const key = currentFile.id
       const list = history.get(key) ?? []
-      list.push(message.payload.bytes.slice(0))
+      const bytes = message.payload.bytes.slice(0)
+      list.push(bytes)
       history.set(key, list)
+      versionCounter += 1
+      currentFile = {
+        ...currentFile,
+        size: bytes.byteLength,
+        version: `v${versionCounter}`,
+        bytes,
+        transport: 'buffer',
+      }
+      files.set(key, currentFile)
       send({
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:save-history-version-result',
         requestId: message.requestId,
-        payload: { ok: true },
+        payload: { ok: true, file: descriptorOf(currentFile) },
       })
       setHostState(`history:${list.length}`)
-      break
+      render()
+      return
     }
-
-    case 'office:export-document':
-      if (message.payload.format !== 'pptx') break
+    case 'office:download-document':
+      if (message.payload.format !== 'pptx') {
+        send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:download-document-result',
+          requestId: message.requestId,
+          payload: { ok: false, code: 'DOWNLOAD_FAILED', error: 'Demo Host only downloads PPTX.' },
+        })
+        return
+      }
       downloadBytes(
         message.payload.file.name || 'presentation.pptx',
-        PPTX_MIME,
+        message.payload.file.mimeType || PPTX_MIME,
         message.payload.bytes,
       )
       send({
         protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:export-document-result',
+        type: 'office:download-document-result',
         requestId: message.requestId,
         payload: { ok: true },
       })
-      setHostState('exported')
-      break
+      setHostState('downloaded')
+      return
+    case 'office:close-approved':
+      setHostState(`close approved (${message.payload.reason})`)
+      return
+    case 'office:close-cancelled':
+      setHostState('close cancelled')
+      return
 
-    case 'office:close-request':
-      setHostState('close requested')
-      break
-
-    case 'office:save-result':
-      setHostState(message.payload.ok ? 'saved' : `save failed: ${message.payload.error ?? ''}`)
-      break
-
+    // ---- protocol-v1 compatibility aliases ----
     case 'office:pick-file':
-      openPicker(message.requestId, message.payload)
-      break
-
+      openPicker({ kind: 'legacy', requestId: message.requestId, options: message.payload })
+      return
     case 'office:read-file': {
       const stored = files.get(message.payload.fileId)
       if (!stored) {
@@ -340,30 +477,49 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
           requestId: message.requestId,
           payload: { code: 'NOT_FOUND', message: 'Demo host file was not found.' },
         })
-        break
+        return
       }
+      const bytes = stored.bytes.slice(0)
+      send(
+        {
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:read-file-result',
+          requestId: message.requestId,
+          payload: { file: { ...stored, bytes, transport: 'buffer' } },
+        },
+        [bytes],
+      )
+      return
+    }
+    case 'office:export-document':
+      downloadBytes(
+        message.payload.file.name || 'presentation.pptx',
+        message.payload.file.mimeType || PPTX_MIME,
+        message.payload.bytes,
+      )
       send({
         protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:read-file-result',
+        type: 'office:export-document-result',
         requestId: message.requestId,
-        payload: { file: { ...stored, bytes: stored.bytes.slice(0) } },
+        payload: { ok: true },
       })
-      break
-    }
-
+      setHostState('downloaded')
+      return
+    case 'office:close-request':
+      setHostState(`close approved (${message.payload.reason})`)
+      return
+    case 'office:save-result':
+      setHostState(message.payload.ok ? 'saved' : `save failed: ${message.payload.error ?? ''}`)
+      return
     case 'office:state-result':
       dirty = message.payload.dirty
       setHostState(message.payload.saving ? 'saving' : 'ready')
       render()
-      break
-
+      return
     case 'office:error':
       setHostState(`error: ${message.payload.message}`)
       console.error('[GenOffice PPT Web]', message.payload)
-      break
-
-    default:
-      break
+      return
   }
 }
 
