@@ -1,0 +1,107 @@
+name: Validate exact Office picker failure semantics
+
+on:
+  push:
+    branches:
+      - agent/office-file-protocol-failed-results
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/office-file-protocol-alignment
+          fetch-depth: 0
+
+      - name: Apply semantic regression coverage
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, expected=1):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{path}: expected {expected} matches, found {count}: {old!r}')
+              p.write_text(text.replace(old, new))
+
+          # The public contract intentionally spells cancellation/system-failure files as the literal empty tuple.
+          replace('packages/office-host-api/src/index.ts', '  files: never[]\n', '  files: []\n', 2)
+
+          # Keep the mock explicitly typed as the empty tuple rather than weakening the API contract.
+          replace(
+              'apps/docs/tests/web-desktop-api.test.ts',
+              """    pickAssets: vi.fn(async () => ({ status: 'cancelled' as const, files: [] })),\n""",
+              """    pickAssets: vi.fn(async () => ({ status: 'cancelled' as const, files: [] as [] })),\n""",
+          )
+
+          failed_doc = """  it('propagates a failed document picker without reading selection fields', async () => {\n    const { controller, host, destroy } = createHarness()\n    vi.mocked(host.pickDocument!).mockResolvedValue({\n      status: 'failed',\n      code: 'PERMISSION_DENIED',\n      error: 'The Host denied document selection.',\n    })\n\n    await expect(controller.desktopApi.openDocx()).rejects.toMatchObject({\n      code: 'PERMISSION_DENIED',\n      message: 'The Host denied document selection.',\n    })\n    expect(host.confirmDocumentOpened).not.toHaveBeenCalled()\n\n    destroy()\n  })\n\n"""
+          replace(
+              'apps/docs/tests/web-desktop-api.test.ts',
+              failed_doc,
+              failed_doc + """  it('distinguishes cancelled asset selection from a structured Host failure', async () => {\n    const { controller, host, destroy } = createHarness()\n\n    await expect(controller.desktopApi.pickImage()).resolves.toBeNull()\n\n    vi.mocked(host.pickAssets!).mockResolvedValue({\n      status: 'failed',\n      files: [] as [],\n      code: 'ASSET_ACCESS_DENIED',\n      error: 'The Host denied asset access.',\n    })\n    await expect(controller.desktopApi.pickImage()).rejects.toMatchObject({\n      code: 'ASSET_ACCESS_DENIED',\n      message: 'The Host denied asset access.',\n    })\n\n    destroy()\n  })\n\n""",
+          )
+
+          # Slides tests: use valid PPTX bytes so initial-open descriptor preservation is exercised end-to-end.
+          replace(
+              'apps/slides/tests/web-slides-api.test.ts',
+              """import type { EditorIframeBridge } from '@genoffice/web-runtime'\nimport { createSlidesWebController } from '../src/web/slides-api'\n""",
+              """import type { EditorIframeBridge } from '@genoffice/web-runtime'\nimport { createBlankPptx } from '@genoffice/pptx-engine'\nimport { createSlidesWebController } from '../src/web/slides-api'\n\nconst PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'\n\nfunction arrayBufferOf(bytes: Uint8Array): ArrayBuffer {\n  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer\n}\n""",
+          )
+          replace(
+              'apps/slides/tests/web-slides-api.test.ts',
+              """    requestClose,\n    pickFile: vi.fn(async () => null),\n""",
+              """    requestClose,\n    pickDocument: vi.fn(async () => ({\n      status: 'cancelled' as const,\n      selectionId: null,\n      file: null,\n    })),\n    confirmDocumentOpened: vi.fn(async () => ({ ok: true })),\n    releasePickedDocument: vi.fn(async () => undefined),\n    pickAssets: vi.fn(async () => ({ status: 'cancelled' as const, files: [] as [] })),\n    pickFile: vi.fn(async () => null),\n""",
+          )
+          marker = """  it('correlates the parent window close request through the guarded Slides lifecycle', async () => {\n"""
+          slide_tests = """  it('preserves the complete Host descriptor during initial PPTX open', async () => {\n    const { controller, saveHistoryVersion, emit } = createHarness()\n    const source = await createBlankPptx()\n    const bytes = arrayBufferOf(source)\n    const pendingOpen = controller.slidesApi.consumePendingOpen(960)\n\n    emit({\n      protocol: OFFICE_PROTOCOL_VERSION,\n      type: 'office:init',\n      requestId: 'init-host-descriptor',\n      payload: {\n        kind: 'pptx',\n        mode: 'edit',\n        file: {\n          id: 'ppt-1',\n          nodeId: 'node-ppt-1',\n          tenantId: 'tenant-1',\n          parentId: 'folder-9',\n          name: 'host.pptx',\n          mimeType: PPTX_MIME,\n          size: bytes.byteLength,\n          version: 'v7',\n          updatedAt: '2026-08-15T05:00:00.000Z',\n          transport: 'buffer',\n          bytes,\n        },\n      },\n    })\n\n    expect(await pendingOpen).not.toBeNull()\n    expect(await controller.slidesApi.saveHistoryVersion?.()).toMatchObject({ ok: true })\n    expect(saveHistoryVersion).toHaveBeenCalledWith(\n      expect.objectContaining({\n        file: expect.objectContaining({\n          id: 'ppt-1',\n          nodeId: 'node-ppt-1',\n          tenantId: 'tenant-1',\n          parentId: 'folder-9',\n          updatedAt: '2026-08-15T05:00:00.000Z',\n          size: bytes.byteLength,\n          version: 'v7',\n          transport: 'buffer',\n        }),\n      }),\n    )\n\n    controller.destroy()\n  })\n\n  it('propagates a failed PPTX picker without parsing or binding a selection', async () => {\n    const { controller, host } = createHarness()\n    vi.mocked(host.pickDocument!).mockResolvedValue({\n      status: 'failed',\n      code: 'PPT_PICK_DENIED',\n      error: 'The Host denied presentation selection.',\n    })\n\n    await expect(controller.slidesApi.openPptx(960)).rejects.toMatchObject({\n      code: 'PPT_PICK_DENIED',\n      message: 'The Host denied presentation selection.',\n    })\n    expect(host.confirmDocumentOpened).not.toHaveBeenCalled()\n    expect(host.releasePickedDocument).not.toHaveBeenCalled()\n\n    controller.destroy()\n  })\n\n"""
+          replace('apps/slides/tests/web-slides-api.test.ts', marker, slide_tests + marker)
+
+          # Sheets has an existing transactional suite; add the third picker result explicitly.
+          sheet_marker = """  it('keeps the old workbook active and releases the selection when candidate parsing fails', async () => {\n"""
+          sheet_test = """  it('propagates a failed workbook picker without touching the active workbook', async () => {\n    const host = createHost()\n    const bridge = createBridge()\n    const controller = await initializeOldWorkbook(host, bridge)\n\n    vi.mocked(host.pickDocument!).mockResolvedValue({\n      status: 'failed',\n      code: 'XLSX_PICK_DENIED',\n      error: 'The Host denied workbook selection.',\n    })\n\n    await expect(controller.desktopApi.selectWorkbook()).rejects.toMatchObject({\n      code: 'XLSX_PICK_DENIED',\n      message: 'The Host denied workbook selection.',\n    })\n    expect(host.confirmDocumentOpened).not.toHaveBeenCalled()\n    expect(host.releasePickedDocument).not.toHaveBeenCalled()\n    expect(engine.deleteXlsxSession).not.toHaveBeenCalledWith('old-session')\n\n    controller.destroy()\n  })\n\n"""
+          replace('apps/sheets/tests/web-document-open-transaction.test.ts', sheet_marker, sheet_test + sheet_marker)
+          PY
+
+      - name: Format touched files
+        run: npx prettier --write packages/office-host-api/src/index.ts apps/docs/tests/web-desktop-api.test.ts apps/slides/tests/web-slides-api.test.ts apps/sheets/tests/web-document-open-transaction.test.ts
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Targeted semantic tests
+        run: |
+          npm run test -w @genoffice/docs -- --run tests/web-desktop-api.test.ts
+          npm run test -w @genoffice/slides -- --run tests/web-slides-api.test.ts
+          npm run test -w @genoffice/sheets -- --run tests/web-document-open-transaction.test.ts
+
+      - name: Full repository tests
+        run: npm test
+
+      - name: Diff check
+        run: git diff --check
+
+      - name: Commit validated semantics
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/office-host-api/src/index.ts apps/docs/tests/web-desktop-api.test.ts apps/slides/tests/web-slides-api.test.ts apps/sheets/tests/web-document-open-transaction.test.ts
+          git commit -m 'test(web): lock picker failure and descriptor semantics'
+          git push origin HEAD:agent/office-file-protocol-alignment
