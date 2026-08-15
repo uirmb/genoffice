@@ -1,0 +1,94 @@
+name: Office Save Identity Finish V2
+
+on:
+  push:
+    branches: [agent/office-file-protocol-save-finish]
+
+permissions:
+  contents: write
+
+jobs:
+  finish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: agent/office-file-protocol-alignment
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Reuse save identity patch and clean obsolete import
+        shell: bash
+        run: |
+          git fetch origin agent/office-file-protocol-save-finish
+          python <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          workflow = subprocess.check_output(
+              ['git', 'show', 'origin/agent/office-file-protocol-save-finish:.github/workflows/office-save-identity-finish.yml'],
+              text=True,
+          )
+          start = workflow.index('      - name: Make save intent and identity explicit')
+          end = workflow.index('      - name: Format touched files', start)
+          section = workflow[start:end]
+          marker = '        run: |\n'
+          script = section.split(marker, 1)[1]
+          lines = [line[10:] if line.startswith('          ') else line for line in script.splitlines()]
+          Path('/tmp/apply-save-identity.sh').write_text('\n'.join(lines) + '\n')
+          PY
+          bash /tmp/apply-save-identity.sh
+          python <<'PY'
+          from pathlib import Path
+          p = Path('apps/docs/src/web/host-policy.ts')
+          text = p.read_text()
+          text = text.replace("import type { DocsWebDesktopController } from './desktop-api'\n", '')
+          p.write_text(text)
+          PY
+
+      - name: Format touched files
+        run: |
+          npx prettier --write \
+            apps/docs/src/web/desktop-api.ts \
+            apps/docs/src/web/host-policy.ts \
+            apps/docs/src/web/bootstrap.ts \
+            apps/docs/tests/web-desktop-api.test.ts \
+            apps/slides/src/web/slides-api.ts
+
+      - name: Targeted validation
+        run: |
+          npm run typecheck -w @genoffice/docs
+          npm run typecheck -w @genoffice/slides
+          npm test -w @genoffice/docs -- web-desktop-api.test.ts
+          npx eslint \
+            apps/docs/src/web/desktop-api.ts \
+            apps/docs/src/web/host-policy.ts \
+            apps/docs/src/web/bootstrap.ts \
+            apps/docs/tests/web-desktop-api.test.ts \
+            apps/slides/src/web/slides-api.ts
+
+      - name: Commit and publish integration branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            apps/docs/src/web/desktop-api.ts \
+            apps/docs/src/web/host-policy.ts \
+            apps/docs/src/web/bootstrap.ts \
+            apps/docs/tests/web-desktop-api.test.ts \
+            apps/slides/src/web/slides-api.ts
+          git diff --cached --check
+          git commit -m "refactor(web): enforce authoritative save identity"
+          git push origin HEAD:agent/office-file-protocol-alignment
+          git push --force origin HEAD:dev_office_protocol_validation
