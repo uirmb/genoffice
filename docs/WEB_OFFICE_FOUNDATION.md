@@ -70,11 +70,15 @@ office:pick-document
 
 If editor loading fails it sends `office:document-open-failed`; the Host releases the pending selection and keeps the previous current document unchanged.
 
-The runtime retains `office:pick-file` / `office:read-file` only as protocol-v1 compatibility aliases. New wire traffic uses `pick-document` and `pick-assets`.
+Docs now carries the pending `selectionId` through the renderer boundary. The candidate DOCX is parsed, converted into a ProseMirror document and schema-validated before `confirmDocumentOpened` is sent; only after Host binding succeeds is the visible editor/current-document state replaced. Slides parses the candidate PPTX before binding, and Sheets parses the candidate workbook session before binding. Parse or bind failure preserves the previous current document.
+
+The runtime retains `office:pick-file` / `office:read-file` only as protocol-v1 compatibility aliases for older custom hosts. Stable embedded paths use `pick-document` and `pick-assets` directly.
 
 ### Insert assets
 
 `office:pick-assets` is reserved for inserting images/files. Selected assets are read-only buffers and never bind/change the current document, acquire a write token, update the window title or change the target of the next Save.
+
+Docs, Slides and Sheets use the stable asset picker on the current embedded path. Legacy generic picker handling remains compatibility-only for older custom hosts.
 
 ### Save and Save As
 
@@ -94,21 +98,25 @@ new first save -> uc.fs.saveFileAs
 
 The Bridge does not retain access tokens and does not split Save As into picker/access/write RPCs. `saveFileAs` must return a new `nodeId`, even when the new file name equals the original file name.
 
+Docs now sends `save` / `saveAs` intent directly from its Web adapter instead of mutating Host behavior through a transient SaveMode shim. Docs and Slides treat a nominally successful save without the Host-returned latest file descriptor as a failure; they do not accept a fallback local descriptor as proof of persistence. Sheets already required the authoritative saved descriptor. A successful save therefore updates current identity/version only from Host data.
+
 `VERSION_CONFLICT` and other platform errors are decided by UC Host/service and are preserved across the Bridge instead of being collapsed into a generic save failure.
 
 ### History version
 
-`office:save-history-version` maps to `uc.fs.createFileVersion`. A successful response contains the actual latest file descriptor/version so the editor can use it as the next save baseline.
+`office:save-history-version` maps to `uc.fs.createFileVersion`. A successful response contains the actual latest file descriptor/version so the editor can use it as the next save baseline. Docs, Slides and Sheets apply that Host-returned descriptor/version after a successful history save.
 
 ### Local download
 
 `office:download-document` is explicitly separate from UC persistence and maps to `uc.download.saveFile` in UC. Download never creates/modifies an FsNode and never changes current document identity, version, dirty state or title.
 
-`office:export-document` remains a protocol-v1 compatibility alias for the same local-download behavior.
+`office:export-document` remains a protocol-v1 compatibility alias for the same local-download behavior. Docs, Slides and Sheets use the stable download capability on the current embedded path.
 
 ### Close lifecycle
 
 Host window close starts with `office:request-close`. The editor responds with `office:close-approved` only after a clean-state check or a successful save, or with `office:close-cancelled` when the user cancels. The old `office:close-request` editor message is retained only as a compatibility alias.
+
+Docs and Slides now call the stable `approveClose` / `cancelClose` Host API on their current embedded path; Sheets already used the stable close lifecycle. Legacy close messages remain fallback-only for older hosts.
 
 ### Reference Hosts
 
@@ -150,27 +158,35 @@ Only entries explicitly touched/added/removed by the mutation plan may differ. T
 
 ## Migration status and remaining work
 
-The protocol alignment branch keeps `OFFICE_PROTOCOL_VERSION = 1` and introduces the stable messages additively. Legacy wire messages remain recognized during migration.
+The protocol alignment branch keeps `OFFICE_PROTOCOL_VERSION = 1` and introduces the stable messages additively. Legacy wire messages remain recognized during migration as compatibility aliases.
 
 Completed in the alignment branch:
 
 - stable transactional document, asset, download and close message types;
 - stable `OfficeHostApi` methods plus v1 compatibility aliases;
-- runtime translation so existing editor Host API calls emit the stable embedded wire protocol where possible;
+- runtime translation for compatibility while current embedded adapters prefer the stable Host API directly;
 - latest Word Host-close lifecycle carried into the integrated branch;
+- Word document switching made transactional across the renderer boundary: DOCX parse, ProseMirror conversion/schema validation and Host bind complete before editor/current state is replaced;
+- Slides document switching made transactional: PPTX parse and Host bind complete before session/current state is replaced;
+- Sheets document switching made transactional: candidate workbook parse and Host bind both complete before the active workbook changes;
+- parse/bind failure paths release the pending selection and preserve the previous current document;
+- Docs and Slides image insertion migrated to the stable asset picker; Sheets already uses the stable asset picker;
+- Docs and Slides local export/download and close approval/cancellation migrated to stable Host capabilities, with old aliases retained only as fallback compatibility;
+- Docs Save/Save As now sends explicit intent directly; the transient SaveMode shim was removed;
+- Docs, Slides and Sheets require/apply the Host-authoritative file descriptor on successful persistence, so Save As/current identity/version cannot silently fall back to the old local descriptor;
+- successful Docs, Slides and Sheets history-version saves apply the Host-returned latest descriptor/version;
 - browser Demo Hosts updated for the stable protocol;
 - UC XLSX reference Bridge migrated from `requestSelectedFileAccess/readSelectedFile/pickSaveDestination/saveResultFile` to the stable UC RPC boundary;
-- Sheets image insertion migrated to the stable asset picker;
-- Sheets document switching made transactional: candidate parse and Host bind both complete before the active workbook changes, while parse/bind failure preserves the previous workbook;
-- successful Sheets history-version saves apply the Host-returned latest descriptor/version;
-- protocol regression tests added for stable wire translation and Sheets parse/bind transaction behavior.
+- protocol regression tests added for stable wire translation, Word pending-selection confirmation, authoritative save identity and Sheets parse/bind transaction behavior;
+- the completed GenOffice tree passed the repository full CI gates, including formatting, lint, full workspace TypeScript, full `npm test`, Sheets compatibility, full application build and Electron Shell E2E.
 
-Remaining work before the protocol migration is complete:
+Remaining protocol integration work:
 
-- make the remaining Docs/Slides editor adapters call the stable Host API directly rather than relying on runtime compatibility translation;
-- finish strict editor-load acknowledgement for every document-open path, especially Word where the renderer parse step occurs after the Web adapter creates its open result;
-- extend E2E coverage for duplicate pending selections, Save As new identity, history-version updates, download invariants and structured UC errors;
-- integrate the stable UC Host capabilities into the actual UC Web OS plugin source;
+- integrate the stable `uc.fs.*` / `uc.download.*` capabilities and correlated window-close state machine into the actual UC Web OS plugin/Host source;
+- add end-to-end integration coverage against that real UC Host for duplicate pending selections, Save As new-node identity, structured UC permission/version errors and Explorer/title/current-file synchronization.
+
+Broader production work outside this file-protocol migration remains tracked separately:
+
 - audit and remediate production dependency vulnerabilities;
 - measure/tune Web bundle loading rather than adding speculative chunking;
 - add a real Excel/WPS/LibreOffice compatibility corpus;
