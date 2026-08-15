@@ -123,6 +123,7 @@ export function createDocsWebDesktopController(
   let initialOpenResolve: ((result: OpenFileResult | null) => void) | null = null
   let readyNotified = false
   let pendingStateRequestId: string | null = null
+  let pendingHostCloseRequest: { requestId: string; reason: 'window-close' } | null = null
   let mode: 'view' | 'edit' = 'edit'
   let saving = false
   let currentLang: DocsLang = normalizeLang(
@@ -138,6 +139,7 @@ export function createDocsWebDesktopController(
   const menuHandlers = new Set<MenuHandler>()
   const closeCheckHandlers = new Set<VoidHandler>()
   const closeSaveHandlers = new Set<VoidHandler>()
+  const hostCloseRequestHandlers = new Set<VoidHandler>()
   const aiStreamHandlers = new Set<(chunk: AiStreamChunk) => void>()
   const pendingSaveRequestIds = new Set<string>()
 
@@ -365,7 +367,34 @@ export function createDocsWebDesktopController(
       return { ok: result.ok, error: result.error }
     },
     requestHostClose: async () => {
+      if (bridge && pendingHostCloseRequest) {
+        const request = pendingHostCloseRequest
+        pendingHostCloseRequest = null
+        bridge.send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:close-request',
+          requestId: request.requestId,
+          payload: { reason: request.reason },
+        })
+        return
+      }
       await host.requestClose?.()
+    },
+    onHostCloseRequest: (handler) => {
+      hostCloseRequestHandlers.add(handler)
+      if (pendingHostCloseRequest) queueMicrotask(handler)
+      return () => hostCloseRequestHandlers.delete(handler)
+    },
+    cancelHostCloseRequest: () => {
+      if (!bridge || !pendingHostCloseRequest) return
+      const request = pendingHostCloseRequest
+      pendingHostCloseRequest = null
+      bridge.send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:close-cancelled',
+        requestId: request.requestId,
+        payload: { reason: 'user-cancelled' },
+      })
     },
     getRecentFiles: async () => [],
     pickImage: async (): Promise<PickImageResult | null> => {
@@ -496,6 +525,15 @@ export function createDocsWebDesktopController(
       case 'office:set-locale':
         setLanguage(message.payload.locale)
         break
+      case 'office:request-close': {
+        if (pendingHostCloseRequest) break
+        pendingHostCloseRequest = {
+          requestId: message.requestId,
+          reason: message.payload.reason,
+        }
+        for (const handler of hostCloseRequestHandlers) handler()
+        break
+      }
       case 'office:save': {
         const shouldTriggerSave = pendingSaveRequestIds.size === 0
         pendingSaveRequestIds.add(message.requestId)
@@ -540,6 +578,8 @@ export function createDocsWebDesktopController(
       menuHandlers.clear()
       closeCheckHandlers.clear()
       closeSaveHandlers.clear()
+      hostCloseRequestHandlers.clear()
+      pendingHostCloseRequest = null
       aiStreamHandlers.clear()
     },
   }

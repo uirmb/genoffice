@@ -185,6 +185,10 @@ export interface DesktopApi {
   exportDocx?(defaultName: string, data: ArrayBuffer): Promise<{ ok: boolean; error?: string }>
   /** The embedded platform owns the actual plugin/window lifecycle. */
   requestHostClose?(): Promise<void>
+  /** The parent window's × button asked this editor to run the same guarded exit flow. */
+  onHostCloseRequest?(handler: () => void): () => void
+  /** The guarded exit dialog was cancelled; release the parent's pending close state. */
+  cancelHostCloseRequest?(): void
   getRecentFiles(): Promise<string[]>
   pickImage(): Promise<PickImageResult | null>
   getAiSettings(): Promise<AiSettings>
