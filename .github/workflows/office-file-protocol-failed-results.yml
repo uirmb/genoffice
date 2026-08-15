@@ -1,0 +1,265 @@
+name: Validate Office picker failure alignment
+
+on:
+  push:
+    branches:
+      - agent/office-file-protocol-failed-results
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/office-file-protocol-alignment
+          fetch-depth: 0
+
+      - name: Apply protocol alignment patch
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, expected=1):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f"{path}: expected {expected} matches, found {count}\n--- OLD ---\n{old}")
+              p.write_text(text.replace(old, new))
+
+          # 1) Stable Host API: structured failed picker branches and canonical descriptor.
+          replace(
+              'packages/office-host-api/src/index.ts',
+              """export interface OfficeFileDescriptor {\n  /** Stable file identity. In UC this is normally the FsNode/nodeId value. */\n  id: string\n  /** Optional explicit UC identity while legacy callers still consume id. */\n  nodeId?: string | undefined\n  tenantId?: string | undefined\n  name: string\n  mimeType: string\n  size?: number | undefined\n  version?: OfficeFileVersion | undefined\n}\n\nexport interface OfficeFile extends OfficeFileDescriptor {\n  bytes: ArrayBuffer\n  /** Stable office:* transport is always in-memory bytes. */\n  transport?: 'buffer' | undefined\n}\n""",
+              """export interface OfficeFileDescriptor {\n  /** Stable file identity. In UC this is normally the FsNode/nodeId value. */\n  id: string\n  /** Optional explicit UC identity while legacy callers still consume id. */\n  nodeId?: string | undefined\n  tenantId?: string | undefined\n  /** Parent FsNode identity when the Host exposes it. */\n  parentId?: string | null | undefined\n  name: string\n  mimeType: string\n  /** Canonical descriptors always carry the byte size represented by this revision. */\n  size: number\n  /** Canonical descriptors always carry a Host-supplied version, or null when none exists yet. */\n  version: OfficeFileVersion\n  /** Host timestamp for the represented revision, normally an ISO-8601 string. */\n  updatedAt?: string | undefined\n  /** Stable office:* file transport is always an in-memory buffer. */\n  transport: 'buffer'\n}\n\nexport interface OfficeFile extends OfficeFileDescriptor {\n  bytes: ArrayBuffer\n}\n""",
+          )
+          replace(
+              'packages/office-host-api/src/index.ts',
+              """export interface CancelledOfficeDocumentSelection {\n  status: 'cancelled'\n  selectionId: null\n  file: null\n}\n\nexport type PickDocumentResult = SelectedOfficeDocument | CancelledOfficeDocumentSelection\n\nexport interface PickAssetsResult {\n  status: 'selected' | 'cancelled'\n  files: OfficeFile[]\n}\n""",
+              """export interface CancelledOfficeDocumentSelection {\n  status: 'cancelled'\n  selectionId: null\n  file: null\n}\n\nexport interface FailedOfficeDocumentSelection {\n  status: 'failed'\n  code: string\n  error: string\n}\n\nexport type PickDocumentResult =\n  | SelectedOfficeDocument\n  | CancelledOfficeDocumentSelection\n  | FailedOfficeDocumentSelection\n\nexport interface SelectedOfficeAssets {\n  status: 'selected'\n  files: OfficeFile[]\n}\n\nexport interface CancelledOfficeAssetsSelection {\n  status: 'cancelled'\n  files: []\n}\n\nexport interface FailedOfficeAssetsSelection {\n  status: 'failed'\n  files: []\n  code: string\n  error: string\n}\n\nexport type PickAssetsResult =\n  | SelectedOfficeAssets\n  | CancelledOfficeAssetsSelection\n  | FailedOfficeAssetsSelection\n""",
+          )
+          replace(
+              'packages/office-host-api/src/index.ts',
+              """/** Legacy token transport retained only for old callers. New Office flows use buffer bytes only. */\nexport interface SelectedOfficeFile extends OfficeFileDescriptor {\n  transport: 'buffer' | 'token'\n  bytes?: ArrayBuffer | undefined\n  token?: string | undefined\n  url?: string | undefined\n}\n""",
+              """/** Legacy token transport retained only for old callers. New Office flows use buffer bytes only. */\nexport type SelectedOfficeFile = Omit<OfficeFileDescriptor, 'transport'> & {\n  transport: 'buffer' | 'token'\n  bytes?: ArrayBuffer | undefined\n  token?: string | undefined\n  url?: string | undefined\n}\n""",
+          )
+
+          # 2) Runtime: preserve canonical descriptor fields and keep failed distinct from cancelled.
+          replace(
+              'packages/web-runtime/src/index.ts',
+              """function descriptorOf(file: OfficeFile): OfficeFileDescriptor {\n  return {\n    id: file.id,\n    ...(file.nodeId ? { nodeId: file.nodeId } : {}),\n    ...(file.tenantId ? { tenantId: file.tenantId } : {}),\n    name: file.name,\n    mimeType: file.mimeType,\n    ...(file.size === undefined ? {} : { size: file.size }),\n    ...(file.version === undefined ? {} : { version: file.version }),\n  }\n}\n""",
+              """function descriptorOf(file: OfficeFile): OfficeFileDescriptor {\n  return {\n    id: file.id,\n    ...(file.nodeId ? { nodeId: file.nodeId } : {}),\n    ...(file.tenantId ? { tenantId: file.tenantId } : {}),\n    ...(file.parentId !== undefined ? { parentId: file.parentId } : {}),\n    name: file.name,\n    mimeType: file.mimeType,\n    size: file.size,\n    version: file.version,\n    ...(file.updatedAt ? { updatedAt: file.updatedAt } : {}),\n    transport: 'buffer',\n  }\n}\n\nfunction pickerFailure(code: string, message: string): Error & { code: string } {\n  const error = new Error(message) as Error & { code: string }\n  error.code = code\n  return error\n}\n""",
+          )
+          replace(
+              'packages/web-runtime/src/index.ts',
+              """  async pickDocument(options: PickDocumentOptions): Promise<PickDocumentResult> {\n    const files = await pickBrowserFiles({ multiple: false, accept: options.accept })\n    if (!files?.[0]) return { status: 'cancelled', selectionId: null, file: null }\n\n    const file = await browserFileToOfficeFile(files[0])\n    const selectionId = `selection:${randomSuffix()}`\n    this.pendingDocuments.set(selectionId, file)\n    return {\n      status: 'selected',\n      selectionId,\n      file: { ...file, bytes: file.bytes.slice(0), transport: 'buffer' },\n    }\n  }\n""",
+              """  async pickDocument(options: PickDocumentOptions): Promise<PickDocumentResult> {\n    try {\n      const files = await pickBrowserFiles({ multiple: false, accept: options.accept })\n      if (!files?.[0]) return { status: 'cancelled', selectionId: null, file: null }\n\n      const file = await browserFileToOfficeFile(files[0])\n      const selectionId = `selection:${randomSuffix()}`\n      this.pendingDocuments.set(selectionId, file)\n      return {\n        status: 'selected',\n        selectionId,\n        file: { ...file, bytes: file.bytes.slice(0), transport: 'buffer' },\n      }\n    } catch (error) {\n      return {\n        status: 'failed',\n        code: 'PICK_DOCUMENT_FAILED',\n        error: error instanceof Error ? error.message : String(error),\n      }\n    }\n  }\n""",
+          )
+          replace(
+              'packages/web-runtime/src/index.ts',
+              """  async pickAssets(options: PickAssetsOptions): Promise<PickAssetsResult> {\n    const files = await pickBrowserFiles(options)\n    if (!files?.length) return { status: 'cancelled', files: [] }\n\n    const selected: OfficeFile[] = []\n    for (const file of files) {\n      const officeFile = await browserFileToOfficeFile(file)\n      selected.push({ ...officeFile, bytes: officeFile.bytes.slice(0), transport: 'buffer' })\n    }\n    return { status: 'selected', files: selected }\n  }\n""",
+              """  async pickAssets(options: PickAssetsOptions): Promise<PickAssetsResult> {\n    try {\n      const files = await pickBrowserFiles(options)\n      if (!files?.length) return { status: 'cancelled', files: [] }\n\n      const selected: OfficeFile[] = []\n      for (const file of files) {\n        const officeFile = await browserFileToOfficeFile(file)\n        selected.push({ ...officeFile, bytes: officeFile.bytes.slice(0), transport: 'buffer' })\n      }\n      return { status: 'selected', files: selected }\n    } catch (error) {\n      return {\n        status: 'failed',\n        files: [],\n        code: 'PICK_ASSETS_FAILED',\n        error: error instanceof Error ? error.message : String(error),\n      }\n    }\n  }\n""",
+          )
+          replace(
+              'packages/web-runtime/src/index.ts',
+              """      if (result.status === 'cancelled') return null\n      return result.files.map((file) => ({\n""",
+              """      if (result.status === 'cancelled') return null\n      if (result.status === 'failed') throw pickerFailure(result.code, result.error)\n      return result.files.map((file) => ({\n""",
+              expected=2,
+          )
+          replace(
+              'packages/web-runtime/src/index.ts',
+              """      const result = await this.pickDocument({ accept: options.accept })\n      if (result.status === 'cancelled') return null\n      this.legacyPendingDocumentSelectionId = result.selectionId\n""",
+              """      const result = await this.pickDocument({ accept: options.accept })\n      if (result.status === 'cancelled') return null\n      if (result.status === 'failed') throw pickerFailure(result.code, result.error)\n      this.legacyPendingDocumentSelectionId = result.selectionId\n""",
+          )
+
+          # 3) Docs: selected/cancelled/failed are separate; preserve Host descriptors.
+          replace(
+              'apps/docs/src/web/desktop-api.ts',
+              """function unavailable(message: string): Promise<never> {\n  return Promise.reject(new Error(message))\n}\n""",
+              """function unavailable(message: string): Promise<never> {\n  return Promise.reject(new Error(message))\n}\n\nfunction hostPickerFailure(code: string, message: string): Error & { code: string } {\n  const error = new Error(message) as Error & { code: string }\n  error.code = code\n  return error\n}\n\nfunction officeDescriptor(file: OfficeFile, fallbackMime: string): OfficeFileDescriptor {\n  const { bytes: _bytes, ...descriptor } = file\n  return {\n    ...descriptor,\n    mimeType: file.mimeType || fallbackMime,\n    size: file.size ?? file.bytes.byteLength,\n    version: file.version ?? null,\n    transport: 'buffer',\n  }\n}\n""",
+          )
+          replace(
+              'apps/docs/src/web/desktop-api.ts',
+              """    current = {\n      file: {\n        id: file.id,\n        ...(file.nodeId ? { nodeId: file.nodeId } : {}),\n        ...(file.tenantId ? { tenantId: file.tenantId } : {}),\n        name: file.name,\n        mimeType: file.mimeType || DOCX_MIME,\n        size: file.size ?? bytes.byteLength,\n        version: file.version ?? null,\n      },\n""",
+              """    current = {\n      file: officeDescriptor(file, DOCX_MIME),\n""",
+          )
+          replace(
+              'apps/docs/src/web/desktop-api.ts',
+              """      const picked = await host.pickDocument({ accept: [DOCX_MIME, '.docx'] })\n      if (picked.status === 'cancelled') return null\n      pendingDocumentSelections.set(picked.selectionId, picked.file)\n""",
+              """      const picked = await host.pickDocument({ accept: [DOCX_MIME, '.docx'] })\n      if (picked.status === 'cancelled') return null\n      if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)\n      pendingDocumentSelections.set(picked.selectionId, picked.file)\n""",
+          )
+          replace(
+              'apps/docs/src/web/desktop-api.ts',
+              """      mimeType: DOCX_MIME,\n      size: data.byteLength,\n      version: null,\n    }\n""",
+              """      mimeType: DOCX_MIME,\n      size: data.byteLength,\n      version: null,\n      transport: 'buffer',\n    }\n""",
+              expected=2,
+          )
+          replace(
+              'apps/docs/src/web/desktop-api.ts',
+              """      const bytes = candidate.bytes.slice(0)\n      const bound = result.file ?? candidate\n      current = {\n        file: {\n          id: bound.id,\n          ...(bound.nodeId ? { nodeId: bound.nodeId } : {}),\n          ...(bound.tenantId ? { tenantId: bound.tenantId } : {}),\n          name: bound.name,\n          mimeType: bound.mimeType || DOCX_MIME,\n          size: bound.size ?? bytes.byteLength,\n          version: bound.version ?? null,\n        },\n""",
+              """      const bytes = candidate.bytes.slice(0)\n      const candidateDescriptor = officeDescriptor(candidate, DOCX_MIME)\n      const bound: OfficeFileDescriptor = result.file\n        ? { ...candidateDescriptor, ...result.file, transport: 'buffer' }\n        : candidateDescriptor\n      current = {\n        file: bound,\n""",
+          )
+          replace(
+              'apps/docs/src/web/desktop-api.ts',
+              """        const picked = await host.pickAssets({ multiple: false, accept: [...IMAGE_MIMES] })\n        if (picked.status === 'cancelled' || !picked.files[0]) return null\n        file = picked.files[0]\n""",
+              """        const picked = await host.pickAssets({ multiple: false, accept: [...IMAGE_MIMES] })\n        if (picked.status === 'cancelled') return null\n        if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)\n        if (!picked.files[0]) throw new Error('Host returned an empty selected asset result.')\n        file = picked.files[0]\n""",
+          )
+
+          # 4) Slides: keep complete Host file identity on init/open and propagate failed pickers.
+          replace(
+              'apps/slides/src/web/slides-api.ts',
+              """function safeName(name: string | undefined, fallback: string): string {\n  const value = (name || fallback).trim()\n  return /\\.pptx$/i.test(value) ? value : `${value}.pptx`\n}\n""",
+              """function safeName(name: string | undefined, fallback: string): string {\n  const value = (name || fallback).trim()\n  return /\\.pptx$/i.test(value) ? value : `${value}.pptx`\n}\n\nfunction hostPickerFailure(code: string, message: string): Error & { code: string } {\n  const error = new Error(message) as Error & { code: string }\n  error.code = code\n  return error\n}\n\nfunction officeDescriptor(file: OfficeFile, fallbackMime: string): OfficeFileDescriptor {\n  const { bytes: _bytes, ...descriptor } = file\n  return {\n    ...descriptor,\n    mimeType: file.mimeType || fallbackMime,\n    size: file.size ?? file.bytes.byteLength,\n    version: file.version ?? null,\n    transport: 'buffer',\n  }\n}\n""",
+          )
+          replace(
+              'apps/slides/src/web/slides-api.ts',
+              """  if (selected.transport === 'buffer' && selected.bytes) {\n    return {\n      id: selected.id,\n      name: selected.name,\n      mimeType: selected.mimeType,\n      size: selected.size ?? selected.bytes.byteLength,\n      version: selected.version ?? null,\n      bytes: selected.bytes.slice(0),\n    }\n  }\n""",
+              """  if (selected.transport === 'buffer' && selected.bytes) {\n    return {\n      ...selected,\n      mimeType: selected.mimeType || PPTX_MIME,\n      size: selected.size ?? selected.bytes.byteLength,\n      version: selected.version ?? null,\n      bytes: selected.bytes.slice(0),\n      transport: 'buffer',\n    }\n  }\n""",
+          )
+          replace(
+              'apps/slides/src/web/slides-api.ts',
+              """  const openOfficeFile = async (file: OfficeFile, fitWidthPx: number): Promise<OpenResult> =>\n    replaceOpenedFromBytes(file.bytes.slice(0), fitWidthPx, {\n      id: file.id,\n      name: file.name,\n      mimeType: file.mimeType || PPTX_MIME,\n      size: file.size ?? file.bytes.byteLength,\n      version: file.version ?? null,\n    })\n""",
+              """  const openOfficeFile = async (file: OfficeFile, fitWidthPx: number): Promise<OpenResult> =>\n    replaceOpenedFromBytes(file.bytes.slice(0), fitWidthPx, officeDescriptor(file, PPTX_MIME))\n""",
+          )
+          replace(
+              'apps/slides/src/web/slides-api.ts',
+              """      const picked = await host.pickDocument({ accept: [PPTX_MIME, '.pptx'] })\n      if (picked.status === 'cancelled') return null\n\n      let bound = false\n""",
+              """      const picked = await host.pickDocument({ accept: [PPTX_MIME, '.pptx'] })\n      if (picked.status === 'cancelled') return null\n      if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)\n\n      let bound = false\n""",
+          )
+          replace(
+              'apps/slides/src/web/slides-api.ts',
+              """        if (!binding.ok) {\n          await host.releasePickedDocument?.(picked.selectionId)\n          return null\n        }\n        bound = true\n        const file = binding.file ?? picked.file\n""",
+              """        if (!binding.ok) {\n          await host.releasePickedDocument?.(picked.selectionId)\n          throw hostPickerFailure(\n            binding.code ?? 'FILE_BIND_FAILED',\n            binding.error || 'The Host could not bind the selected presentation.',\n          )\n        }\n        bound = true\n        const pickedDescriptor = officeDescriptor(picked.file, PPTX_MIME)\n        const file: OfficeFileDescriptor = binding.file\n          ? { ...pickedDescriptor, ...binding.file, transport: 'buffer' }\n          : pickedDescriptor\n""",
+          )
+          replace(
+              'apps/slides/src/web/slides-api.ts',
+              """      version: null,\n    }\n""",
+              """      version: null,\n      transport: 'buffer',\n    }\n""",
+              expected=2,
+          )
+          replace(
+              'apps/slides/src/web/slides-api.ts',
+              """        if (picked.status === 'cancelled' || !picked.files[0]) return null\n        file = picked.files[0]\n""",
+              """        if (picked.status === 'cancelled') return null\n        if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)\n        if (!picked.files[0]) throw new Error('Host returned an empty selected asset result.')\n        file = picked.files[0]\n""",
+          )
+
+          # 5) Sheets: structured failed open plus canonical descriptors.
+          replace(
+              'apps/sheets/src/web/desktop-api.ts',
+              """function noopUnsubscribe(): () => void {\n  return () => undefined\n}\n""",
+              """function noopUnsubscribe(): () => void {\n  return () => undefined\n}\n\nfunction hostPickerFailure(code: string, message: string): Error & { code: string } {\n  const error = new Error(message) as Error & { code: string }\n  error.code = code\n  return error\n}\n""",
+          )
+          replace(
+              'apps/sheets/src/web/desktop-api.ts',
+              """function officeDescriptor(file: OfficeFile | null, workbook: WorkbookFile): OfficeFileDescriptor {\n  if (file) {\n    return {\n      id: file.id,\n      ...(file.nodeId ? { nodeId: file.nodeId } : {}),\n      ...(file.tenantId ? { tenantId: file.tenantId } : {}),\n      name: file.name,\n      mimeType: file.mimeType || XLSX_MIME,\n      ...(file.size === undefined ? {} : { size: file.size }),\n      ...(file.version === undefined ? {} : { version: file.version }),\n    }\n  }\n  return {\n    id: `new:${crypto.randomUUID()}`,\n    name: workbook.name,\n    mimeType: XLSX_MIME,\n    version: null,\n  }\n}\n""",
+              """function officeDescriptor(\n  file: OfficeFile | null,\n  workbook: WorkbookFile,\n  sizeOverride?: number,\n): OfficeFileDescriptor {\n  if (file) {\n    const { bytes: _bytes, ...descriptor } = file\n    return {\n      ...descriptor,\n      mimeType: file.mimeType || XLSX_MIME,\n      size: sizeOverride ?? file.size ?? file.bytes.byteLength,\n      version: file.version ?? null,\n      transport: 'buffer',\n    }\n  }\n  return {\n    id: `new:${crypto.randomUUID()}`,\n    name: workbook.name,\n    mimeType: XLSX_MIME,\n    size: sizeOverride ?? 0,\n    version: null,\n    transport: 'buffer',\n  }\n}\n""",
+          )
+          replace(
+              'apps/sheets/src/web/desktop-api.ts',
+              """      const picked = await host.pickDocument({ accept: [XLSX_MIME, '.xlsx'] })\n      if (picked.status === 'cancelled') return null\n\n      let candidate: WorkbookFile | null = null\n""",
+              """      const picked = await host.pickDocument({ accept: [XLSX_MIME, '.xlsx'] })\n      if (picked.status === 'cancelled') return null\n      if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)\n\n      let candidate: WorkbookFile | null = null\n""",
+          )
+          replace(
+              'apps/sheets/src/web/desktop-api.ts',
+              """          throw new Error(\n            `${bindResult.code ?? 'FILE_BIND_FAILED'}: ${bindResult.error || 'The Host could not bind the selected workbook.'}`,\n          )\n""",
+              """          throw hostPickerFailure(\n            bindResult.code ?? 'FILE_BIND_FAILED',\n            bindResult.error || 'The Host could not bind the selected workbook.',\n          )\n""",
+          )
+          replace(
+              'apps/sheets/src/web/desktop-api.ts',
+              """        const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook ?? materialized.file)\n""",
+              """        const descriptor = officeDescriptor(\n          currentOfficeFile,\n          activeWorkbook ?? materialized.file,\n          materialized.bytes.byteLength,\n        )\n""",
+          )
+          replace(
+              'apps/sheets/src/web/desktop-api.ts',
+              """        const descriptor = officeDescriptor(currentOfficeFile, workbook)\n        const input = {\n""",
+              """        const descriptor = officeDescriptor(currentOfficeFile, workbook, materialized.bytes.byteLength)\n        const input = {\n""",
+          )
+          replace(
+              'apps/sheets/src/web/desktop-api.ts',
+              """        const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook)\n        const result = await host.saveDocument({\n""",
+              """        const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook, saved.bytes.byteLength)\n        const result = await host.saveDocument({\n""",
+          )
+          replace(
+              'apps/sheets/src/web/local-image.ts',
+              """    if (result.status === 'cancelled' || !result.files[0]) {\n      throw new Error('Image selection was cancelled.')\n    }\n    return validateOfficeImage(result.files[0])\n""",
+              """    if (result.status === 'cancelled') {\n      throw new Error('Image selection was cancelled.')\n    }\n    if (result.status === 'failed') {\n      const error = new Error(result.error) as Error & { code: string }\n      error.code = result.code\n      throw error\n    }\n    if (!result.files[0]) throw new Error('Host returned an empty selected asset result.')\n    return validateOfficeImage(result.files[0])\n""",
+          )
+
+          # Tests/fixtures touched by the now-required canonical descriptor fields.
+          replace(
+              'apps/docs/tests/web-desktop-api.test.ts',
+              """    version: 'v1',\n    bytes: bytesOf('source'),\n""",
+              """    version: 'v1',\n    transport: 'buffer',\n    bytes: bytesOf('source'),\n""",
+          )
+          replace(
+              'apps/docs/tests/web-desktop-api.test.ts',
+              """        version: candidate.version,\n      },\n""",
+              """        version: candidate.version,\n        transport: 'buffer',\n      },\n""",
+          )
+          replace(
+              'apps/docs/tests/web-desktop-api.test.ts',
+              """  it('rejects a Host save success that omits the authoritative file descriptor', async () => {\n""",
+              """  it('propagates a failed document picker without reading selection fields', async () => {\n    const { controller, host, destroy } = createHarness()\n    vi.mocked(host.pickDocument!).mockResolvedValue({\n      status: 'failed',\n      code: 'PERMISSION_DENIED',\n      error: 'The Host denied document selection.',\n    })\n\n    await expect(controller.desktopApi.openDocx()).rejects.toMatchObject({\n      code: 'PERMISSION_DENIED',\n      message: 'The Host denied document selection.',\n    })\n    expect(host.confirmDocumentOpened).not.toHaveBeenCalled()\n\n    destroy()\n  })\n\n  it('rejects a Host save success that omits the authoritative file descriptor', async () => {\n""",
+          )
+
+          PY
+
+      - name: Format touched files
+        run: |
+          npx prettier --write \
+            packages/office-host-api/src/index.ts \
+            packages/web-runtime/src/index.ts \
+            apps/docs/src/web/desktop-api.ts \
+            apps/docs/tests/web-desktop-api.test.ts \
+            apps/slides/src/web/slides-api.ts \
+            apps/sheets/src/web/desktop-api.ts \
+            apps/sheets/src/web/local-image.ts
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Targeted protocol tests
+        run: |
+          npm run test -w @genoffice/docs -- --run tests/web-desktop-api.test.ts tests/web-runtime-protocol.test.ts
+          npm run test -w @genoffice/slides -- --run tests/web-slides-api.test.ts
+          npm run test -w @genoffice/sheets -- --run tests/web-document-transaction.test.ts
+
+      - name: Repository tests
+        run: npm test
+
+      - name: Diff check
+        run: git diff --check
+
+      - name: Commit validated patch
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            packages/office-host-api/src/index.ts \
+            packages/web-runtime/src/index.ts \
+            apps/docs/src/web/desktop-api.ts \
+            apps/docs/tests/web-desktop-api.test.ts \
+            apps/slides/src/web/slides-api.ts \
+            apps/sheets/src/web/desktop-api.ts \
+            apps/sheets/src/web/local-image.ts
+          git commit -m 'fix(web): distinguish picker failures and preserve file descriptors'
+          git push origin HEAD:agent/office-file-protocol-alignment
