@@ -1,11 +1,9 @@
 import {
   DEFAULT_EMBEDDED_OFFICE_CAPABILITIES,
   DEFAULT_STANDALONE_OFFICE_CAPABILITIES,
-  type OfficeHostApi,
   type OfficeHostCapabilities,
 } from '@genoffice/office-host-api'
 import type { EditorIframeBridge, WebRuntimeMode } from '@genoffice/web-runtime'
-import type { DocsWebDesktopController } from './desktop-api'
 
 const CAPABILITY_CLASSES = [
   'office-web',
@@ -70,39 +68,5 @@ export function installWebHostPolicy(
       unsubscribe?.()
       document.documentElement.classList.remove(...CAPABILITY_CLASSES)
     },
-  }
-}
-
-/**
- * Existing renderer code already distinguishes saveDocx() and saveDocxAs().
- * This adapter keeps that stable desktop-facing API while attaching explicit
- * save/saveAs intent to the browser host call. No renderer/file-action fork is required.
- */
-export function installWebSaveModeAdapter(
-  controller: DocsWebDesktopController,
-  host: OfficeHostApi,
-): () => void {
-  const originalHostSave = host.saveDocument.bind(host)
-  const originalSaveAs = controller.desktopApi.saveDocxAs.bind(controller.desktopApi)
-  let nextSaveAs = false
-
-  host.saveDocument = async (input) => {
-    const mode = input.mode ?? (nextSaveAs ? 'saveAs' : 'save')
-    nextSaveAs = false
-    return originalHostSave({ ...input, mode })
-  }
-
-  controller.desktopApi.saveDocxAs = async (defaultName, data) => {
-    nextSaveAs = true
-    try {
-      return await originalSaveAs(defaultName, data)
-    } finally {
-      nextSaveAs = false
-    }
-  }
-
-  return () => {
-    host.saveDocument = originalHostSave
-    controller.desktopApi.saveDocxAs = originalSaveAs
   }
 }

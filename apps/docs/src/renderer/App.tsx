@@ -944,6 +944,15 @@ export function App() {
     void window.desktop.requestHostClose()
   }, [])
 
+  useEffect(() => {
+    return window.desktop.onHostCloseRequest?.(requestExit)
+  }, [requestExit])
+
+  const cancelExit = useCallback(() => {
+    setShowExitConfirm(false)
+    window.desktop.cancelHostCloseRequest?.()
+  }, [])
+
   const discardAndExit = useCallback(() => {
     setShowExitConfirm(false)
     void window.desktop.requestHostClose?.()
@@ -2603,13 +2612,14 @@ export function App() {
   }, [cancelNewComment])
 
   const hasDoc = !!doc
+  const canSaveCurrentDocument = hasDoc && hasUnsavedChanges
   const quickActions = useMemo(
     () => (
       <>
         <button
           className="qa-btn"
           title={t('appSaveShortcutTip')}
-          disabled={!hasDoc || !hasUnsavedChanges}
+          disabled={!canSaveCurrentDocument}
           onClick={() => void save(false)}
         >
           <IconSave size={16} />
@@ -2643,7 +2653,7 @@ export function App() {
       </>
     ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hasDoc, hasUnsavedChanges, autoSave, editor, save, lang],
+    [hasDoc, canSaveCurrentDocument, autoSave, editor, save, lang],
   )
 
   if (!editor) return null
@@ -2700,7 +2710,8 @@ export function App() {
           quickActions={quickActions}
           editor={editor}
           formatState={formatState}
-          hasDoc={!!doc}
+          hasDoc={hasDoc}
+          canSaveCurrentDocument={canSaveCurrentDocument}
           blocks={doc?.parsed.blocks ?? EMPTY_BLOCKS}
           styles={ribbonStyles}
           docDefaults={doc?.parsed.docDefaults}
@@ -3054,7 +3065,7 @@ export function App() {
           saving={exitSaving}
           onSave={() => void saveAndExit()}
           onDiscard={discardAndExit}
-          onCancel={() => setShowExitConfirm(false)}
+          onCancel={cancelExit}
         />
       )}
 

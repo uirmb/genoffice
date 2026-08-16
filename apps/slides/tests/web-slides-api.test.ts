@@ -3,7 +3,14 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { OfficeHostApi, SaveDocumentInput } from '@genoffice/office-host-api'
 import { OFFICE_PROTOCOL_VERSION, type HostToEditorMessage } from '@genoffice/office-protocol'
 import type { EditorIframeBridge } from '@genoffice/web-runtime'
+import { createBlankPptx } from '@genoffice/pptx-engine'
 import { createSlidesWebController } from '../src/web/slides-api'
+
+const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+
+function arrayBufferOf(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+}
 
 beforeAll(() => {
   if (!globalThis.crypto?.subtle) {
@@ -32,6 +39,14 @@ function createHarness() {
     saveHistoryVersion,
     exportDocument,
     requestClose,
+    pickDocument: vi.fn(async () => ({
+      status: 'cancelled' as const,
+      selectionId: null,
+      file: null,
+    })),
+    confirmDocumentOpened: vi.fn(async () => ({ ok: true })),
+    releasePickedDocument: vi.fn(async () => undefined),
+    pickAssets: vi.fn(async () => ({ status: 'cancelled' as const, files: [] as [] })),
     pickFile: vi.fn(async () => null),
     readFile: vi.fn(async () => {
       throw new Error('not used')
@@ -144,6 +159,73 @@ describe('Slides Web host adapter', () => {
       text: 'should not edit',
     })
     expect(blocked).toBeNull()
+
+    controller.destroy()
+  })
+
+  it('preserves the complete Host descriptor during initial PPTX open', async () => {
+    const { controller, saveHistoryVersion, emit } = createHarness()
+    const source = await createBlankPptx()
+    const bytes = arrayBufferOf(source)
+    const pendingOpen = controller.slidesApi.consumePendingOpen(960)
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:init',
+      requestId: 'init-host-descriptor',
+      payload: {
+        kind: 'pptx',
+        mode: 'edit',
+        file: {
+          id: 'ppt-1',
+          nodeId: 'node-ppt-1',
+          tenantId: 'tenant-1',
+          parentId: 'folder-9',
+          name: 'host.pptx',
+          mimeType: PPTX_MIME,
+          size: bytes.byteLength,
+          version: 'v7',
+          updatedAt: '2026-08-15T05:00:00.000Z',
+          transport: 'buffer',
+          bytes,
+        },
+      },
+    })
+
+    expect(await pendingOpen).not.toBeNull()
+    expect(await controller.slidesApi.saveHistoryVersion?.()).toMatchObject({ ok: true })
+    expect(saveHistoryVersion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        file: expect.objectContaining({
+          id: 'ppt-1',
+          nodeId: 'node-ppt-1',
+          tenantId: 'tenant-1',
+          parentId: 'folder-9',
+          updatedAt: '2026-08-15T05:00:00.000Z',
+          size: bytes.byteLength,
+          version: 'v7',
+          transport: 'buffer',
+        }),
+      }),
+    )
+
+    controller.destroy()
+  })
+
+  it('propagates a failed PPTX picker without parsing or binding a selection', async () => {
+    const { controller, host } = createHarness()
+    vi.mocked(host.pickDocument!).mockResolvedValue({
+      status: 'failed',
+      code: 'PPT_PICK_DENIED',
+      error: 'The Host denied presentation selection.',
+    })
+
+    await expect(controller.slidesApi.openPptx(960)).rejects.toMatchObject({
+      code: 'PPT_PICK_DENIED',
+      message: 'The Host denied presentation selection.',
+    })
+    expect(host.confirmDocumentOpened).not.toHaveBeenCalled()
+    expect(host.releasePickedDocument).not.toHaveBeenCalled()
 
     controller.destroy()
   })

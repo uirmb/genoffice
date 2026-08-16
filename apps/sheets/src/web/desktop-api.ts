@@ -1,4 +1,9 @@
-import type { AiChatResponse, AiSettings, AiStreamChunk, GenSparkAccountStatus } from '@genoffice/ai-provider'
+import type {
+  AiChatResponse,
+  AiSettings,
+  AiStreamChunk,
+  GenSparkAccountStatus,
+} from '@genoffice/ai-provider'
 import type {
   OfficeEditorMode,
   OfficeFile,
@@ -76,6 +81,12 @@ function noopUnsubscribe(): () => void {
   return () => undefined
 }
 
+function hostPickerFailure(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string }
+  error.code = code
+  return error
+}
+
 function hasWorkbookMutations(request: WorkbookSaveRequest): boolean {
   return (
     request.edits.length > 0 ||
@@ -123,31 +134,41 @@ async function selectedToOfficeFile(
   if (selected.transport === 'buffer' && selected.bytes) {
     return {
       id: selected.id,
+      ...(selected.nodeId ? { nodeId: selected.nodeId } : {}),
+      ...(selected.tenantId ? { tenantId: selected.tenantId } : {}),
       name: selected.name,
       mimeType: selected.mimeType || XLSX_MIME,
       size: selected.size ?? selected.bytes.byteLength,
       version: selected.version ?? null,
       bytes: selected.bytes,
+      transport: 'buffer',
     }
   }
   return host.readFile(selected.id)
 }
 
-function officeDescriptor(file: OfficeFile | null, workbook: WorkbookFile): OfficeFileDescriptor {
+function officeDescriptor(
+  file: OfficeFile | null,
+  workbook: WorkbookFile,
+  sizeOverride?: number,
+): OfficeFileDescriptor {
   if (file) {
+    const { bytes: _bytes, ...descriptor } = file
     return {
-      id: file.id,
-      name: file.name,
+      ...descriptor,
       mimeType: file.mimeType || XLSX_MIME,
-      ...(file.size === undefined ? {} : { size: file.size }),
-      ...(file.version === undefined ? {} : { version: file.version }),
+      size: sizeOverride ?? file.size ?? file.bytes.byteLength,
+      version: file.version ?? null,
+      transport: 'buffer',
     }
   }
   return {
     id: `new:${crypto.randomUUID()}`,
     name: workbook.name,
     mimeType: XLSX_MIME,
+    size: sizeOverride ?? 0,
     version: null,
+    transport: 'buffer',
   }
 }
 
@@ -189,7 +210,9 @@ export function createSheetsWebDesktopController(
   host: OfficeHostApi,
   bridge?: EditorIframeBridge,
 ): SheetsWebDesktopController {
-  let currentLanguage = normalizeLanguage(document.documentElement.lang || navigator.language || 'en')
+  let currentLanguage = normalizeLanguage(
+    document.documentElement.lang || navigator.language || 'en',
+  )
   let currentMode: OfficeEditorMode = 'edit'
   let currentTitle = 'Untitled.xlsx'
   let currentOfficeFile: OfficeFile | null = null
@@ -235,8 +258,11 @@ export function createSheetsWebDesktopController(
   window.addEventListener('keydown', handleWebFileShortcut)
 
   const requestHostClose = async (): Promise<void> => {
-    if (!host.requestClose) return
-    await host.requestClose()
+    if (host.approveClose) {
+      await host.approveClose()
+      return
+    }
+    await host.requestClose?.()
   }
 
   const handleWebFileAction = (event: Event): void => {
@@ -286,12 +312,14 @@ export function createSheetsWebDesktopController(
   }
 
   const setWorkbookFromOfficeFile = async (file: OfficeFile): Promise<void> => {
-    if (activeWorkbook) {
-      await deleteXlsxSession(activeWorkbook.sessionId).catch(() => undefined)
-    }
+    const previous = activeWorkbook
+    const workbook = await openXlsxWorkbookBytes(file.name, file.bytes.slice(0))
     currentOfficeFile = file
     currentIsNewDocument = false
-    setActiveWorkbook(await openXlsxWorkbookBytes(file.name, file.bytes.slice(0)))
+    setActiveWorkbook(workbook)
+    if (previous && previous.sessionId !== workbook.sessionId) {
+      await deleteXlsxSession(previous.sessionId).catch(() => undefined)
+    }
   }
 
   const pickWorkbook = async (): Promise<WorkbookFile | null> => {
@@ -301,6 +329,59 @@ export function createSheetsWebDesktopController(
       return workbook
     }
 
+    if (host.pickDocument && host.confirmDocumentOpened && host.releasePickedDocument) {
+      const picked = await host.pickDocument({ accept: [XLSX_MIME, '.xlsx'] })
+      if (picked.status === 'cancelled') return null
+      if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)
+
+      let candidate: WorkbookFile | null = null
+      let bound = false
+      try {
+        candidate = await openXlsxWorkbookBytes(picked.file.name, picked.file.bytes.slice(0))
+        const bindResult = await host.confirmDocumentOpened(picked.selectionId)
+        if (!bindResult.ok) {
+          throw hostPickerFailure(
+            bindResult.code ?? 'FILE_BIND_FAILED',
+            bindResult.error || 'The Host could not bind the selected workbook.',
+          )
+        }
+        bound = true
+
+        const previous = activeWorkbook
+        const descriptor = bindResult.file ?? officeDescriptor(picked.file, candidate)
+        const nextWorkbook: WorkbookFile = {
+          ...candidate,
+          name: descriptor.name || candidate.name,
+        }
+        currentOfficeFile = {
+          ...picked.file,
+          ...descriptor,
+          bytes: picked.file.bytes.slice(0),
+          transport: 'buffer',
+        }
+        currentIsNewDocument = false
+        activeWorkbook = nextWorkbook
+        currentTitle = nextWorkbook.name
+        host.setTitle(currentTitle)
+
+        if (previous && previous.sessionId !== nextWorkbook.sessionId) {
+          await deleteXlsxSession(previous.sessionId).catch(() => undefined)
+        }
+        return nextWorkbook
+      } catch (error) {
+        if (!bound) {
+          await host.releasePickedDocument(picked.selectionId).catch(() => undefined)
+        }
+        if (candidate && candidate.sessionId !== activeWorkbook?.sessionId) {
+          await deleteXlsxSession(candidate.sessionId).catch(() => undefined)
+        }
+        throw error
+      }
+    }
+
+    // Protocol-v1 fallback. Parse the candidate before releasing the previous
+    // workbook session so a corrupt/unsupported file cannot destroy the active
+    // workbook. Embedded runtime translates this call to pick-document.
     const selected = await host.pickFile({
       multiple: false,
       accept: [XLSX_MIME, '.xlsx'],
@@ -308,30 +389,34 @@ export function createSheetsWebDesktopController(
     })
     if (!selected?.[0]) return null
     const file = await selectedToOfficeFile(host, selected[0])
-    if (activeWorkbook) {
-      await deleteXlsxSession(activeWorkbook.sessionId).catch(() => undefined)
-    }
+    const candidate = await openXlsxWorkbookBytes(file.name, file.bytes.slice(0))
+    const previous = activeWorkbook
     currentOfficeFile = file
     currentIsNewDocument = false
-    const workbook = await openXlsxWorkbookBytes(file.name, file.bytes.slice(0))
-    activeWorkbook = workbook
+    activeWorkbook = candidate
     currentTitle = file.name
     host.setTitle(file.name)
-    return workbook
+    if (previous && previous.sessionId !== candidate.sessionId) {
+      await deleteXlsxSession(previous.sessionId).catch(() => undefined)
+    }
+    return candidate
   }
 
   const createNewWorkbook = async (): Promise<void> => {
-    if (activeWorkbook) {
-      await deleteXlsxSession(activeWorkbook.sessionId).catch(() => undefined)
-    }
+    const previous = activeWorkbook
     const workbook = await createBlankXlsxWorkbook('Untitled.xlsx')
     currentOfficeFile = null
     currentIsNewDocument = true
     setActiveWorkbook(workbook)
+    if (previous && previous.sessionId !== workbook.sessionId) {
+      await deleteXlsxSession(previous.sessionId).catch(() => undefined)
+    }
     emitOpen()
   }
 
-  const materializeWorkbook = async (request: WorkbookSaveRequest): Promise<MaterializedWorkbook> => {
+  const materializeWorkbook = async (
+    request: WorkbookSaveRequest,
+  ): Promise<MaterializedWorkbook> => {
     if (currentMode !== 'edit') throw new Error('Workbook is read-only.')
     if (!activeWorkbook) throw new Error('No active workbook session.')
 
@@ -361,16 +446,14 @@ export function createSheetsWebDesktopController(
       pivotAdditions: heldPivots.length > 0 ? [] : request.pivotAdditions,
       definedNamesState: null,
     }
-    const first = await saveWorkbookRequestViaEngine(firstRequest, activeWorkbook, activeWorkbook.name)
+    const first = await saveWorkbookRequestViaEngine(
+      firstRequest,
+      activeWorkbook,
+      activeWorkbook.name,
+    )
     try {
       const second = await saveWorkbookRequestViaEngine(
-        emptySecondPhaseRequest(
-          first.file.sessionId,
-          request,
-          heldTables,
-          heldPivots,
-          heldNames,
-        ),
+        emptySecondPhaseRequest(first.file.sessionId, request, heldTables, heldPivots, heldNames),
         first.file,
         activeWorkbook.name,
       )
@@ -398,37 +481,64 @@ export function createSheetsWebDesktopController(
       saving = true
       const materialized = await materializeWorkbook(request)
       try {
-        const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook ?? materialized.file)
+        const descriptor = officeDescriptor(
+          currentOfficeFile,
+          activeWorkbook ?? materialized.file,
+          materialized.bytes.byteLength,
+        )
         const result = await host.saveHistoryVersion({
           file: descriptor,
           bytes: materialized.bytes.slice(0),
           baseVersion: descriptor.version ?? null,
         })
-        if (result.ok) return { canceled: false }
+        if (result.ok) {
+          if (result.file) {
+            currentOfficeFile = {
+              ...currentOfficeFile,
+              ...result.file,
+              bytes: materialized.bytes.slice(0),
+              transport: 'buffer',
+            }
+            currentTitle = result.file.name
+            host.setTitle(currentTitle)
+          }
+          return { canceled: false }
+        }
         if (result.code === 'CANCELLED') return { canceled: true }
-        throw new Error(`${result.code ?? 'SAVE_FAILED'}: ${result.error || 'The Host could not save a history version.'}`)
+        throw new Error(
+          `${result.code ?? 'SAVE_FAILED'}: ${result.error || 'The Host could not save a history version.'}`,
+        )
       } finally {
         saving = false
         await deleteXlsxSession(materialized.file.sessionId).catch(() => undefined)
       }
     },
     exportXlsx: async (request) => {
-      if (!host.exportDocument) {
-        throw new Error('SAVE_FAILED: The current Host does not support XLSX export.')
+      if (!host.downloadDocument && !host.exportDocument) {
+        throw new Error('SAVE_FAILED: The current Host does not support XLSX download.')
       }
       saving = true
       const materialized = await materializeWorkbook(request)
       try {
         const workbook = activeWorkbook ?? materialized.file
-        const descriptor = officeDescriptor(currentOfficeFile, workbook)
-        const result = await host.exportDocument({
-          format: 'xlsx',
+        const descriptor = officeDescriptor(
+          currentOfficeFile,
+          workbook,
+          materialized.bytes.byteLength,
+        )
+        const input = {
+          format: 'xlsx' as const,
           file: { ...descriptor, name: descriptor.name || 'Untitled.xlsx' },
           bytes: materialized.bytes.slice(0),
-        })
+        }
+        const result = host.downloadDocument
+          ? await host.downloadDocument(input)
+          : await host.exportDocument!(input)
         if (result.ok) return { canceled: false }
         if (result.code === 'CANCELLED') return { canceled: true }
-        throw new Error(`${result.code ?? 'SAVE_FAILED'}: ${result.error || 'The Host could not export this workbook.'}`)
+        throw new Error(
+          `${result.code ?? 'DOWNLOAD_FAILED'}: ${result.error || 'The Host could not download this workbook.'}`,
+        )
       } finally {
         saving = false
         await deleteXlsxSession(materialized.file.sessionId).catch(() => undefined)
@@ -550,7 +660,11 @@ export function createSheetsWebDesktopController(
                 touchedEntries: [] as readonly string[],
               }
             : await saveWorkbookRequestViaEngine(request, activeWorkbook, activeWorkbook.name)
-        const descriptor = officeDescriptor(currentOfficeFile, activeWorkbook)
+        const descriptor = officeDescriptor(
+          currentOfficeFile,
+          activeWorkbook,
+          saved.bytes.byteLength,
+        )
         const result = await host.saveDocument({
           file: descriptor,
           bytes: saved.bytes.slice(0),
@@ -580,6 +694,7 @@ export function createSheetsWebDesktopController(
         currentOfficeFile = {
           ...result.file,
           bytes: saved.bytes.slice(0),
+          transport: 'buffer',
         }
         currentTitle = result.file.name
         currentIsNewDocument = false

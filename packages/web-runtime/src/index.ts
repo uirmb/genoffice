@@ -1,9 +1,17 @@
 import { OfficeIframeBridge, createOfficeRequestId } from '@genoffice/iframe-bridge'
 import type {
+  DocumentOpenedResult,
+  DownloadDocumentInput,
+  DownloadDocumentResult,
   ExportDocumentInput,
   ExportDocumentResult,
   OfficeFile,
+  OfficeFileDescriptor,
   OfficeHostApi,
+  PickAssetsOptions,
+  PickAssetsResult,
+  PickDocumentOptions,
+  PickDocumentResult,
   PickFileOptions,
   SaveDocumentInput,
   SaveDocumentResult,
@@ -24,20 +32,18 @@ export function detectWebRuntimeMode(currentWindow: Window = window): WebRuntime
   return currentWindow.parent === currentWindow ? 'standalone' : 'embedded'
 }
 
+function randomSuffix(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 function localFileId(file: File): string {
-  const suffix =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  return `local:${file.name}:${file.size}:${file.lastModified}:${suffix}`
+  return `local:${file.name}:${file.size}:${file.lastModified}:${randomSuffix()}`
 }
 
 function standaloneSavedFileId(name: string): string {
-  const suffix =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  return `download:${name}:${suffix}`
+  return `download:${name}:${randomSuffix()}`
 }
 
 function downloadBuffer(bytes: ArrayBuffer, name: string, mimeType: string): void {
@@ -53,8 +59,82 @@ function downloadBuffer(bytes: ArrayBuffer, name: string, mimeType: string): voi
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+async function pickBrowserFiles(options: {
+  multiple?: boolean | undefined
+  accept?: string[] | undefined
+}): Promise<File[] | null> {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = options.multiple === true
+  if (options.accept?.length) input.accept = options.accept.join(',')
+
+  return new Promise<File[] | null>((resolve) => {
+    let settled = false
+    const finish = (value: File[] | null) => {
+      if (settled) return
+      settled = true
+      input.remove()
+      resolve(value)
+    }
+    input.addEventListener('change', () => finish(input.files ? [...input.files] : null), {
+      once: true,
+    })
+    input.addEventListener('cancel', () => finish(null), { once: true })
+    input.style.display = 'none'
+    document.body.append(input)
+    input.click()
+  })
+}
+
+async function browserFileToOfficeFile(file: File): Promise<OfficeFile> {
+  const bytes = await file.arrayBuffer()
+  return {
+    id: localFileId(file),
+    name: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    version: String(file.lastModified),
+    bytes,
+    transport: 'buffer',
+  }
+}
+
+function descriptorOf(file: OfficeFile): OfficeFileDescriptor {
+  return {
+    id: file.id,
+    ...(file.nodeId ? { nodeId: file.nodeId } : {}),
+    ...(file.tenantId ? { tenantId: file.tenantId } : {}),
+    ...(file.parentId !== undefined ? { parentId: file.parentId } : {}),
+    name: file.name,
+    mimeType: file.mimeType,
+    size: file.size,
+    version: file.version,
+    ...(file.updatedAt ? { updatedAt: file.updatedAt } : {}),
+    transport: 'buffer',
+  }
+}
+
+function pickerFailure(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string }
+  error.code = code
+  return error
+}
+
+function legacyPickUsesAssets(options: PickFileOptions): boolean {
+  if (options.multiple === true) return true
+  return Boolean(
+    options.accept?.some(
+      (value) =>
+        value === 'image/*' ||
+        value.startsWith('image/') ||
+        /^\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(value),
+    ),
+  )
+}
+
 export class StandaloneOfficeHost implements OfficeHostApi {
   private readonly files = new Map<string, OfficeFile>()
+  private readonly pendingDocuments = new Map<string, OfficeFile>()
   private dirty = false
 
   async getLocale(): Promise<string> {
@@ -63,7 +143,7 @@ export class StandaloneOfficeHost implements OfficeHostApi {
 
   async saveDocument(input: SaveDocumentInput): Promise<SaveDocumentResult> {
     let file = input.file
-    if (input.mode === 'saveAs') {
+    if (input.mode === 'saveAs' || input.newDocument === true) {
       const requested = window.prompt('Save as', input.file.name)
       if (requested === null) {
         return { ok: false, code: 'CANCELLED', error: 'Save As cancelled.' }
@@ -81,7 +161,10 @@ export class StandaloneOfficeHost implements OfficeHostApi {
       file: {
         ...file,
         size: input.bytes.byteLength,
-        version: input.mode === 'saveAs' ? null : (input.baseVersion ?? file.version ?? null),
+        version:
+          input.mode === 'saveAs' || input.newDocument === true
+            ? null
+            : (input.baseVersion ?? file.version ?? null),
       },
     }
   }
@@ -94,70 +177,126 @@ export class StandaloneOfficeHost implements OfficeHostApi {
     }
   }
 
-  async exportDocument(input: ExportDocumentInput): Promise<ExportDocumentResult> {
+  async downloadDocument(input: DownloadDocumentInput): Promise<DownloadDocumentResult> {
     downloadBuffer(input.bytes, input.file.name, input.file.mimeType)
     return { ok: true }
   }
 
-  async requestClose(): Promise<void> {
+  async pickDocument(options: PickDocumentOptions): Promise<PickDocumentResult> {
+    try {
+      const files = await pickBrowserFiles({ multiple: false, accept: options.accept })
+      if (!files?.[0]) return { status: 'cancelled', selectionId: null, file: null }
+
+      const file = await browserFileToOfficeFile(files[0])
+      const selectionId = `selection:${randomSuffix()}`
+      this.pendingDocuments.set(selectionId, file)
+      return {
+        status: 'selected',
+        selectionId,
+        file: { ...file, bytes: file.bytes.slice(0), transport: 'buffer' },
+      }
+    } catch (error) {
+      return {
+        status: 'failed',
+        code: 'PICK_DOCUMENT_FAILED',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  async confirmDocumentOpened(selectionId: string): Promise<DocumentOpenedResult> {
+    const file = this.pendingDocuments.get(selectionId)
+    if (!file) {
+      return {
+        ok: false,
+        code: 'NOT_FOUND',
+        error: `Standalone document selection is not available: ${selectionId}`,
+      }
+    }
+    this.pendingDocuments.delete(selectionId)
+    this.files.set(file.id, file)
+    return { ok: true, file: descriptorOf(file) }
+  }
+
+  async releasePickedDocument(selectionId: string): Promise<void> {
+    this.pendingDocuments.delete(selectionId)
+  }
+
+  async pickAssets(options: PickAssetsOptions): Promise<PickAssetsResult> {
+    try {
+      const files = await pickBrowserFiles(options)
+      if (!files?.length) return { status: 'cancelled', files: [] }
+
+      const selected: OfficeFile[] = []
+      for (const file of files) {
+        const officeFile = await browserFileToOfficeFile(file)
+        selected.push({ ...officeFile, bytes: officeFile.bytes.slice(0), transport: 'buffer' })
+      }
+      return { status: 'selected', files: selected }
+    } catch (error) {
+      return {
+        status: 'failed',
+        files: [],
+        code: 'PICK_ASSETS_FAILED',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  async approveClose(_requestId?: string): Promise<void> {
     window.close()
   }
 
+  async cancelClose(_requestId: string): Promise<void> {}
+
+  /** @deprecated Compatibility alias. */
+  async exportDocument(input: ExportDocumentInput): Promise<ExportDocumentResult> {
+    return this.downloadDocument(input)
+  }
+
+  /** @deprecated Compatibility alias. */
+  async requestClose(): Promise<void> {
+    await this.approveClose()
+  }
+
+  /** @deprecated Compatibility generic picker. */
   async pickFile(options: PickFileOptions): Promise<SelectedOfficeFile[] | null> {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.multiple = options.multiple === true
-    if (options.accept?.length) input.accept = options.accept.join(',')
+    if (options.mode !== 'folder' && legacyPickUsesAssets(options)) {
+      const result = await this.pickAssets({ multiple: options.multiple, accept: options.accept })
+      if (result.status === 'cancelled') return null
+      if (result.status === 'failed') throw pickerFailure(result.code, result.error)
+      return result.files.map((file) => ({
+        ...descriptorOf(file),
+        transport: 'buffer',
+        bytes: file.bytes.slice(0),
+      }))
+    }
 
-    const files = await new Promise<File[] | null>((resolve) => {
-      let settled = false
-      const finish = (value: File[] | null) => {
-        if (settled) return
-        settled = true
-        input.remove()
-        resolve(value)
-      }
-      input.addEventListener('change', () => finish(input.files ? [...input.files] : null), {
-        once: true,
-      })
-      input.addEventListener('cancel', () => finish(null), { once: true })
-      input.style.display = 'none'
-      document.body.append(input)
-      input.click()
-    })
-
+    const files = await pickBrowserFiles(options)
     if (!files?.length) return null
 
     const selected: SelectedOfficeFile[] = []
     for (const file of files) {
-      const id = localFileId(file)
-      const bytes = await file.arrayBuffer()
-      const officeFile: OfficeFile = {
-        id,
-        name: file.name,
-        mimeType: file.type || 'application/octet-stream',
-        size: file.size,
-        version: String(file.lastModified),
-        bytes,
-      }
-      this.files.set(id, officeFile)
+      const officeFile = await browserFileToOfficeFile(file)
+      this.files.set(officeFile.id, officeFile)
       selected.push({
-        id,
+        id: officeFile.id,
         name: officeFile.name,
         mimeType: officeFile.mimeType,
         size: officeFile.size,
         version: officeFile.version,
         transport: 'buffer',
-        bytes,
+        bytes: officeFile.bytes.slice(0),
       })
     }
     return selected
   }
 
+  /** @deprecated Stable pickers return bytes directly. */
   async readFile(fileId: string): Promise<OfficeFile> {
     const file = this.files.get(fileId)
     if (!file) throw new Error(`Standalone file is not available: ${fileId}`)
-    return file
+    return { ...file, bytes: file.bytes.slice(0), transport: 'buffer' }
   }
 
   setDirty(dirty: boolean): void {
@@ -174,6 +313,7 @@ export class StandaloneOfficeHost implements OfficeHostApi {
   destroy(): void {
     window.removeEventListener('beforeunload', this.beforeUnload)
     this.files.clear()
+    this.pendingDocuments.clear()
   }
 
   private readonly beforeUnload = (event: BeforeUnloadEvent): void => {
@@ -189,6 +329,9 @@ export interface EmbeddedOfficeRuntimeOptions {
 }
 
 export class EmbeddedOfficeHost implements OfficeHostApi {
+  private legacyPendingDocumentSelectionId: string | null = null
+  private legacyDocumentBind: Promise<DocumentOpenedResult> | null = null
+
   constructor(
     private readonly bridge: EditorIframeBridge,
     private readonly locale?: string,
@@ -198,7 +341,24 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
     return this.locale || document.documentElement.lang || navigator.language || 'en'
   }
 
+  private async consumeLegacyDocumentBind(): Promise<DocumentOpenedResult | null> {
+    const pending = this.legacyDocumentBind
+    if (!pending) return null
+    const result = await pending
+    if (this.legacyDocumentBind === pending) this.legacyDocumentBind = null
+    return result
+  }
+
   async saveDocument(input: SaveDocumentInput): Promise<SaveDocumentResult> {
+    const bindResult = await this.consumeLegacyDocumentBind()
+    if (bindResult && !bindResult.ok) {
+      return {
+        ok: false,
+        code: bindResult.code || 'FILE_BIND_FAILED',
+        error: bindResult.error || 'The selected document could not be bound as current.',
+      }
+    }
+
     const requestId = createOfficeRequestId('save')
     const bytes = input.bytes.slice(0)
     const response = await this.bridge.request<
@@ -223,6 +383,15 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
   }
 
   async saveHistoryVersion(input: SaveHistoryVersionInput): Promise<SaveHistoryVersionResult> {
+    const bindResult = await this.consumeLegacyDocumentBind()
+    if (bindResult && !bindResult.ok) {
+      return {
+        ok: false,
+        code: bindResult.code || 'FILE_BIND_FAILED',
+        error: bindResult.error || 'The selected document could not be bound as current.',
+      }
+    }
+
     const requestId = createOfficeRequestId('history')
     const bytes = input.bytes.slice(0)
     const response = await this.bridge.request<
@@ -240,34 +409,145 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
     return response.payload
   }
 
-  async exportDocument(input: ExportDocumentInput): Promise<ExportDocumentResult> {
-    const requestId = createOfficeRequestId('export')
+  async downloadDocument(input: DownloadDocumentInput): Promise<DownloadDocumentResult> {
+    const requestId = createOfficeRequestId('download')
     const bytes = input.bytes.slice(0)
     const response = await this.bridge.request<
-      Extract<HostToEditorMessage, { type: 'office:export-document-result' }>
+      Extract<HostToEditorMessage, { type: 'office:download-document-result' }>
     >(
       {
         protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:export-document',
+        type: 'office:download-document',
         requestId,
         payload: { format: input.format, file: input.file, bytes },
       },
-      'office:export-document-result',
+      'office:download-document-result',
       [bytes],
     )
     return response.payload
   }
 
-  async requestClose(): Promise<void> {
+  async pickDocument(options: PickDocumentOptions): Promise<PickDocumentResult> {
+    const requestId = createOfficeRequestId('pick-document')
+    const response = await this.bridge.request<
+      Extract<HostToEditorMessage, { type: 'office:pick-document-result' }>
+    >(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-document',
+        requestId,
+        payload: options,
+      },
+      'office:pick-document-result',
+    )
+    return response.payload
+  }
+
+  async confirmDocumentOpened(selectionId: string): Promise<DocumentOpenedResult> {
+    const requestId = createOfficeRequestId('document-opened')
+    const response = await this.bridge.request<
+      Extract<HostToEditorMessage, { type: 'office:document-opened-result' }>
+    >(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:document-opened',
+        requestId,
+        payload: { selectionId },
+      },
+      'office:document-opened-result',
+    )
+    return response.payload
+  }
+
+  async releasePickedDocument(selectionId: string): Promise<void> {
     this.bridge.send({
       protocol: OFFICE_PROTOCOL_VERSION,
-      type: 'office:close-request',
-      payload: { reason: 'file-menu' },
+      type: 'office:document-open-failed',
+      requestId: createOfficeRequestId('document-open-failed'),
+      payload: { selectionId },
     })
   }
 
+  async pickAssets(options: PickAssetsOptions): Promise<PickAssetsResult> {
+    const requestId = createOfficeRequestId('pick-assets')
+    const response = await this.bridge.request<
+      Extract<HostToEditorMessage, { type: 'office:pick-assets-result' }>
+    >(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-assets',
+        requestId,
+        payload: options,
+      },
+      'office:pick-assets-result',
+    )
+    return response.payload
+  }
+
+  async approveClose(requestId?: string): Promise<void> {
+    this.bridge.send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:close-approved',
+      requestId: requestId ?? createOfficeRequestId('close'),
+      payload: { reason: requestId ? 'window-close' : 'file-menu' },
+    })
+  }
+
+  async cancelClose(requestId: string): Promise<void> {
+    this.bridge.send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:close-cancelled',
+      requestId,
+      payload: { reason: 'user-cancelled' },
+    })
+  }
+
+  /** @deprecated Runtime compatibility alias; wire protocol uses download-document. */
+  async exportDocument(input: ExportDocumentInput): Promise<ExportDocumentResult> {
+    return this.downloadDocument(input)
+  }
+
+  /** @deprecated Runtime compatibility alias; wire protocol uses close-approved. */
+  async requestClose(): Promise<void> {
+    await this.approveClose()
+  }
+
+  /**
+   * @deprecated Editor compatibility shim. Embedded wire traffic is translated
+   * to pick-assets or transactional pick-document; only folder-mode callers
+   * still use the old generic wire message.
+   */
   async pickFile(options: PickFileOptions): Promise<SelectedOfficeFile[] | null> {
-    const requestId = createOfficeRequestId('pick')
+    if (options.mode !== 'folder' && legacyPickUsesAssets(options)) {
+      const result = await this.pickAssets({ multiple: options.multiple, accept: options.accept })
+      if (result.status === 'cancelled') return null
+      if (result.status === 'failed') throw pickerFailure(result.code, result.error)
+      return result.files.map((file) => ({
+        ...descriptorOf(file),
+        transport: 'buffer',
+        bytes: file.bytes.slice(0),
+      }))
+    }
+
+    if (options.mode !== 'folder') {
+      if (this.legacyPendingDocumentSelectionId) {
+        await this.releasePickedDocument(this.legacyPendingDocumentSelectionId)
+        this.legacyPendingDocumentSelectionId = null
+      }
+      const result = await this.pickDocument({ accept: options.accept })
+      if (result.status === 'cancelled') return null
+      if (result.status === 'failed') throw pickerFailure(result.code, result.error)
+      this.legacyPendingDocumentSelectionId = result.selectionId
+      return [
+        {
+          ...descriptorOf(result.file),
+          transport: 'buffer',
+          bytes: result.file.bytes.slice(0),
+        },
+      ]
+    }
+
+    const requestId = createOfficeRequestId('pick-legacy')
     const response = await this.bridge.request<
       Extract<HostToEditorMessage, { type: 'office:pick-file-result' }>
     >(
@@ -282,6 +562,7 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
     return response.payload.files
   }
 
+  /** @deprecated Stable pickers return bytes directly. */
   async readFile(fileId: string): Promise<OfficeFile> {
     const requestId = createOfficeRequestId('read')
     const response = await this.bridge.request<
@@ -307,11 +588,24 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
   }
 
   setTitle(title: string): void {
+    if (this.legacyPendingDocumentSelectionId) {
+      const selectionId = this.legacyPendingDocumentSelectionId
+      this.legacyPendingDocumentSelectionId = null
+      this.legacyDocumentBind = this.confirmDocumentOpened(selectionId)
+    }
     this.bridge.send({
       protocol: OFFICE_PROTOCOL_VERSION,
       type: 'office:title-change',
       payload: { title },
     })
+  }
+
+  destroy(): void {
+    if (this.legacyPendingDocumentSelectionId) {
+      void this.releasePickedDocument(this.legacyPendingDocumentSelectionId)
+      this.legacyPendingDocumentSelectionId = null
+    }
+    this.legacyDocumentBind = null
   }
 }
 
@@ -344,6 +638,9 @@ export function createEmbeddedOfficeRuntime(
   return {
     bridge,
     host,
-    destroy: () => bridge.destroy(),
+    destroy: () => {
+      host.destroy()
+      bridge.destroy()
+    },
   }
 }

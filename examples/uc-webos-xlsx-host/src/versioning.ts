@@ -21,12 +21,13 @@ export interface VersionConflict {
 }
 
 /**
- * UC versions are optional, so absence keeps backward compatibility. When both
- * the editor's baseVersion and the newly granted selected-file access expose a
- * version, a mismatch must stop the write before saveResultFile is called.
+ * Compatibility helper for the legacy UC bridge. The stable UC protocol moves
+ * optimistic version enforcement into uc.fs.saveCurrentFile so the Bridge no
+ * longer owns this check. Keep this helper tolerant of opaque string/number
+ * versions until that migration is complete.
  */
 export function detectSelectedFileVersionConflict(
-  baseVersion: string | null | undefined,
+  baseVersion: string | number | null | undefined,
   access: VersionedFileAccess,
 ): VersionConflict | null {
   const expectedVersion = normalizeVersion(baseVersion)

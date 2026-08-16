@@ -7,6 +7,8 @@ export interface OpenFileResult {
   data: ArrayBuffer
   /** sha256 of the original file; original archived under this hash */
   hash: string
+  /** Pending Host picker transaction. Omitted for already-bound init files. */
+  selectionId?: string
 }
 
 export interface PickImageResult {
@@ -146,6 +148,10 @@ export interface DesktopApi {
   /** Web runtimes cannot silently create a local file during recovery/autosave. */
   canAutoPersistPathlessDocument?(): boolean
   openDocx(): Promise<OpenFileResult | null>
+  /** Bind a pending system picker selection only after DOCX parsing succeeds. */
+  confirmOpenDocx?(selectionId: string): Promise<{ ok: boolean; error?: string }>
+  /** Release a pending system picker selection after parsing/binding failure. */
+  releaseOpenDocx?(selectionId: string): Promise<void>
   openDocxPath(path: string): Promise<OpenFileResult | null>
   /** mark the renderer ready and consume a file passed by Finder/Explorer at launch */
   consumePendingOpenDocx(): Promise<OpenFileResult | null>
@@ -185,6 +191,10 @@ export interface DesktopApi {
   exportDocx?(defaultName: string, data: ArrayBuffer): Promise<{ ok: boolean; error?: string }>
   /** The embedded platform owns the actual plugin/window lifecycle. */
   requestHostClose?(): Promise<void>
+  /** The parent window's × button asked this editor to run the same guarded exit flow. */
+  onHostCloseRequest?(handler: () => void): () => void
+  /** The guarded exit dialog was cancelled; release the parent's pending close state. */
+  cancelHostCloseRequest?(): void
   getRecentFiles(): Promise<string[]>
   pickImage(): Promise<PickImageResult | null>
   getAiSettings(): Promise<AiSettings>

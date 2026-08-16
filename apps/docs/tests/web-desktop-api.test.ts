@@ -3,7 +3,7 @@ import type { OfficeFile, OfficeHostApi, SaveDocumentInput } from '@genoffice/of
 import { OFFICE_PROTOCOL_VERSION, type HostToEditorMessage } from '@genoffice/office-protocol'
 import type { EditorIframeBridge } from '@genoffice/web-runtime'
 import { createDocsWebDesktopController } from '../src/web/desktop-api'
-import { installWebHostPolicy, installWebSaveModeAdapter } from '../src/web/host-policy'
+import { installWebHostPolicy } from '../src/web/host-policy'
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
@@ -20,6 +20,7 @@ function createHarness(
     mimeType: DOCX_MIME,
     size: 6,
     version: 'v1',
+    transport: 'buffer',
     bytes: bytesOf('source'),
   }
 
@@ -33,6 +34,17 @@ function createHarness(
   const host: OfficeHostApi = {
     getLocale: vi.fn(async () => 'zh-CN'),
     saveDocument,
+    pickDocument: vi.fn(async () => ({
+      status: 'cancelled' as const,
+      selectionId: null,
+      file: null,
+    })),
+    confirmDocumentOpened: vi.fn(async () => ({ ok: true })),
+    releasePickedDocument: vi.fn(async () => {}),
+    pickAssets: vi.fn(async () => ({ status: 'cancelled' as const, files: [] as [] })),
+    downloadDocument: vi.fn(async () => ({ ok: true })),
+    approveClose: vi.fn(async () => {}),
+    cancelClose: vi.fn(async () => {}),
     pickFile: vi.fn(async () => null),
     readFile: vi.fn(async () => initialFile),
     setDirty: vi.fn(),
@@ -51,13 +63,11 @@ function createHarness(
 
   const policy = installWebHostPolicy('embedded', bridge)
   const controller = createDocsWebDesktopController(host, bridge)
-  const uninstallSaveMode = installWebSaveModeAdapter(controller, host)
   const emit = (message: HostToEditorMessage) => {
     if (incoming.size === 0) throw new Error('Bridge handler is not registered')
     for (const handler of incoming) handler(message)
   }
   const destroy = () => {
-    uninstallSaveMode()
     policy.destroy()
     controller.destroy()
   }
@@ -247,6 +257,135 @@ describe('Docs web desktop adapter', () => {
     expect(result.ok).toBe(true)
     expect(result.path).toContain('web-office://files/doc-copy/')
     expect(host.setTitle).toHaveBeenLastCalledWith('副本.docx')
+
+    destroy()
+  })
+
+  it('routes the parent window close request through the guarded editor lifecycle', async () => {
+    const { controller, host, emit, destroy } = createHarness()
+    const requested = vi.fn()
+    const off = controller.desktopApi.onHostCloseRequest?.(requested)
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:request-close',
+      requestId: 'window-close-1',
+      payload: { reason: 'window-close' },
+    })
+    expect(requested).toHaveBeenCalledTimes(1)
+
+    await controller.desktopApi.requestHostClose?.()
+    expect(host.approveClose).toHaveBeenCalledWith('window-close-1')
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:request-close',
+      requestId: 'window-close-2',
+      payload: { reason: 'window-close' },
+    })
+    controller.desktopApi.cancelHostCloseRequest?.()
+    expect(host.cancelClose).toHaveBeenCalledWith('window-close-2')
+
+    off?.()
+    destroy()
+  })
+
+  it('keeps a picked document pending until the renderer confirms it opened', async () => {
+    const { controller, host, destroy } = createHarness()
+    const candidate: OfficeFile = {
+      id: 'doc-2',
+      nodeId: 'doc-2',
+      name: '候选文档.docx',
+      mimeType: DOCX_MIME,
+      size: 9,
+      version: 7,
+      bytes: bytesOf('candidate'),
+      transport: 'buffer',
+    }
+    vi.mocked(host.pickDocument!).mockResolvedValue({
+      status: 'selected',
+      selectionId: 'selection-2',
+      file: candidate,
+    })
+    vi.mocked(host.confirmDocumentOpened!).mockResolvedValue({
+      ok: true,
+      file: {
+        id: candidate.id,
+        nodeId: candidate.nodeId,
+        name: candidate.name,
+        mimeType: candidate.mimeType,
+        size: candidate.size,
+        version: candidate.version,
+        transport: 'buffer',
+      },
+    })
+
+    const picked = await controller.desktopApi.openDocx()
+    expect(picked?.selectionId).toBe('selection-2')
+    expect(host.confirmDocumentOpened).not.toHaveBeenCalled()
+    expect(host.setTitle).not.toHaveBeenCalledWith(candidate.name)
+
+    const confirmed = await controller.desktopApi.confirmOpenDocx?.('selection-2')
+    expect(confirmed).toEqual({ ok: true })
+    expect(host.confirmDocumentOpened).toHaveBeenCalledWith('selection-2')
+    expect(host.setTitle).toHaveBeenCalledWith(candidate.name)
+
+    destroy()
+  })
+
+  it('propagates a failed document picker without reading selection fields', async () => {
+    const { controller, host, destroy } = createHarness()
+    vi.mocked(host.pickDocument!).mockResolvedValue({
+      status: 'failed',
+      code: 'PERMISSION_DENIED',
+      error: 'The Host denied document selection.',
+    })
+
+    await expect(controller.desktopApi.openDocx()).rejects.toMatchObject({
+      code: 'PERMISSION_DENIED',
+      message: 'The Host denied document selection.',
+    })
+    expect(host.confirmDocumentOpened).not.toHaveBeenCalled()
+
+    destroy()
+  })
+
+  it('distinguishes cancelled asset selection from a structured Host failure', async () => {
+    const { controller, host, destroy } = createHarness()
+
+    await expect(controller.desktopApi.pickImage()).resolves.toBeNull()
+
+    vi.mocked(host.pickAssets!).mockResolvedValue({
+      status: 'failed',
+      files: [] as [],
+      code: 'ASSET_ACCESS_DENIED',
+      error: 'The Host denied asset access.',
+    })
+    await expect(controller.desktopApi.pickImage()).rejects.toMatchObject({
+      code: 'ASSET_ACCESS_DENIED',
+      message: 'The Host denied asset access.',
+    })
+
+    destroy()
+  })
+
+  it('rejects a Host save success that omits the authoritative file descriptor', async () => {
+    const { controller, emit, initialFile, host, destroy } = createHarness(async () => ({
+      ok: true,
+    }))
+    const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:init',
+      requestId: 'init-missing-save-file',
+      payload: { kind: 'docx', mode: 'edit', file: initialFile },
+    })
+    const opened = await pendingOpen
+
+    const result = await controller.desktopApi.saveDocx(opened!.path, bytesOf('edited'))
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('latest file descriptor')
+    expect(host.setTitle).toHaveBeenCalledTimes(1)
 
     destroy()
   })

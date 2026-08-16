@@ -18,6 +18,7 @@ describe('Docs Web host lifecycle actions', () => {
       mimeType: DOCX_MIME,
       size: 6,
       version: 'v7',
+      transport: 'buffer',
       bytes: bytesOf('source'),
     }
 

@@ -30,7 +30,9 @@ async function openFileMenu(editor: FrameLocator): Promise<void> {
   await expect(editor.locator('.sheets-web-file-menu-root .file-menu')).toBeVisible()
 }
 
-async function largestWorksheetCanvas(editor: FrameLocator): Promise<{ x: number; y: number; width: number; height: number }> {
+async function largestWorksheetCanvas(
+  editor: FrameLocator,
+): Promise<{ x: number; y: number; width: number; height: number }> {
   let best: { x: number; y: number; width: number; height: number } | null = null
   await expect
     .poll(
@@ -60,7 +62,10 @@ async function editFirstCell(page: Page, editor: FrameLocator): Promise<void> {
   const box = await largestWorksheetCanvas(editor)
   // The worksheet canvas includes a narrow row/column header. Keep the click
   // well inside A1 while remaining valid in smaller CI viewports.
-  await page.mouse.click(box.x + Math.min(90, box.width - 20), box.y + Math.min(38, box.height - 20))
+  await page.mouse.click(
+    box.x + Math.min(90, box.width - 20),
+    box.y + Math.min(38, box.height - 20),
+  )
   await page.keyboard.type('File Menu Dirty', { delay: 20 })
   await page.keyboard.press('Enter')
   await expect(editor.locator('.ribbon-tabs .qa-btn').first()).toBeEnabled({ timeout: 10_000 })
@@ -82,10 +87,7 @@ async function installCloseMessageRecorder(page: Page): Promise<void> {
         requestId?: string
         payload?: { reason?: string }
       }
-      if (
-        message?.type !== 'office:close-request' &&
-        message?.type !== 'office:close-cancelled'
-      ) {
+      if (message?.type !== 'office:close-request' && message?.type !== 'office:close-cancelled') {
         return
       }
       target.__sheetsCloseMessages?.push({
@@ -183,8 +185,8 @@ test.describe('Sheets Web deployable File menu', () => {
     await expect(visibleItems.nth(1).locator('.file-menu-key')).toHaveText('Ctrl+S')
     await expect(visibleItems.nth(2).locator('span').first()).toHaveText('另存为')
     await expect(visibleItems.nth(2).locator('.file-menu-key')).toHaveText('Ctrl+Shift+S')
-    await expect(visibleItems.nth(3)).toHaveText('保存历史版本')
-    await expect(visibleItems.nth(4)).toHaveText('导出为 XLSX')
+    await expect(visibleItems.nth(3)).toHaveText('存为新的历史版本')
+    await expect(visibleItems.nth(4)).toHaveText('下载到本地')
     await expect(visibleItems.nth(5)).toHaveText('退出')
   })
 
@@ -194,7 +196,9 @@ test.describe('Sheets Web deployable File menu', () => {
 
     await openFileMenu(editor)
     await editor.locator('.file-menu-save-history').click()
-    await expect(page.locator('#host-state')).toContainText('history saved (1)', { timeout: 20_000 })
+    await expect(page.locator('#host-state')).toContainText('history saved (1)', {
+      timeout: 20_000,
+    })
     await expect(page.locator('#file-name')).toContainText('compatibility-basic.xlsx')
 
     const downloadPromise = page.waitForEvent('download')
@@ -223,18 +227,17 @@ test.describe('Sheets Web deployable File menu', () => {
     await editor.locator('.file-menu-exit').click()
     const dialog = editor.locator('.file-exit-dialog')
     await expect(dialog).toBeVisible()
-    await expect(dialog.locator('button')).toHaveText([
-      '取消',
-      '放弃更改并退出',
-      '保存并退出',
-    ])
+    await expect(dialog.locator('button')).toHaveText(['取消', '放弃更改并退出', '保存并退出'])
 
     await dialog.getByRole('button', { name: '取消' }).click()
     await expect(dialog).toHaveCount(0)
 
     await openFileMenu(editor)
     await editor.locator('.file-menu-exit').click()
-    await editor.locator('.file-exit-dialog').getByRole('button', { name: '放弃更改并退出' }).click()
+    await editor
+      .locator('.file-exit-dialog')
+      .getByRole('button', { name: '放弃更改并退出' })
+      .click()
     await expect(page.locator('#host-state')).toContainText('close requested', { timeout: 10_000 })
   })
 
@@ -263,7 +266,9 @@ test.describe('Sheets Web deployable File menu', () => {
     await expect(page.locator('#host-state')).toContainText('close requested', { timeout: 10_000 })
   })
 
-  test('cancels one dirty Host close transaction and ignores duplicate requests', async ({ page }) => {
+  test('cancels one dirty Host close transaction and ignores duplicate requests', async ({
+    page,
+  }) => {
     const editor = await openHost(page)
     await openFixture(page)
     await editFirstCell(page, editor)
@@ -280,14 +285,15 @@ test.describe('Sheets Web deployable File menu', () => {
     await expectCloseMessage(page, 'office:close-cancelled', 'close-dirty-1', 'user-cancelled')
     await page.waitForTimeout(250)
     expect(
-      await page.evaluate(() =>
-        (
-          window as Window & {
-            __sheetsCloseMessages?: Array<{ requestId?: string }>
-          }
-        ).__sheetsCloseMessages?.some(
-          (message) => message.requestId === 'close-dirty-duplicate',
-        ) ?? false,
+      await page.evaluate(
+        () =>
+          (
+            window as Window & {
+              __sheetsCloseMessages?: Array<{ requestId?: string }>
+            }
+          ).__sheetsCloseMessages?.some(
+            (message) => message.requestId === 'close-dirty-duplicate',
+          ) ?? false,
       ),
     ).toBe(false)
 

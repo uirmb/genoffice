@@ -121,6 +121,61 @@ test.describe('Sheets Web Host file integration', () => {
     expect(selectedWorkbook.sheets[0]?.name).toBe('Data')
   })
 
+  test('routes Insert > Pictures through the Host asset picker', async ({ page }) => {
+    test.skip(!hostUrl, 'SHEETS_WEB_HOST_E2E_URL is required for the iframe host flow')
+
+    const directory = await mkdtemp(join(tmpdir(), 'genoffice-sheets-web-ribbon-image-'))
+    const workbookPath = join(directory, 'web-excel-ribbon-image.xlsx')
+    await createImageWorkbook(workbookPath)
+
+    await page.goto(hostUrl!)
+    const editorFrame = page.frameLocator('#office-frame')
+    await expect(editorFrame.locator('canvas').first()).toBeVisible({ timeout: 30_000 })
+
+    const openResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        response.url().includes('/xlsx-engine/v1/workbooks?name=web-excel-ribbon-image.xlsx'),
+    )
+    await page.locator('#xlsx-picker').setInputFiles(workbookPath)
+    await openResponsePromise
+
+    await page.evaluate(() => {
+      const target = window as Window & { __officeMessageTypes?: string[] }
+      target.__officeMessageTypes = []
+      window.addEventListener('message', (event) => {
+        const type = (event.data as { type?: unknown } | null)?.type
+        if (typeof type === 'string') target.__officeMessageTypes?.push(type)
+      })
+    })
+
+    await editorFrame.locator('.ribbon-tabs button').filter({ hasText: '插入' }).click()
+    const fileChooserPromise = page.waitForEvent('filechooser')
+    await editorFrame
+      .locator('button.ribbon-tool.as-button')
+      .filter({ hasText: '图片' })
+      .first()
+      .click()
+    const fileChooser = await fileChooserPromise
+    await fileChooser.setFiles({
+      name: 'uc-ribbon-image.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(PNG_BASE64, 'base64'),
+    })
+
+    await expect(page.locator('#dirty-state')).toHaveText('dirty', { timeout: 20_000 })
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as Window & { __officeMessageTypes?: string[] }).__officeMessageTypes?.includes(
+              'office:pick-assets',
+            ) ?? false,
+        ),
+      )
+      .toBe(true)
+  })
+
   test('picks an image through the Host, inserts it, then moves the saved drawing anchor', async ({
     page,
   }) => {
@@ -159,7 +214,11 @@ test.describe('Sheets Web Host file integration', () => {
       buffer: Buffer.from(PNG_BASE64, 'base64'),
     })
     const pickedImage = await imageResultPromise
-    expect(pickedImage).toEqual({ mediaType: 'image/png', base64: PNG_BASE64 })
+    expect(pickedImage).toEqual({
+      name: 'uc-webos-image.png',
+      mediaType: 'image/png',
+      base64: PNG_BASE64,
+    })
 
     const inserted = await editorFrame.locator('body').evaluate(
       async (_body, payload) => {
@@ -250,9 +309,7 @@ test.describe('Sheets Web Host file integration', () => {
     )
     expect(worksheetXml).toContain('<drawing r:id="rId1"/>')
 
-    const sheetRels = await downloadedZip
-      .file('xl/worksheets/_rels/sheet1.xml.rels')
-      ?.async('text')
+    const sheetRels = await downloadedZip.file('xl/worksheets/_rels/sheet1.xml.rels')?.async('text')
     expect(sheetRels).toContain('relationships/drawing')
     expect(sheetRels).toContain('Target="../drawings/drawing1.xml"')
 
@@ -264,7 +321,9 @@ test.describe('Sheets Web Host file integration', () => {
     expect(drawingXml).toContain('<xdr:row>10</xdr:row>')
     expect(drawingXml).toContain('r:embed="rId1"')
 
-    const drawingRels = await downloadedZip.file('xl/drawings/_rels/drawing1.xml.rels')?.async('text')
+    const drawingRels = await downloadedZip
+      .file('xl/drawings/_rels/drawing1.xml.rels')
+      ?.async('text')
     expect(drawingRels).toContain('relationships/image')
     expect(drawingRels).toContain('Target="../media/image1.png"')
 

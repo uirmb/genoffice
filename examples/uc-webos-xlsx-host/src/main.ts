@@ -2,6 +2,7 @@ import type {
   OfficeEditorMode,
   OfficeFile,
   OfficeFileDescriptor,
+  OfficeFileVersion,
   SelectedOfficeFile,
 } from '@genoffice/office-host-api'
 import {
@@ -11,11 +12,10 @@ import {
   type HostToEditorMessage,
 } from '@genoffice/office-protocol'
 
-import { detectSelectedFileVersionConflict } from './versioning'
-
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const DEFAULT_SHEETS_URL = 'http://127.0.0.1:5275'
 const DEFAULT_PLUGIN_ID = 'thirdparty.plugin.excel-online'
+const INVALID_FILENAME_CHARS = new Set(['\\', '/', ':', '*', '?', '"', '<', '>', '|'])
 
 interface UcRpcResponse {
   type: 'uc-plugin-rpc-response'
@@ -27,21 +27,20 @@ interface UcRpcResponse {
   error?: unknown
 }
 
-interface UcFileAccess {
-  nodeId?: string
-  id?: string
-  resultNodeId?: string
-  filename?: string
-  version?: string | number | null
-  fileVersion?: string | number | null
-  writeMode?: string
-  [key: string]: unknown
-}
-
 interface PendingRpc {
   resolve(value: unknown): void
   reject(error: Error): void
   timer: number
+}
+
+class UcRpcError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'UcRpcError'
+  }
 }
 
 function requireElement<T extends HTMLElement>(id: string): T {
@@ -60,9 +59,15 @@ function stringValue(value: unknown): string | null {
   return text || null
 }
 
+function versionValue(value: unknown): OfficeFileVersion | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  return stringValue(value) ?? undefined
+}
+
 function normalizeXlsxName(value: string): string {
-  const cleaned = value
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+  const cleaned = [...value]
+    .map((char) => (char.charCodeAt(0) <= 0x1f || INVALID_FILENAME_CHARS.has(char) ? ' ' : char))
+    .join('')
     .replace(/\s+/g, ' ')
     .trim()
   if (!cleaned) throw new Error('文件名不能为空。')
@@ -98,9 +103,9 @@ let editorReady = false
 let currentMode: OfficeEditorMode = 'edit'
 let currentLocale = query.get('locale') || 'zh-CN'
 let currentFile: OfficeFile | null = null
-let currentAccess: UcFileAccess | null = null
 const pendingRpc = new Map<string, PendingRpc>()
-const localAssets = new Map<string, OfficeFile>()
+const pendingDocuments = new Map<string, OfficeFile>()
+const legacyFiles = new Map<string, OfficeFile>()
 
 function showError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error)
@@ -126,11 +131,15 @@ function ucResult(message: UcRpcResponse): unknown {
   return message
 }
 
-function rpcError(error: unknown): Error {
-  if (error instanceof Error) return error
+function rpcError(error: unknown): UcRpcError {
   const value = asRecord(error)
-  const message = stringValue(value.message) || stringValue(value.error) || JSON.stringify(error)
-  return new Error(message || 'UC RPC failed.')
+  const code = stringValue(value.code) || stringValue(value.errorCode) || 'UC_RPC_FAILED'
+  const message =
+    stringValue(value.message) ||
+    stringValue(value.error) ||
+    JSON.stringify(error) ||
+    'UC RPC failed.'
+  return new UcRpcError(code, message)
 }
 
 function ucCall(method: string, params?: unknown, timeoutMs = 30_000): Promise<unknown> {
@@ -138,7 +147,7 @@ function ucCall(method: string, params?: unknown, timeoutMs = 30_000): Promise<u
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       pendingRpc.delete(id)
-      reject(new Error(`UC RPC timed out: ${method}`))
+      reject(new UcRpcError('UC_RPC_TIMEOUT', `UC RPC timed out: ${method}`))
     }, timeoutMs)
     pendingRpc.set(id, { resolve, reject, timer })
     window.parent.postMessage(
@@ -160,27 +169,155 @@ function sendOffice(message: HostToEditorMessage, transfer: Transferable[] = [])
   target.postMessage(message, sheetsOrigin, transfer)
 }
 
+function forwardOfficeControl(message: EditorToHostMessage): void {
+  window.parent.postMessage(message, ucHostOrigin)
+}
+
 function officeCapabilities() {
   return {
     ai: false,
-    open: false,
+    open: true,
+    openDocument: true,
+    pickAssets: true,
     save: currentMode === 'edit',
     saveAs: currentMode === 'edit',
-    saveHistoryVersion: false,
+    saveHistoryVersion: currentMode === 'edit',
     exportDocx: false,
     exportPptx: false,
     exportXlsx: true,
     close: true,
     autoSave: 'host' as const,
-    download: false,
+    download: true,
     print: true,
     systemFilePicker: true,
     pageCropMarks: false,
   }
 }
 
-function sendOfficeInit(): void {
-  if (!editorReady || !currentFile) return
+function descriptorOf(file: OfficeFile): OfficeFileDescriptor {
+  return {
+    id: file.id,
+    ...(file.nodeId ? { nodeId: file.nodeId } : {}),
+    ...(file.tenantId ? { tenantId: file.tenantId } : {}),
+    name: file.name,
+    mimeType: file.mimeType,
+    ...(file.size === undefined ? {} : { size: file.size }),
+    ...(file.version === undefined ? {} : { version: file.version }),
+  }
+}
+
+function unwrapLaunchParams(value: unknown): Record<string, any> {
+  const root = asRecord(value)
+  return asRecord(root.launchParams || root.params || root.context || root)
+}
+
+function cancelled(value: unknown): boolean {
+  const root = asRecord(value)
+  return root.cancelled === true || root.status === 'cancelled'
+}
+
+function fileRecord(value: unknown): Record<string, any> {
+  const root = asRecord(value)
+  return asRecord(root.file || root.node || root.savedFile || root.result || root)
+}
+
+function fileIdentity(value: unknown): string | null {
+  const root = asRecord(value)
+  const candidate = fileRecord(value)
+  return (
+    stringValue(candidate.nodeId) ||
+    stringValue(candidate.id) ||
+    stringValue(root.nodeId) ||
+    stringValue(root.id)
+  )
+}
+
+function fileDescriptorFromUc(
+  value: unknown,
+  fallback?: OfficeFileDescriptor | null,
+  fallbackName = 'workbook.xlsx',
+): OfficeFileDescriptor {
+  const root = asRecord(value)
+  const candidate = fileRecord(value)
+  const id = fileIdentity(value) || fallback?.id || ''
+  if (!id) throw new Error('UC 返回文件信息缺少 nodeId/id。')
+  const name = normalizeXlsxName(
+    stringValue(candidate.name) ||
+      stringValue(candidate.filename) ||
+      stringValue(root.name) ||
+      stringValue(root.filename) ||
+      fallback?.name ||
+      fallbackName,
+  )
+  const version =
+    versionValue(candidate.version) ??
+    versionValue(candidate.fileVersion) ??
+    versionValue(root.version) ??
+    versionValue(root.fileVersion) ??
+    fallback?.version
+  return {
+    id,
+    nodeId: stringValue(candidate.nodeId) || stringValue(root.nodeId) || fallback?.nodeId || id,
+    ...(stringValue(candidate.tenantId) || stringValue(root.tenantId) || fallback?.tenantId
+      ? {
+          tenantId:
+            stringValue(candidate.tenantId) || stringValue(root.tenantId) || fallback?.tenantId,
+        }
+      : {}),
+    name,
+    mimeType:
+      stringValue(candidate.mimeType) ||
+      stringValue(candidate.contentType) ||
+      stringValue(root.mimeType) ||
+      stringValue(root.contentType) ||
+      fallback?.mimeType ||
+      XLSX_MIME,
+    ...(typeof candidate.size === 'number'
+      ? { size: candidate.size }
+      : typeof root.size === 'number'
+        ? { size: root.size }
+        : fallback?.size === undefined
+          ? {}
+          : { size: fallback.size }),
+    ...(version === undefined ? {} : { version }),
+  }
+}
+
+async function officeFileFromUc(
+  value: unknown,
+  fallbackName = 'workbook.xlsx',
+): Promise<OfficeFile> {
+  const root = asRecord(value)
+  const candidate = fileRecord(value)
+  const blob =
+    candidate.blob instanceof Blob ? candidate.blob : root.blob instanceof Blob ? root.blob : null
+  if (!blob) throw new Error('UC 未返回可读取的文件 Blob。')
+  const descriptor = fileDescriptorFromUc(value, null, fallbackName)
+  return {
+    ...descriptor,
+    size: descriptor.size ?? blob.size,
+    bytes: await blob.arrayBuffer(),
+    transport: 'buffer',
+  }
+}
+
+function sendOfficeInitOrNew(): void {
+  if (!editorReady) return
+  if (!currentFile) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:new',
+      requestId: officeRequestId('new'),
+      payload: {
+        kind: 'xlsx',
+        mode: currentMode,
+        locale: currentLocale,
+        capabilities: officeCapabilities(),
+      },
+    })
+    return
+  }
+
   const bytes = currentFile.bytes.slice(0)
   sendOffice(
     {
@@ -192,143 +329,223 @@ function sendOfficeInit(): void {
         mode: currentMode,
         locale: currentLocale,
         capabilities: officeCapabilities(),
-        file: { ...currentFile, bytes },
+        file: { ...currentFile, bytes, transport: 'buffer' },
       },
     },
     [bytes],
   )
 }
 
-function unwrapLaunchParams(value: unknown): Record<string, any> {
-  const root = asRecord(value)
-  return asRecord(root.launchParams || root.params || root.context || root)
-}
-
-async function requestSelectedFileAccess(
-  writeMode: 'selected' | 'result',
-  filename: string,
-): Promise<UcFileAccess> {
-  const result = await ucCall(
-    'uc.fs.requestSelectedFileAccess',
-    {
-      writeMode,
-      filename,
-      state: `excel-${writeMode}-${Date.now()}`,
-    },
-    30_000,
-  )
-  if (!result || typeof result !== 'object') {
-    throw new Error('宿主未返回有效的文件访问授权。')
-  }
-  return result as UcFileAccess
-}
-
-async function readSelectedFile(
-  access: UcFileAccess,
-  fallbackName: string,
-  fallbackId: string,
-): Promise<OfficeFile> {
-  const result = asRecord(await ucCall('uc.fs.readSelectedFile', undefined, 120_000))
-  const blob = result.blob
-  if (!(blob instanceof Blob)) throw new Error('宿主未返回可读取的 Excel 文件 blob。')
-
-  const name = normalizeXlsxName(stringValue(result.filename) || stringValue(access.filename) || fallbackName)
-  const id =
-    stringValue(access.nodeId) || stringValue(access.id) || fallbackId || `uc-xlsx-${Date.now()}`
-  const version = stringValue(access.version) || stringValue(access.fileVersion) || null
-
-  return {
-    id,
-    name,
-    mimeType: stringValue(result.contentType) || XLSX_MIME,
-    size: blob.size,
-    version,
-    bytes: await blob.arrayBuffer(),
-  }
-}
-
 async function initializeFromUc(): Promise<void> {
   await ucCall('uc.ready', undefined, 30_000)
-  const launch = unwrapLaunchParams(await ucCall('uc.host.getLaunchParams', undefined, 30_000))
-  const launchFile = asRecord(launch.file || launch.selectedFile || launch.node || {})
-  const filename = normalizeXlsxName(
-    stringValue(launch.fileName) ||
-      stringValue(launchFile.name) ||
-      stringValue(launchFile.filename) ||
-      query.get('fileName') ||
-      'workbook.xlsx',
-  )
-  const nodeId =
-    stringValue(launch.nodeId) || stringValue(launchFile.nodeId) || stringValue(launchFile.id)
-  if (!nodeId) throw new Error('UC 启动参数缺少 nodeId，无法安全打开工作簿。')
 
-  if (launch.mode === 'view' || launchFile.mode === 'view') currentMode = 'view'
-  const launchLocale = stringValue(launch.locale) || stringValue(launchFile.locale)
-  if (launchLocale) currentLocale = launchLocale
+  try {
+    const launch = unwrapLaunchParams(await ucCall('uc.host.getLaunchParams', undefined, 30_000))
+    if (launch.mode === 'view') currentMode = 'view'
+    const launchLocale = stringValue(launch.locale)
+    if (launchLocale) currentLocale = launchLocale
+  } catch (error) {
+    console.warn('[UC GenOffice Excel Host] launch params unavailable', error)
+  }
 
-  currentAccess = await requestSelectedFileAccess('selected', filename)
-  currentFile = await readSelectedFile(currentAccess, filename, nodeId)
-  sendOfficeInit()
+  const result = await ucCall('uc.fs.readCurrentFile', undefined, 120_000)
+  if (result === null || result === undefined || cancelled(result)) {
+    currentFile = null
+  } else {
+    currentFile = await officeFileFromUc(result)
+    legacyFiles.set(currentFile.id, currentFile)
+  }
+  sendOfficeInitOrNew()
 }
 
-async function pickSaveDestination(suggestedName: string): Promise<{ filename: string } | null> {
-  const response = asRecord(
-    await ucCall(
-      'uc.fs.pickSaveDestination',
-      {
-        title: '另存为 Excel 工作簿',
-        confirmText: '保存',
-        suggestedName,
-        fileTypes: [
-          {
-            id: 'xlsx',
-            label: 'Excel 工作簿',
-            extension: '.xlsx',
-            mimeType: XLSX_MIME,
-          },
-        ],
-        activeFileTypeId: 'xlsx',
-        allowFileTypeChange: false,
-      },
+function errorCode(error: unknown, fallback = 'FILE_OPERATION_FAILED'): string {
+  return error instanceof UcRpcError ? error.code : fallback
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function saveFileTypes() {
+  return [
+    {
+      id: 'xlsx',
+      label: 'Excel 工作簿',
+      extension: '.xlsx',
+      mimeType: XLSX_MIME,
+    },
+  ]
+}
+
+async function handlePickDocument(
+  message: Extract<EditorToHostMessage, { type: 'office:pick-document' }>,
+): Promise<void> {
+  try {
+    const result = await ucCall(
+      'uc.fs.pickFile',
+      { accept: message.payload.accept || [XLSX_MIME, '.xlsx'], multiple: false },
       300_000,
-    ),
-  )
-  if (response.cancelled) return null
-  return { filename: normalizeXlsxName(stringValue(response.filename) || suggestedName) }
+    )
+    if (cancelled(result)) {
+      sendOffice({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-document-result',
+        requestId: message.requestId,
+        payload: { status: 'cancelled', selectionId: null, file: null },
+      })
+      return
+    }
+
+    const root = asRecord(result)
+    const selectionId = stringValue(root.selectionId)
+    if (!selectionId) throw new Error('uc.fs.pickFile 未返回 selectionId。')
+    const file = await officeFileFromUc(result)
+    pendingDocuments.set(selectionId, file)
+    const bytes = file.bytes.slice(0)
+    sendOffice(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-document-result',
+        requestId: message.requestId,
+        payload: {
+          status: 'selected',
+          selectionId,
+          file: { ...file, bytes, transport: 'buffer' },
+        },
+      },
+      [bytes],
+    )
+  } catch (error) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:error',
+      requestId: message.requestId,
+      payload: { code: errorCode(error, 'FILE_PICK_FAILED'), message: errorMessage(error) },
+    })
+  }
 }
 
-function saveResponseDescriptor(
-  response: unknown,
-  access: UcFileAccess,
-  filename: string,
-  fallback: OfficeFile | null,
-): OfficeFileDescriptor {
-  const root = asRecord(response)
-  const candidate = asRecord(root.file || root.node || root.result || root.savedFile || root)
-  const id =
-    stringValue(candidate.nodeId) ||
-    stringValue(candidate.id) ||
-    stringValue(root.nodeId) ||
-    stringValue(root.id) ||
-    stringValue(access.resultNodeId) ||
-    stringValue(access.nodeId) ||
-    fallback?.id ||
-    ''
-  const version =
-    stringValue(candidate.version) ||
-    stringValue(candidate.fileVersion) ||
-    stringValue(root.version) ||
-    stringValue(root.fileVersion) ||
-    stringValue(access.version) ||
-    fallback?.version ||
-    null
+async function handleDocumentOpened(
+  message: Extract<EditorToHostMessage, { type: 'office:document-opened' }>,
+): Promise<void> {
+  const candidate = pendingDocuments.get(message.payload.selectionId)
+  if (!candidate) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:document-opened-result',
+      requestId: message.requestId,
+      payload: { ok: false, code: 'NOT_FOUND', error: '待提交文件选择已经失效。' },
+    })
+    return
+  }
 
-  if (!id) throw new Error('保存成功，但宿主没有返回 nodeId/id。')
-  return {
-    id,
-    name: filename,
-    mimeType: XLSX_MIME,
-    version,
+  try {
+    const result = await ucCall(
+      'uc.fs.bindCurrentFile',
+      { selectionId: message.payload.selectionId },
+      30_000,
+    )
+    const descriptor = fileDescriptorFromUc(result, descriptorOf(candidate), candidate.name)
+    currentFile = {
+      ...candidate,
+      ...descriptor,
+      bytes: candidate.bytes,
+      transport: 'buffer',
+    }
+    pendingDocuments.delete(message.payload.selectionId)
+    legacyFiles.set(currentFile.id, currentFile)
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:document-opened-result',
+      requestId: message.requestId,
+      payload: { ok: true, file: descriptor },
+    })
+  } catch (error) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:document-opened-result',
+      requestId: message.requestId,
+      payload: {
+        ok: false,
+        code: errorCode(error, 'FILE_BIND_FAILED'),
+        error: errorMessage(error),
+      },
+    })
+  }
+}
+
+async function handleDocumentOpenFailed(
+  message: Extract<EditorToHostMessage, { type: 'office:document-open-failed' }>,
+): Promise<void> {
+  pendingDocuments.delete(message.payload.selectionId)
+  await ucCall(
+    'uc.fs.releasePickedFile',
+    { selectionId: message.payload.selectionId },
+    30_000,
+  ).catch((error) => {
+    console.warn('[UC GenOffice Excel Host] releasePickedFile failed', error)
+  })
+}
+
+async function pickAssetsFromUc(accept?: string[], multiple = false): Promise<OfficeFile[]> {
+  const result = await ucCall(
+    'uc.fs.pickAssets',
+    { accept: accept?.length ? accept : ['image/*'], multiple },
+    300_000,
+  )
+  if (cancelled(result)) return []
+  const root = asRecord(result)
+  const values = Array.isArray(root.files)
+    ? root.files
+    : Array.isArray(root.items)
+      ? root.items
+      : Array.isArray(result)
+        ? result
+        : []
+  const files: OfficeFile[] = []
+  for (const value of values) {
+    const file = await officeFileFromUc(value, 'asset')
+    files.push(file)
+    legacyFiles.set(file.id, file)
+  }
+  return files
+}
+
+async function handlePickAssets(
+  message: Extract<EditorToHostMessage, { type: 'office:pick-assets' }>,
+): Promise<void> {
+  try {
+    const files = await pickAssetsFromUc(message.payload.accept, message.payload.multiple === true)
+    if (!files.length) {
+      sendOffice({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-assets-result',
+        requestId: message.requestId,
+        payload: { status: 'cancelled', files: [] },
+      })
+      return
+    }
+    const responseFiles = files.map((file) => ({
+      ...file,
+      bytes: file.bytes.slice(0),
+      transport: 'buffer' as const,
+    }))
+    sendOffice(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-assets-result',
+        requestId: message.requestId,
+        payload: { status: 'selected', files: responseFiles },
+      },
+      responseFiles.map((file) => file.bytes),
+    )
+  } catch (error) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:error',
+      requestId: message.requestId,
+      payload: { code: errorCode(error, 'ASSET_PICK_FAILED'), message: errorMessage(error) },
+    })
   }
 }
 
@@ -340,83 +557,68 @@ async function saveOfficeDocument(
       protocol: OFFICE_PROTOCOL_VERSION,
       type: 'office:save-document-result',
       requestId: message.requestId,
-      payload: { ok: false, code: 'SAVE_FAILED', error: '当前工作簿为只读模式。' },
+      payload: { ok: false, code: 'PERMISSION_REQUIRED', error: '当前工作簿为只读模式。' },
     })
     return
   }
 
   try {
-    const saveAs = message.payload.mode === 'saveAs' || !currentFile
-    let filename = normalizeXlsxName(currentFile?.name || message.payload.file.name || 'workbook.xlsx')
-    let writeMode: 'selected' | 'result' = 'selected'
-
-    if (saveAs) {
-      const destination = await pickSaveDestination(filename)
-      if (!destination) {
-        sendOffice({
-          protocol: OFFICE_PROTOCOL_VERSION,
-          type: 'office:save-document-result',
-          requestId: message.requestId,
-          payload: { ok: false, code: 'CANCELLED', error: '已取消另存为。' },
-        })
-        return
-      }
-      filename = destination.filename
-      writeMode = 'result'
-    }
-
-    const access = await requestSelectedFileAccess(writeMode, filename)
-    if (!saveAs) {
-      const conflict = detectSelectedFileVersionConflict(message.payload.baseVersion, access)
-      if (conflict) {
-        sendOffice({
-          protocol: OFFICE_PROTOCOL_VERSION,
-          type: 'office:save-document-result',
-          requestId: message.requestId,
-          payload: {
-            ok: false,
-            code: conflict.code,
-            error: conflict.error,
-          },
-        })
-        return
-      }
-    }
-
     const bytes = message.payload.bytes.slice(0)
-    const response = await ucCall(
-      'uc.fs.saveResultFile',
-      {
-        blob: new Blob([bytes], { type: XLSX_MIME }),
-        filename,
-      },
-      120_000,
+    const filename = normalizeXlsxName(
+      message.payload.file.name || currentFile?.name || 'workbook.xlsx',
     )
-    const descriptor = saveResponseDescriptor(response, access, filename, currentFile)
+    const saveAs =
+      message.payload.mode === 'saveAs' || message.payload.newDocument === true || !currentFile
+    const blob = new Blob([bytes], { type: XLSX_MIME })
 
-    if (saveAs && currentFile && descriptor.id === currentFile.id) {
-      throw new Error(
-        'writeMode=result 已完成，但后端没有返回新文件的 nodeId/id；否则后续 Ctrl+S 无法安全写回新文件。',
-      )
+    const result = saveAs
+      ? await ucCall(
+          'uc.fs.saveFileAs',
+          {
+            blob,
+            suggestedName: filename,
+            fileTypes: saveFileTypes(),
+            title: '另存为 Excel 工作簿',
+            confirmText: '保存',
+          },
+          300_000,
+        )
+      : await ucCall(
+          'uc.fs.saveCurrentFile',
+          {
+            blob,
+            filename,
+            baseVersion: message.payload.baseVersion,
+          },
+          120_000,
+        )
+
+    if (cancelled(result)) {
+      sendOffice({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:save-document-result',
+        requestId: message.requestId,
+        payload: { ok: false, code: 'CANCELLED', error: '已取消保存。' },
+      })
+      return
     }
 
-    currentAccess = access
+    const descriptor = fileDescriptorFromUc(result, saveAs ? null : currentFile, filename)
+    if (saveAs && currentFile && descriptor.id === currentFile.id) {
+      throw new Error('uc.fs.saveFileAs 必须创建并返回新的 nodeId。')
+    }
     currentFile = {
       ...descriptor,
       size: bytes.byteLength,
       bytes,
+      transport: 'buffer',
     }
+    legacyFiles.set(currentFile.id, currentFile)
     sendOffice({
       protocol: OFFICE_PROTOCOL_VERSION,
       type: 'office:save-document-result',
       requestId: message.requestId,
-      payload: {
-        ok: true,
-        file: {
-          ...descriptor,
-          size: bytes.byteLength,
-        },
-      },
+      payload: { ok: true, file: { ...descriptor, size: bytes.byteLength } },
     })
   } catch (error) {
     sendOffice({
@@ -425,71 +627,187 @@ async function saveOfficeDocument(
       requestId: message.requestId,
       payload: {
         ok: false,
-        code: 'SAVE_FAILED',
-        error: error instanceof Error ? error.message : String(error),
+        code: errorCode(error, 'FILE_SAVE_FAILED'),
+        error: errorMessage(error),
       },
     })
   }
 }
 
-async function openLocalAssetPicker(
-  message: Extract<EditorToHostMessage, { type: 'office:pick-file' }>,
-): Promise<SelectedOfficeFile[] | null> {
-  // The current UC plugin contract does not yet expose a confirmed interactive
-  // open-file picker RPC. Keep the fallback isolated here; when UC adds one,
-  // replace only this function and keep the office:* protocol unchanged.
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.multiple = message.payload.multiple === true
-  if (message.payload.accept?.length) input.accept = message.payload.accept.join(',')
-  input.style.display = 'none'
-  document.body.append(input)
-
-  const files = await new Promise<File[] | null>((resolve) => {
-    let settled = false
-    const finish = (value: File[] | null) => {
-      if (settled) return
-      settled = true
-      input.remove()
-      resolve(value)
-    }
-    input.addEventListener('change', () => finish(input.files ? [...input.files] : null), {
-      once: true,
+async function saveHistoryVersion(
+  message: Extract<EditorToHostMessage, { type: 'office:save-history-version' }>,
+): Promise<void> {
+  if (!currentFile) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:save-history-version-result',
+      requestId: message.requestId,
+      payload: { ok: false, code: 'NOT_FOUND', error: '当前工作簿尚未保存。' },
     })
-    input.addEventListener('cancel', () => finish(null), { once: true })
-    input.click()
-  })
-  if (!files?.length) return null
+    return
+  }
 
-  const selected: SelectedOfficeFile[] = []
-  for (const file of files) {
-    const id = `local-asset:${crypto.randomUUID()}`
-    const bytes = await file.arrayBuffer()
-    const officeFile: OfficeFile = {
-      id,
-      name: file.name,
-      mimeType: file.type || 'application/octet-stream',
-      size: bytes.byteLength,
-      version: String(file.lastModified),
-      bytes,
-    }
-    localAssets.set(id, officeFile)
-    selected.push({
-      id,
-      name: officeFile.name,
-      mimeType: officeFile.mimeType,
-      size: officeFile.size,
-      version: officeFile.version,
-      transport: 'token',
-      token: id,
+  try {
+    const bytes = message.payload.bytes.slice(0)
+    const result = await ucCall(
+      'uc.fs.createFileVersion',
+      {
+        blob: new Blob([bytes], { type: XLSX_MIME }),
+        filename: currentFile.name,
+        baseVersion: message.payload.baseVersion,
+      },
+      120_000,
+    )
+    const descriptor = fileDescriptorFromUc(result, currentFile, currentFile.name)
+    currentFile = { ...currentFile, ...descriptor, bytes, transport: 'buffer' }
+    legacyFiles.set(currentFile.id, currentFile)
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:save-history-version-result',
+      requestId: message.requestId,
+      payload: { ok: true, file: descriptor },
+    })
+  } catch (error) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:save-history-version-result',
+      requestId: message.requestId,
+      payload: {
+        ok: false,
+        code: errorCode(error, 'FILE_SAVE_FAILED'),
+        error: errorMessage(error),
+      },
     })
   }
-  return selected
 }
 
-function fileForRead(fileId: string): OfficeFile | null {
-  if (currentFile?.id === fileId) return currentFile
-  return localAssets.get(fileId) || null
+async function downloadOfficeDocument(
+  message: Extract<EditorToHostMessage, { type: 'office:download-document' }>,
+): Promise<void> {
+  try {
+    const bytes = message.payload.bytes.slice(0)
+    await ucCall(
+      'uc.download.saveFile',
+      {
+        blob: new Blob([bytes], { type: message.payload.file.mimeType || XLSX_MIME }),
+        filename: message.payload.file.name,
+      },
+      120_000,
+    )
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:download-document-result',
+      requestId: message.requestId,
+      payload: { ok: true },
+    })
+  } catch (error) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:download-document-result',
+      requestId: message.requestId,
+      payload: {
+        ok: false,
+        code: errorCode(error, 'DOWNLOAD_FAILED'),
+        error: errorMessage(error),
+      },
+    })
+  }
+}
+
+function isAssetLegacyPick(
+  message: Extract<EditorToHostMessage, { type: 'office:pick-file' }>,
+): boolean {
+  return (
+    message.payload.multiple === true ||
+    Boolean(
+      message.payload.accept?.some((value) => value.startsWith('image/') || value === 'image/*'),
+    )
+  )
+}
+
+async function handleLegacyPickFile(
+  message: Extract<EditorToHostMessage, { type: 'office:pick-file' }>,
+): Promise<void> {
+  try {
+    let files: OfficeFile[] = []
+    if (isAssetLegacyPick(message)) {
+      files = await pickAssetsFromUc(message.payload.accept, message.payload.multiple === true)
+    } else {
+      const result = await ucCall(
+        'uc.fs.pickFile',
+        { accept: message.payload.accept || [XLSX_MIME, '.xlsx'], multiple: false },
+        300_000,
+      )
+      if (!cancelled(result)) {
+        const root = asRecord(result)
+        const selectionId = stringValue(root.selectionId)
+        const file = await officeFileFromUc(result)
+        if (selectionId) {
+          // Compatibility only: the old protocol has no editor-load confirmation,
+          // so bind immediately. New Office flows never use this path.
+          await ucCall('uc.fs.bindCurrentFile', { selectionId }, 30_000)
+        }
+        currentFile = file
+        legacyFiles.set(file.id, file)
+        files = [file]
+      }
+    }
+
+    const selected: SelectedOfficeFile[] = files.map((file) => ({
+      ...descriptorOf(file),
+      transport: 'buffer',
+      bytes: file.bytes.slice(0),
+    }))
+    sendOffice(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-file-result',
+        requestId: message.requestId,
+        payload: { files: selected.length ? selected : null },
+      },
+      selected.flatMap((file) => (file.bytes ? [file.bytes] : [])),
+    )
+  } catch (error) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:error',
+      requestId: message.requestId,
+      payload: { code: errorCode(error, 'FILE_PICK_FAILED'), message: errorMessage(error) },
+    })
+  }
+}
+
+async function handleLegacyExport(
+  message: Extract<EditorToHostMessage, { type: 'office:export-document' }>,
+): Promise<void> {
+  try {
+    const bytes = message.payload.bytes.slice(0)
+    await ucCall(
+      'uc.download.saveFile',
+      {
+        blob: new Blob([bytes], { type: message.payload.file.mimeType || XLSX_MIME }),
+        filename: message.payload.file.name,
+      },
+      120_000,
+    )
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:export-document-result',
+      requestId: message.requestId,
+      payload: { ok: true },
+    })
+  } catch (error) {
+    sendOffice({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:export-document-result',
+      requestId: message.requestId,
+      payload: {
+        ok: false,
+        code: errorCode(error, 'DOWNLOAD_FAILED'),
+        error: errorMessage(error),
+      },
+    })
+  }
 }
 
 async function handleEditorMessage(message: EditorToHostMessage): Promise<void> {
@@ -497,26 +815,48 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
     case 'office:ready':
       if (message.payload.kind !== 'xlsx') return
       editorReady = true
-      sendOfficeInit()
+      sendOfficeInitOrNew()
       return
-    case 'office:pick-file': {
-      const files = await openLocalAssetPicker(message)
-      sendOffice({
-        protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:pick-file-result',
-        requestId: message.requestId,
-        payload: { files },
-      })
+    case 'office:pick-document':
+      await handlePickDocument(message)
       return
-    }
+    case 'office:document-opened':
+      await handleDocumentOpened(message)
+      return
+    case 'office:document-open-failed':
+      await handleDocumentOpenFailed(message)
+      return
+    case 'office:pick-assets':
+      await handlePickAssets(message)
+      return
+    case 'office:save-document':
+      await saveOfficeDocument(message)
+      return
+    case 'office:save-history-version':
+      await saveHistoryVersion(message)
+      return
+    case 'office:download-document':
+      await downloadOfficeDocument(message)
+      return
+    case 'office:close-approved':
+    case 'office:close-cancelled':
+      // Window ownership belongs to UC Host. Forward the stable control message
+      // instead of trying to manipulate the parent DOM from the Bridge.
+      forwardOfficeControl(message)
+      return
+
+    // ---- v1 compatibility aliases ----
+    case 'office:pick-file':
+      await handleLegacyPickFile(message)
+      return
     case 'office:read-file': {
-      const file = fileForRead(message.payload.fileId)
+      const file = legacyFiles.get(message.payload.fileId)
       if (!file) {
         sendOffice({
           protocol: OFFICE_PROTOCOL_VERSION,
           type: 'office:error',
           requestId: message.requestId,
-          payload: { code: 'READ_FAILED', message: '请求的文件不在当前 UC Office 会话中。' },
+          payload: { code: 'NOT_FOUND', message: '请求的文件不在当前 Office 会话中。' },
         })
         return
       }
@@ -526,37 +866,28 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
           protocol: OFFICE_PROTOCOL_VERSION,
           type: 'office:read-file-result',
           requestId: message.requestId,
-          payload: { file: { ...file, bytes } },
+          payload: { file: { ...file, bytes, transport: 'buffer' } },
         },
         [bytes],
       )
       return
     }
-    case 'office:save-document':
-      await saveOfficeDocument(message)
-      return
-    case 'office:save-history-version':
-      sendOffice({
-        protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:save-history-version-result',
-        requestId: message.requestId,
-        payload: { ok: false, code: 'SAVE_FAILED', error: 'UC Excel Host 暂未启用历史版本保存。' },
-      })
-      return
     case 'office:export-document':
-      sendOffice({
+      await handleLegacyExport(message)
+      return
+    case 'office:close-request':
+      forwardOfficeControl({
         protocol: OFFICE_PROTOCOL_VERSION,
-        type: 'office:export-document-result',
-        requestId: message.requestId,
-        payload: { ok: false, code: 'SAVE_FAILED', error: 'UC Excel Host 暂未启用独立导出。' },
+        type: 'office:close-approved',
+        requestId: message.requestId || officeRequestId('legacy-close'),
+        payload: { reason: message.payload.reason },
       })
       return
+
     case 'office:dirty-change':
     case 'office:title-change':
     case 'office:state-result':
     case 'office:save-result':
-    case 'office:close-request':
-    case 'office:close-cancelled':
       return
     case 'office:error':
       showError(new Error(`${message.payload.code}: ${message.payload.message}`))
@@ -576,7 +907,8 @@ window.addEventListener('message', (event) => {
       if (!pending) return
       pendingRpc.delete(message.id)
       window.clearTimeout(pending.timer)
-      if (message.error !== undefined && message.error !== null) pending.reject(rpcError(message.error))
+      if (message.error !== undefined && message.error !== null)
+        pending.reject(rpcError(message.error))
       else pending.resolve(ucResult(message as UcRpcResponse))
     }
     return

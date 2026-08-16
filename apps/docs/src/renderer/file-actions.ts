@@ -179,10 +179,25 @@ export async function loadFile(
   result: OpenFileResult | null,
 ): Promise<void> {
   if (!result || !ctx.editor) return
+  let selectionBound = false
   try {
     const parsed = await parseDocx(new Uint8Array(result.data))
+    // Build the complete editor document before committing the Host selection.
+    // A parse/conversion failure therefore leaves both Host and current editor unchanged.
+    const pmDoc = blocksToPmDoc(parsed.blocks)
+    // Validate the complete ProseMirror model before committing the Host selection.
+    ctx.editor.schema.nodeFromJSON(pmDoc)
+    if (result.selectionId && window.desktop.confirmOpenDocx) {
+      const binding = await window.desktop.confirmOpenDocx(result.selectionId)
+      if (!binding.ok) {
+        await window.desktop.releaseOpenDocx?.(result.selectionId)
+        ctx.setStatus(t('appOpenFailed', { error: binding.error ?? 'File binding failed.' }))
+        return
+      }
+      selectionBound = true
+    }
     ctx.editor.storage.listNumbering.defs = parsed.numbering
-    ctx.editor.commands.setContent(blocksToPmDoc(parsed.blocks) as never)
+    ctx.editor.commands.setContent(pmDoc as never)
     resetEditorHistory(ctx.editor)
     noteDocumentSwapped()
     ctx.setDoc({ parsed, filePath: result.path, fileName: result.name, hash: result.hash })
@@ -259,6 +274,9 @@ export async function loadFile(
     }
     void window.desktop.getRecentFiles().then(ctx.setRecent)
   } catch (err) {
+    if (result.selectionId && !selectionBound) {
+      await window.desktop.releaseOpenDocx?.(result.selectionId).catch(() => {})
+    }
     ctx.setStatus(t('appOpenFailed', { error: String(err) }))
   }
 }

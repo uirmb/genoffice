@@ -84,13 +84,30 @@ async function selectedToOfficeFile(
   selected: SelectedOfficeFile,
 ): Promise<OfficeFile> {
   if (selected.transport === 'buffer' && selected.bytes) {
-    return { ...selected, bytes: selected.bytes }
+    return { ...selected, transport: 'buffer', bytes: selected.bytes }
   }
   return host.readFile(selected.id)
 }
 
 function unavailable(message: string): Promise<never> {
   return Promise.reject(new Error(message))
+}
+
+function hostPickerFailure(code: string, message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string }
+  error.code = code
+  return error
+}
+
+function officeDescriptor(file: OfficeFile, fallbackMime: string): OfficeFileDescriptor {
+  const { bytes: _bytes, ...descriptor } = file
+  return {
+    ...descriptor,
+    mimeType: file.mimeType || fallbackMime,
+    size: file.size ?? file.bytes.byteLength,
+    version: file.version ?? null,
+    transport: 'buffer',
+  }
 }
 
 function createProjectApi(): ProjectApi {
@@ -119,10 +136,12 @@ export function createDocsWebDesktopController(
   bridge?: EditorIframeBridge,
 ): DocsWebDesktopController {
   let current: WebDocumentContext | null = null
+  const pendingDocumentSelections = new Map<string, OfficeFile>()
   let pendingOpen: OpenFileResult | null = null
   let initialOpenResolve: ((result: OpenFileResult | null) => void) | null = null
   let readyNotified = false
   let pendingStateRequestId: string | null = null
+  let pendingHostCloseRequest: { requestId: string; reason: 'window-close' } | null = null
   let mode: 'view' | 'edit' = 'edit'
   let saving = false
   let currentLang: DocsLang = normalizeLang(
@@ -138,6 +157,7 @@ export function createDocsWebDesktopController(
   const menuHandlers = new Set<MenuHandler>()
   const closeCheckHandlers = new Set<VoidHandler>()
   const closeSaveHandlers = new Set<VoidHandler>()
+  const hostCloseRequestHandlers = new Set<VoidHandler>()
   const aiStreamHandlers = new Set<(chunk: AiStreamChunk) => void>()
   const pendingSaveRequestIds = new Set<string>()
 
@@ -187,16 +207,24 @@ export function createDocsWebDesktopController(
         }
       : null
 
+  const fileToOpenResult = async (
+    file: OfficeFile,
+    selectionId?: string,
+  ): Promise<OpenFileResult> => {
+    const bytes = file.bytes.slice(0)
+    return {
+      path: virtualPath(file),
+      name: file.name,
+      data: bytes,
+      hash: await sha256(bytes),
+      ...(selectionId ? { selectionId } : {}),
+    }
+  }
+
   const setCurrentFile = async (file: OfficeFile): Promise<OpenFileResult> => {
     const bytes = file.bytes.slice(0)
     current = {
-      file: {
-        id: file.id,
-        name: file.name,
-        mimeType: file.mimeType || DOCX_MIME,
-        size: file.size ?? bytes.byteLength,
-        version: file.version ?? null,
-      },
+      file: officeDescriptor(file, DOCX_MIME),
       path: virtualPath(file),
       hash: await sha256(bytes),
       bytes,
@@ -206,6 +234,15 @@ export function createDocsWebDesktopController(
   }
 
   const openSelectedDocx = async (): Promise<OpenFileResult | null> => {
+    if (host.pickDocument && host.confirmDocumentOpened && host.releasePickedDocument) {
+      const picked = await host.pickDocument({ accept: [DOCX_MIME, '.docx'] })
+      if (picked.status === 'cancelled') return null
+      if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)
+      pendingDocumentSelections.set(picked.selectionId, picked.file)
+      return fileToOpenResult(picked.file, picked.selectionId)
+    }
+
+    // Compatibility only for custom/older hosts that have not implemented the stable API.
     const selected = await host.pickFile({
       multiple: false,
       accept: [DOCX_MIME, '.docx'],
@@ -218,6 +255,7 @@ export function createDocsWebDesktopController(
   const saveWithName = async (
     name: string,
     data: ArrayBuffer,
+    saveMode: 'save' | 'saveAs' = 'save',
   ): Promise<{ ok: boolean; path?: string; error?: string; reason?: 'external-modified' }> => {
     const fallbackFile: OfficeFileDescriptor = current?.file ?? {
       id: `new:${Date.now()}`,
@@ -225,6 +263,7 @@ export function createDocsWebDesktopController(
       mimeType: DOCX_MIME,
       size: data.byteLength,
       version: null,
+      transport: 'buffer',
     }
     const file: OfficeFileDescriptor = {
       ...fallbackFile,
@@ -240,6 +279,7 @@ export function createDocsWebDesktopController(
         file,
         bytes: data,
         baseVersion: current?.file.version ?? null,
+        mode: saveMode,
         newDocument,
       })
       if (!result.ok) {
@@ -251,7 +291,13 @@ export function createDocsWebDesktopController(
         }
       }
 
-      const savedFile = result.file ?? file
+      if (!result.file) {
+        const error = 'Host reported a successful save without the latest file descriptor.'
+        reportHostSaveResult(false, error)
+        return { ok: false, error }
+      }
+
+      const savedFile = result.file
       const oldPath = current?.path
       current = {
         file: savedFile,
@@ -300,6 +346,33 @@ export function createDocsWebDesktopController(
     reportDirtyChange: (dirty) => host.setDirty(dirty),
     canAutoPersistPathlessDocument: () => false,
     openDocx: openSelectedDocx,
+    confirmOpenDocx: async (selectionId) => {
+      const candidate = pendingDocumentSelections.get(selectionId)
+      if (!candidate || !host.confirmDocumentOpened) {
+        return { ok: false, error: 'The pending document selection is no longer available.' }
+      }
+      const result = await host.confirmDocumentOpened(selectionId)
+      if (!result.ok) return { ok: false, error: result.error }
+
+      const bytes = candidate.bytes.slice(0)
+      const candidateDescriptor = officeDescriptor(candidate, DOCX_MIME)
+      const bound: OfficeFileDescriptor = result.file
+        ? { ...candidateDescriptor, ...result.file, transport: 'buffer' }
+        : candidateDescriptor
+      current = {
+        file: bound,
+        path: virtualPath(bound),
+        hash: await sha256(bytes),
+        bytes,
+      }
+      pendingDocumentSelections.delete(selectionId)
+      host.setTitle(current.file.name)
+      return { ok: true }
+    },
+    releaseOpenDocx: async (selectionId) => {
+      pendingDocumentSelections.delete(selectionId)
+      await host.releasePickedDocument?.(selectionId)
+    },
     openDocxPath: async (path) => (current?.path === path ? contextToOpenResult() : null),
     consumePendingOpenDocx: async () => {
       const value = pendingOpen
@@ -326,14 +399,15 @@ export function createDocsWebDesktopController(
       renameHandlers.add(handler)
       return () => renameHandlers.delete(handler)
     },
-    saveDocx: async (_path, data) => saveWithName(current?.file.name ?? 'Untitled.docx', data),
+    saveDocx: async (_path, data) =>
+      saveWithName(current?.file.name ?? 'Untitled.docx', data, 'save'),
     writeRecoveryCopy: async () => ({ ok: true }),
     onTeardown: (handler) => {
       teardownHandlers.add(handler)
       return () => teardownHandlers.delete(handler)
     },
-    saveDocxAs: async (defaultName, data) => saveWithName(defaultName, data),
-    saveDocxNew: async (defaultName, data) => saveWithName(defaultName, data),
+    saveDocxAs: async (defaultName, data) => saveWithName(defaultName, data, 'saveAs'),
+    saveDocxNew: async (defaultName, data) => saveWithName(defaultName, data, 'save'),
     saveHistoryVersion: async (_defaultName, data) => {
       if (!current) return { ok: false, error: 'Save the new document before creating history.' }
       if (!host.saveHistoryVersion) {
@@ -344,10 +418,16 @@ export function createDocsWebDesktopController(
         bytes: data,
         baseVersion: current.file.version ?? null,
       })
+      if (result.ok && result.file) {
+        current.file = { ...result.file, mimeType: result.file.mimeType || DOCX_MIME }
+        current.path = virtualPath(current.file)
+        host.setTitle(current.file.name)
+      }
       return { ok: result.ok, error: result.error }
     },
     exportDocx: async (defaultName, data) => {
-      if (!host.exportDocument) {
+      const download = host.downloadDocument ?? host.exportDocument
+      if (!download) {
         return { ok: false, error: 'DOCX export is not supported by this host.' }
       }
       const descriptor: OfficeFileDescriptor = current?.file ?? {
@@ -356,8 +436,9 @@ export function createDocsWebDesktopController(
         mimeType: DOCX_MIME,
         size: data.byteLength,
         version: null,
+        transport: 'buffer',
       }
-      const result = await host.exportDocument({
+      const result = await download.call(host, {
         format: 'docx',
         file: { ...descriptor, name: defaultName, size: data.byteLength },
         bytes: data,
@@ -365,13 +446,60 @@ export function createDocsWebDesktopController(
       return { ok: result.ok, error: result.error }
     },
     requestHostClose: async () => {
-      await host.requestClose?.()
+      if (pendingHostCloseRequest) {
+        const request = pendingHostCloseRequest
+        pendingHostCloseRequest = null
+        if (host.approveClose) {
+          await host.approveClose(request.requestId)
+          return
+        }
+        if (bridge) {
+          bridge.send({
+            protocol: OFFICE_PROTOCOL_VERSION,
+            type: 'office:close-request',
+            requestId: request.requestId,
+            payload: { reason: request.reason },
+          })
+          return
+        }
+      }
+      if (host.approveClose) await host.approveClose()
+      else await host.requestClose?.()
+    },
+    onHostCloseRequest: (handler) => {
+      hostCloseRequestHandlers.add(handler)
+      if (pendingHostCloseRequest) queueMicrotask(handler)
+      return () => hostCloseRequestHandlers.delete(handler)
+    },
+    cancelHostCloseRequest: () => {
+      if (!pendingHostCloseRequest) return
+      const request = pendingHostCloseRequest
+      pendingHostCloseRequest = null
+      if (host.cancelClose) {
+        void host.cancelClose(request.requestId)
+        return
+      }
+      bridge?.send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:close-cancelled',
+        requestId: request.requestId,
+        payload: { reason: 'user-cancelled' },
+      })
     },
     getRecentFiles: async () => [],
     pickImage: async (): Promise<PickImageResult | null> => {
-      const selected = await host.pickFile({ multiple: false, accept: [...IMAGE_MIMES] })
-      if (!selected?.[0]) return null
-      const file = await selectedToOfficeFile(host, selected[0])
+      let file: OfficeFile
+      if (host.pickAssets) {
+        const picked = await host.pickAssets({ multiple: false, accept: [...IMAGE_MIMES] })
+        if (picked.status === 'cancelled') return null
+        if (picked.status === 'failed') throw hostPickerFailure(picked.code, picked.error)
+        if (!picked.files[0]) throw new Error('Host returned an empty selected asset result.')
+        file = picked.files[0]
+      } else {
+        const selected = await host.pickFile({ multiple: false, accept: [...IMAGE_MIMES] })
+        if (!selected?.[0]) return null
+        file = await selectedToOfficeFile(host, selected[0])
+      }
       if (!IMAGE_MIMES.includes(file.mimeType as (typeof IMAGE_MIMES)[number])) {
         throw new Error(`Unsupported image type: ${file.mimeType}`)
       }
@@ -496,6 +624,15 @@ export function createDocsWebDesktopController(
       case 'office:set-locale':
         setLanguage(message.payload.locale)
         break
+      case 'office:request-close': {
+        if (pendingHostCloseRequest) break
+        pendingHostCloseRequest = {
+          requestId: message.requestId,
+          reason: message.payload.reason,
+        }
+        for (const handler of hostCloseRequestHandlers) handler()
+        break
+      }
       case 'office:save': {
         const shouldTriggerSave = pendingSaveRequestIds.size === 0
         pendingSaveRequestIds.add(message.requestId)
@@ -540,6 +677,12 @@ export function createDocsWebDesktopController(
       menuHandlers.clear()
       closeCheckHandlers.clear()
       closeSaveHandlers.clear()
+      hostCloseRequestHandlers.clear()
+      pendingHostCloseRequest = null
+      for (const selectionId of pendingDocumentSelections.keys()) {
+        void host.releasePickedDocument?.(selectionId)
+      }
+      pendingDocumentSelections.clear()
       aiStreamHandlers.clear()
     },
   }

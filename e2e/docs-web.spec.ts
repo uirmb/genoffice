@@ -59,9 +59,10 @@ test.describe('Docs Web', () => {
     await editorFrame.locator('.ribbon-tab-file').click()
     await expect(editorFrame.locator('.file-menu-open')).toBeVisible()
     await expect(editorFrame.locator('.file-menu-save')).toBeVisible()
+    await expect(editorFrame.locator('.file-menu-save')).toBeDisabled()
     await expect(editorFrame.locator('.file-menu-save-as')).toBeVisible()
-    await expect(editorFrame.locator('.file-menu-save-history')).toBeVisible()
-    await expect(editorFrame.locator('.file-menu-export-docx')).toBeVisible()
+    await expect(editorFrame.locator('.file-menu-save-history')).toHaveText('存为新的历史版本')
+    await expect(editorFrame.locator('.file-menu-export-docx')).toHaveText('下载到本地')
     await expect(editorFrame.locator('.file-menu-exit')).toBeVisible()
     await editorFrame.locator('.ribbon-tab-file').click()
 
@@ -71,10 +72,16 @@ test.describe('Docs Web', () => {
     await page.keyboard.type(editedText)
     await expect(editor).toContainText(editedText)
     await expect(page.locator('#dirty-state')).toHaveText('dirty')
+    await editorFrame.locator('.ribbon-tab-file').click()
+    await expect(editorFrame.locator('.file-menu-save')).toBeEnabled()
+    await editorFrame.locator('.ribbon-tab-file').click()
 
     await page.locator('#save-button').click()
     await expect(page.locator('#host-state')).toHaveText('saved', { timeout: 30_000 })
     await expect(page.locator('#dirty-state')).toHaveText('clean')
+    await editorFrame.locator('.ribbon-tab-file').click()
+    await expect(editorFrame.locator('.file-menu-save')).toBeDisabled()
+    await editorFrame.locator('.ribbon-tab-file').click()
 
     const saveAsText = '另存为链路验证'
     await editor.click()
