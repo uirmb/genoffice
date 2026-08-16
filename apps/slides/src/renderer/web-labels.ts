@@ -33,8 +33,8 @@ const en: SlidesWebLifecycleLabels = {
 const labels: Partial<Record<Lang, SlidesWebLifecycleLabels>> = {
   en,
   zh: {
-    saveHistory: '存为历史版本',
-    exportPptx: '导出为 PPTX',
+    saveHistory: '存为新的历史版本',
+    exportPptx: '下载到本地',
     exit: '退出',
     historySaved: '已存为历史版本',
     historyFailed: '存为历史版本失败',

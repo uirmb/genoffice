@@ -101,10 +101,7 @@ describe('Sheets Web XLSX media client', () => {
       )
     vi.stubGlobal('fetch', fetchMock)
 
-    const result = await readXlsxWorkbookMedia(
-      { sessionId, visualId: 'image-1' },
-      workbook(),
-    )
+    const result = await readXlsxWorkbookMedia({ sessionId, visualId: 'image-1' }, workbook())
 
     expect(result).toEqual({
       mediaType: 'image/png',
@@ -167,6 +164,7 @@ describe('Sheets Web Host image adapter', () => {
     const result = await readLocalImageViaHost(host, { path: 'host-picker://insert-image' })
 
     expect(result).toEqual({
+      name: 'platform-image.png',
       mediaType: 'image/png',
       base64: Buffer.from(bytes).toString('base64'),
     })

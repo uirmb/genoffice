@@ -109,6 +109,7 @@ interface RibbonProps {
   /** shallow-stable snapshot of every editor-state read shown in the ribbon (memo invalidation key) */
   formatState: RibbonFormatState
   hasDoc: boolean
+  canSaveCurrentDocument?: boolean
   blocks: Block[]
   /** Fallback when a new list can't reuse a numId (adopt a document definition / create one) */
   allocateNumId?: (kind: 'bullet' | 'ordered') => string | null
@@ -579,6 +580,7 @@ function RibbonInner({
   editor,
   formatState: fs,
   hasDoc,
+  canSaveCurrentDocument,
   blocks,
   allocateNumId,
   createListDef,
@@ -1385,7 +1387,7 @@ function RibbonInner({
                 </button>
                 <button
                   className="file-menu-save"
-                  disabled={!hasDoc}
+                  disabled={!(canSaveCurrentDocument ?? hasDoc)}
                   onClick={() => {
                     setDropdown(null)
                     onSave()

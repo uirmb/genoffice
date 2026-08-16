@@ -161,9 +161,10 @@ test.describe('Slides Web', () => {
     await frame.locator('.ribbon-tab-file').click()
     await expect(frame.locator('.file-menu-open')).toBeVisible()
     await expect(frame.locator('.file-menu-save')).toBeVisible()
+    await expect(frame.locator('.file-menu-save')).toBeDisabled()
     await expect(frame.locator('.file-menu-save-as')).toBeVisible()
-    await expect(frame.locator('.file-menu-save-history')).toBeVisible()
-    await expect(frame.locator('.file-menu-export-pptx')).toBeVisible()
+    await expect(frame.locator('.file-menu-save-history')).toHaveText('存为新的历史版本')
+    await expect(frame.locator('.file-menu-export-pptx')).toHaveText('下载到本地')
     await expect(frame.locator('.file-menu-exit')).toBeVisible()
     await expect(frame.locator('.file-menu-electron-only').first()).toBeHidden()
     await frame.locator('.ribbon-tab-file').click()
@@ -171,10 +172,16 @@ test.describe('Slides Web', () => {
     const editedText = 'PPT Web iframe 保存验证中文'
     await replaceFirstElementText(frame, editedText)
     await expect(page.locator('#dirty-state')).toHaveText('dirty')
+    await frame.locator('.ribbon-tab-file').click()
+    await expect(frame.locator('.file-menu-save')).toBeEnabled()
+    await frame.locator('.ribbon-tab-file').click()
 
     await page.locator('#save-button').click()
     await expect(page.locator('#host-state')).toHaveText('saved', { timeout: 30_000 })
     await expect(page.locator('#dirty-state')).toHaveText('clean')
+    await frame.locator('.ribbon-tab-file').click()
+    await expect(frame.locator('.file-menu-save')).toBeDisabled()
+    await frame.locator('.ribbon-tab-file').click()
 
     // The Host's current bytes must reparse as a real PPTX with the browser edit persisted.
     const savedDownloadPromise = page.waitForEvent('download')
