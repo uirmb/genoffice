@@ -661,12 +661,44 @@ export function insertAiShapeVisual(
   queueCtxVisualInstall(ctx, runtime, op.sheetId)
 }
 
+function insertPictureDataUrl(
+  ctx: VisualActionContext,
+  dataUrl: string,
+  mediaType: string,
+  fileName: string,
+): void {
+  const image = new Image()
+  image.onload = () =>
+    insertPictureVisual(ctx, dataUrl, mediaType, fileName, image.naturalWidth, image.naturalHeight)
+  image.onerror = () => insertPictureVisual(ctx, dataUrl, mediaType, fileName, 480, 320)
+  image.src = dataUrl
+}
+
 export function handleInsertPicture(ctx: VisualActionContext): void {
   if (!ctx.univerRef.current) return
   if (!ctx.lazyWorkbookRef.current) {
     ctx.setMessage(t('appPictureNeedsFile'))
     return
   }
+
+  if (document.documentElement.classList.contains('office-web')) {
+    void window.desktopApi
+      .readLocalImage({ path: 'host-picker://insert-image' })
+      .then((picked) => {
+        insertPictureDataUrl(
+          ctx,
+          `data:${picked.mediaType};base64,${picked.base64}`,
+          picked.mediaType,
+          picked.name ?? 'Image',
+        )
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.message === 'Image selection was cancelled.') return
+        ctx.setMessage(error instanceof Error ? error.message : t('appPictureBadType'))
+      })
+    return
+  }
+
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = 'image/png,image/jpeg,image/gif'
@@ -686,18 +718,7 @@ export function handleInsertPicture(ctx: VisualActionContext): void {
     reader.onload = () => {
       const dataUrl = typeof reader.result === 'string' ? reader.result : null
       if (!dataUrl) return
-      const image = new Image()
-      image.onload = () =>
-        insertPictureVisual(
-          ctx,
-          dataUrl,
-          mediaType,
-          file.name,
-          image.naturalWidth,
-          image.naturalHeight,
-        )
-      image.onerror = () => insertPictureVisual(ctx, dataUrl, mediaType, file.name, 480, 320)
-      image.src = dataUrl
+      insertPictureDataUrl(ctx, dataUrl, mediaType, file.name)
     }
     reader.readAsDataURL(file)
   }

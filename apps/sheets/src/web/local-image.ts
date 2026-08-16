@@ -62,7 +62,12 @@ async function legacySelectedBytes(
   return (await host.readFile(selected.id)).bytes
 }
 
-async function pickImageBytes(host: OfficeHostApi): Promise<ArrayBuffer> {
+interface PickedImageBytes {
+  name: string
+  bytes: ArrayBuffer
+}
+
+async function pickImageBytes(host: OfficeHostApi): Promise<PickedImageBytes> {
   if (host.pickAssets) {
     const result = await host.pickAssets({ multiple: false, accept: IMAGE_ACCEPT })
     if (result.status === 'cancelled') {
@@ -74,7 +79,10 @@ async function pickImageBytes(host: OfficeHostApi): Promise<ArrayBuffer> {
       throw error
     }
     if (!result.files[0]) throw new Error('Host returned an empty selected asset result.')
-    return validateOfficeImage(result.files[0])
+    return {
+      name: result.files[0].name,
+      bytes: validateOfficeImage(result.files[0]),
+    }
   }
 
   // Protocol-v1 compatibility only. Stable embedded Office hosts expose
@@ -85,7 +93,10 @@ async function pickImageBytes(host: OfficeHostApi): Promise<ArrayBuffer> {
     mode: 'file',
   })
   if (!selected?.[0]) throw new Error('Image selection was cancelled.')
-  return legacySelectedBytes(host, selected[0])
+  return {
+    name: selected[0].name,
+    bytes: await legacySelectedBytes(host, selected[0]),
+  }
 }
 
 /**
@@ -97,12 +108,13 @@ export async function readLocalImageViaHost(
   host: OfficeHostApi,
   _request: LocalImageRequest,
 ): Promise<LocalImageResult> {
-  const buffer = await pickImageBytes(host)
-  const bytes = new Uint8Array(buffer)
+  const picked = await pickImageBytes(host)
+  const bytes = new Uint8Array(picked.bytes)
   const mediaType = sniffImageType(bytes)
   if (!mediaType) throw new Error('The selected file is not a PNG/JPEG/GIF image.')
 
   return localImageResultSchema.parse({
+    name: picked.name,
     mediaType,
     base64: bytesToBase64(bytes),
   })

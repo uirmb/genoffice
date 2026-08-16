@@ -1494,6 +1494,7 @@ export const localImageRequestSchema = z
 
 export const localImageResultSchema = z
   .object({
+    name: z.string().min(1).max(255).optional(),
     mediaType: z.enum(['image/png', 'image/jpeg', 'image/gif']),
     /// ~20MB decoded, mirroring the picker-based insert limit.
     base64: z.string().min(1).max(28_000_000),

@@ -1340,7 +1340,7 @@ export function Ribbon({
                 </button>
                 <button
                   className="file-menu-save"
-                  disabled={!hasDoc}
+                  disabled={!dirty}
                   onClick={() => {
                     setFileOpen(false)
                     onSave()
