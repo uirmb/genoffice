@@ -48,13 +48,10 @@ jobs:
         run: |
           npm run format
           if ! git diff --quiet; then
-            {
-              echo '## Prettier changes required'
-              echo
-              echo '```diff'
-              git diff --no-ext-diff
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
+            git diff --name-only | while IFS= read -r file; do
+              encoded=$(base64 -w0 "$file")
+              echo "::error file=$file,title=PRETTIER_BASE64::$encoded"
+            done
             exit 1
           fi
 
