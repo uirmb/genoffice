@@ -1,4 +1,4 @@
-export type OfficeDocumentKind = 'docx' | 'pptx' | 'xlsx'
+export type OfficeDocumentKind = 'docx' | 'pptx' | 'xlsx' | 'pdf'
 export type OfficeEditorMode = 'view' | 'edit'
 export type OfficeSaveMode = 'save' | 'saveAs'
 export type OfficeExportFormat = 'docx' | 'pptx' | 'xlsx'
