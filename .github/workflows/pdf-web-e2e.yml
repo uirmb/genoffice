@@ -45,7 +45,18 @@ jobs:
       - name: Check changed-file formatting
         env:
           FORMAT_BASE_REF: ${{ github.event.pull_request.base.sha }}
-        run: npm run format:check
+        run: |
+          npm run format
+          if ! git diff --quiet; then
+            {
+              echo '## Prettier changes required'
+              echo
+              echo '```diff'
+              git diff --no-ext-diff
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Lint
         run: npm run lint
