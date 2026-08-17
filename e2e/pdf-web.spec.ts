@@ -46,6 +46,12 @@ test('embedded PDF Web opens, searches, and transactionally replaces PDFs', asyn
   await expect(officeFrame.getByText('viewer-two-pages.pdf')).toBeVisible()
   await expect(page.locator('#host-state')).toHaveText('opened')
 
+  const firstThumbnail = officeFrame.locator('.pdf-web-thumb canvas').first()
+  await expect(firstThumbnail).toHaveAttribute('width', /\d+/)
+  await officeFrame.getByRole('button', { name: '目录' }).click()
+  await officeFrame.getByRole('button', { name: '页面' }).click()
+  await expect(officeFrame.locator('.pdf-web-thumb canvas').first()).toHaveAttribute('width', /\d+/)
+
   const search = officeFrame.getByRole('textbox', { name: '搜索文档' })
   await search.fill('Search Marker 2026')
   await officeFrame.getByRole('button', { name: '查找' }).click()
