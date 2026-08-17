@@ -30,6 +30,8 @@ const markdownOrigin = new URL(markdownUrl).origin
 let editorReady = false
 let currentFile: OfficeFile | null = null
 let pendingAssetRequestId: string | null = null
+let pendingDocumentRequestId: string | null = null
+const pendingDocumentSelections = new Map<string, OfficeFile>()
 let saveVersion = 0
 let requestSequence = 0
 
@@ -45,8 +47,8 @@ function send(message: HostToEditorMessage, transfer: Transferable[] = []): void
 function capabilities() {
   return {
     ai: false,
-    open: false,
-    openDocument: false,
+    open: true,
+    openDocument: true,
     pickAssets: true,
     save: true,
     saveAs: true,
@@ -78,6 +80,21 @@ async function browserFileToOfficeFile(file: File, prefix: string): Promise<Offi
   }
 }
 
+function descriptorOf(file: OfficeFile): OfficeFileDescriptor {
+  return {
+    id: file.id,
+    ...(file.nodeId ? { nodeId: file.nodeId } : {}),
+    ...(file.tenantId ? { tenantId: file.tenantId } : {}),
+    ...(file.parentId !== undefined ? { parentId: file.parentId } : {}),
+    name: file.name,
+    mimeType: file.mimeType,
+    size: file.size,
+    version: file.version,
+    ...(file.updatedAt ? { updatedAt: file.updatedAt } : {}),
+    transport: 'buffer',
+  }
+}
+
 function render(): void {
   fileName.textContent = currentFile?.name ?? '未选择 Markdown'
 }
@@ -105,6 +122,62 @@ function sendInit(): void {
     },
     [bytes],
   )
+}
+
+async function completeMarkdownPicker(file: File | null): Promise<void> {
+  const requestIdValue = pendingDocumentRequestId
+  pendingDocumentRequestId = null
+  markdownPicker.value = ''
+
+  // No editor request means this was the Host demo's own initial-document picker.
+  if (!requestIdValue) {
+    if (!file) return
+    currentFile = await browserFileToOfficeFile(file, 'markdown')
+    render()
+    sendInit()
+    return
+  }
+
+  if (!file) {
+    send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:pick-document-result',
+      requestId: requestIdValue,
+      payload: { status: 'cancelled', selectionId: null, file: null },
+    })
+    return
+  }
+
+  try {
+    const selected = await browserFileToOfficeFile(file, 'markdown-selection')
+    const selectionId = `selection:${crypto.randomUUID()}`
+    pendingDocumentSelections.set(selectionId, selected)
+    const bytes = selected.bytes.slice(0)
+    send(
+      {
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:pick-document-result',
+        requestId: requestIdValue,
+        payload: {
+          status: 'selected',
+          selectionId,
+          file: { ...selected, bytes, transport: 'buffer' },
+        },
+      },
+      [bytes],
+    )
+  } catch (error) {
+    send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:pick-document-result',
+      requestId: requestIdValue,
+      payload: {
+        status: 'failed',
+        code: 'PICK_DOCUMENT_FAILED',
+        error: error instanceof Error ? error.message : String(error),
+      },
+    })
+  }
 }
 
 async function completeAssetPicker(file: File | null): Promise<void> {
@@ -168,6 +241,42 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
       if (currentFile) currentFile = { ...currentFile, name: message.payload.title }
       render()
       return
+    case 'office:pick-document':
+      pendingDocumentRequestId = message.requestId
+      markdownPicker.accept = message.payload.accept?.join(',') || '.md,.markdown,text/markdown'
+      markdownPicker.click()
+      return
+    case 'office:document-opened': {
+      const selected = pendingDocumentSelections.get(message.payload.selectionId)
+      if (!selected) {
+        send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:document-opened-result',
+          requestId: message.requestId,
+          payload: {
+            ok: false,
+            code: 'NOT_FOUND',
+            error: 'The pending Markdown selection is no longer available.',
+          },
+        })
+        return
+      }
+
+      pendingDocumentSelections.delete(message.payload.selectionId)
+      currentFile = selected
+      render()
+      setHostState('clean')
+      send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:document-opened-result',
+        requestId: message.requestId,
+        payload: { ok: true, file: descriptorOf(selected) },
+      })
+      return
+    }
+    case 'office:document-open-failed':
+      pendingDocumentSelections.delete(message.payload.selectionId)
+      return
     case 'office:save-document': {
       saveVersion += 1
       const bytes = message.payload.bytes.slice(0)
@@ -222,13 +331,10 @@ window.addEventListener('message', (event) => {
   void handleEditorMessage(event.data as EditorToHostMessage)
 })
 
-markdownPicker.addEventListener('change', async () => {
-  const file = markdownPicker.files?.[0]
-  if (!file) return
-  currentFile = await browserFileToOfficeFile(file, 'markdown')
-  render()
-  sendInit()
+markdownPicker.addEventListener('change', () => {
+  void completeMarkdownPicker(markdownPicker.files?.[0] ?? null)
 })
+markdownPicker.addEventListener('cancel', () => void completeMarkdownPicker(null))
 
 assetPicker.addEventListener('change', () => {
   void completeAssetPicker(assetPicker.files?.[0] ?? null)
