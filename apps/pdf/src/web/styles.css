@@ -10,7 +10,12 @@
   --pdf-text: #252423;
   --pdf-text-dim: #666;
   --pdf-hover: #f4f4f4;
-  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', sans-serif;
+  font-family:
+    'Segoe UI',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Microsoft YaHei',
+    sans-serif;
   color: var(--pdf-text);
   background: var(--pdf-surface);
 }

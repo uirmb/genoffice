@@ -19,7 +19,9 @@ test('standalone PDF Web exposes a viewer-only empty state', async ({ page }) =>
   await page.goto(PDF_WEB_URL)
 
   await expect(page.getByRole('heading', { name: 'PDF 预览' })).toBeVisible()
-  await expect(page.getByText('Web 版本仅提供阅读能力，不包含编辑、批注、签名或表单修改。')).toBeVisible()
+  await expect(
+    page.getByText('Web 版本仅提供阅读能力，不包含编辑、批注、签名或表单修改。'),
+  ).toBeVisible()
   await expect(page.getByRole('button', { name: '打开 PDF' })).toBeVisible()
   await expect(page.getByText('只读')).toBeVisible()
   await expect(page.getByRole('button', { name: /保存|另存为|签名|批注/ })).toHaveCount(0)

@@ -1,4 +1,8 @@
-import type { OfficeFile, OfficeFileDescriptor, PickDocumentOptions } from '@genoffice/office-host-api'
+import type {
+  OfficeFile,
+  OfficeFileDescriptor,
+  PickDocumentOptions,
+} from '@genoffice/office-host-api'
 import {
   OFFICE_PROTOCOL_VERSION,
   isOfficeProtocolMessage,

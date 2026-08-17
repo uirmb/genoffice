@@ -563,7 +563,10 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             protocol: OFFICE_PROTOCOL_VERSION,
             type: 'office:error',
             requestId: message.requestId,
-            payload: { code: 'READ_ONLY', message: 'PDF Web is viewer-only and cannot create PDFs.' },
+            payload: {
+              code: 'READ_ONLY',
+              message: 'PDF Web is viewer-only and cannot create PDFs.',
+            },
           })
           return
         case 'office:set-mode':
@@ -705,20 +708,10 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
         >
           +
         </button>
-        <button
-          className="pdf-web-button"
-          type="button"
-          onClick={fitWidth}
-          disabled={!pdfDocument}
-        >
+        <button className="pdf-web-button" type="button" onClick={fitWidth} disabled={!pdfDocument}>
           适合宽度
         </button>
-        <button
-          className="pdf-web-button"
-          type="button"
-          onClick={fitPage}
-          disabled={!pdfDocument}
-        >
+        <button className="pdf-web-button" type="button" onClick={fitPage} disabled={!pdfDocument}>
           适合页面
         </button>
         <div className="pdf-web-toolbar-spacer" />

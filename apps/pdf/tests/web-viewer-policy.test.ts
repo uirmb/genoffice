@@ -20,6 +20,8 @@ describe('PDF Web viewer-only policy', () => {
     expect(PDF_WEB_ACCEPT).toEqual(['application/pdf', '.pdf'])
     expect(isPdfOfficeFile({ name: 'report.bin', mimeType: 'application/pdf' })).toBe(true)
     expect(isPdfOfficeFile({ name: 'REPORT.PDF', mimeType: 'application/octet-stream' })).toBe(true)
-    expect(isPdfOfficeFile({ name: 'report.docx', mimeType: 'application/octet-stream' })).toBe(false)
+    expect(isPdfOfficeFile({ name: 'report.docx', mimeType: 'application/octet-stream' })).toBe(
+      false,
+    )
   })
 })
