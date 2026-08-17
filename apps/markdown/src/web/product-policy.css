@@ -12,6 +12,12 @@ html.genoffice-markdown-web .ai-dock {
   display: none !important;
 }
 
+/* The hidden AI ribbon group must not leave its group wrapper/divider behind. */
+html.genoffice-markdown-web .ribbon > .ribbon-group:has(.ai-entry),
+html.genoffice-markdown-web .ribbon > .ribbon-group:has(.ai-entry) + .rb-sep {
+  display: none !important;
+}
+
 html.genoffice-markdown-web .app-main {
   grid-template-columns: minmax(0, 1fr) !important;
 }
@@ -31,7 +37,7 @@ html.genoffice-markdown-web .markdown-file-tab {
   border-radius: 4px;
   background: #185abd;
   color: #fff;
-  padding: 6px 14px;
+  padding: 6px 16px;
   font: inherit;
   font-size: 13px;
   line-height: 20px;
@@ -50,7 +56,7 @@ html.genoffice-markdown-web .markdown-file-tab:disabled {
 
 html.genoffice-markdown-web .markdown-file-menu {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 2px);
   left: 0;
   z-index: 80;
   min-width: 210px;
@@ -93,12 +99,108 @@ html.genoffice-markdown-web .markdown-file-menu-key {
   white-space: nowrap;
 }
 
-html.genoffice-markdown-web .markdown-file-menu-separator {
-  height: 1px;
-  margin: 4px 8px;
-  background: #edebe9;
+/* Word parity: no divider/blank AI slot after the quick Save command. */
+html.genoffice-markdown-web .markdown-quick-save + .rb-sep {
+  display: none !important;
 }
 
+/* Word QAT parity: exact Save button box, hover plate and glyph alignment. */
 html.genoffice-markdown-web .markdown-quick-save {
+  width: 30px;
+  height: 28px;
   flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: #232325;
+  cursor: pointer;
+}
+
+html.genoffice-markdown-web .markdown-quick-save svg {
+  display: block;
+  margin: 0 auto;
+}
+
+html.genoffice-markdown-web .markdown-quick-save:hover:not(:disabled) {
+  background: #f3f2f1;
+}
+
+html.genoffice-markdown-web .markdown-quick-save:disabled {
+  color: #909499;
+  background: none;
+  cursor: default;
+}
+
+/* Word-parity unsaved-exit modal, shared by File -> Exit and Host window close. */
+html.genoffice-markdown-web .modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+html.genoffice-markdown-web .modal {
+  width: 440px;
+  padding: 22px 24px;
+  border-radius: 8px;
+  background: #fff;
+  color: #252423;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+
+html.genoffice-markdown-web .modal h2 {
+  margin: 0 0 16px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+html.genoffice-markdown-web .modal p {
+  margin: 0;
+  color: #605e5c;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+html.genoffice-markdown-web .modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+html.genoffice-markdown-web .modal-actions button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+html.genoffice-markdown-web .modal-actions .btn-ghost {
+  background: none;
+  color: #185abd;
+}
+
+html.genoffice-markdown-web .modal-actions .btn-ghost:hover:not(:disabled) {
+  background: #f3f2f1;
+}
+
+html.genoffice-markdown-web .modal-actions .btn-primary {
+  background: #185abd;
+  color: #fff;
+}
+
+html.genoffice-markdown-web .modal-actions .btn-primary:hover:not(:disabled) {
+  background: #124a9e;
+}
+
+html.genoffice-markdown-web .modal-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
 }

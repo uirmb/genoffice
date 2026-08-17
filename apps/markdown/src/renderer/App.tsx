@@ -15,6 +15,7 @@ import type { SlashController, SlashMenuState } from './editor/slashCommand'
 import { setImageBaseDir } from './editor/localImage'
 import { Ribbon } from './components/Ribbon'
 import { FileMenu } from './components/FileMenu'
+import { ExitConfirmModal } from './components/ExitConfirmModal'
 import { IconSave } from './components/icons'
 import { SlashMenu, type SlashMenuHandle } from './components/SlashMenu'
 import { TableMenu } from './components/TableMenu'
@@ -27,6 +28,7 @@ import type { ExportFormat, SaveMode } from '../shared/ipc'
 
 type LoadStatus = 'loading' | 'ready' | 'error'
 type SaveState = 'idle' | 'saving' | 'saved' | 'failed'
+type ExitSource = 'menu' | 'host'
 
 const EMPTY_ENVELOPE: DocEnvelope = {
   frontmatter: '',
@@ -87,6 +89,8 @@ export default function App() {
   const [fmText, setFmText] = useState('')
   const [aiOpen, setAiOpen] = useState(true)
   const [aiPreset, setAiPreset] = useState<AiPreset | null>(null)
+  const [exitSource, setExitSource] = useState<ExitSource | null>(null)
+  const [exitSaving, setExitSaving] = useState(false)
 
   const statusRef = useRef<LoadStatus>('loading')
   const dirtyRef = useRef(false)
@@ -300,24 +304,60 @@ export default function App() {
     }
   }, [])
 
-  const exitMarkdown = useCallback(async (): Promise<void> => {
+  const requestExit = useCallback((source: ExitSource): void => {
     const exit = window.markdownApi.exit
-    if (!exit || statusRef.current !== 'ready' || savingRef.current) return
-
-    if (dirtyRef.current) {
-      const isChinese = document.documentElement.lang.toLowerCase().startsWith('zh')
-      const saveFirst = window.confirm(
-        isChinese
-          ? '当前文档有未保存的更改。退出前需要先保存，是否保存并退出？'
-          : 'This document has unsaved changes. Save before exiting?',
-      )
-      if (!saveFirst) return
-      const saved = await doSave('save')
-      if (!saved) return
+    if (!exit || statusRef.current !== 'ready' || savingRef.current) {
+      if (source === 'host') window.markdownApi.sendCloseSaveResult(false)
+      return
     }
 
-    await exit.call(window.markdownApi)
-  }, [doSave])
+    if (dirtyRef.current) {
+      setExitSource(source)
+      return
+    }
+
+    if (source === 'host') {
+      window.markdownApi.sendCloseSaveResult(true)
+      return
+    }
+
+    void exit.call(window.markdownApi)
+  }, [])
+
+  const cancelExit = useCallback(() => {
+    const source = exitSource
+    setExitSource(null)
+    if (source === 'host') window.markdownApi.sendCloseSaveResult(false)
+  }, [exitSource])
+
+  const discardAndExit = useCallback(() => {
+    const source = exitSource
+    if (!source) return
+    setExitSource(null)
+    if (source === 'host') {
+      window.markdownApi.sendCloseSaveResult(true)
+      return
+    }
+    void window.markdownApi.exit?.call(window.markdownApi)
+  }, [exitSource])
+
+  const saveAndExit = useCallback(async (): Promise<void> => {
+    const source = exitSource
+    if (!source || exitSaving) return
+    setExitSaving(true)
+    try {
+      const saved = await doSave('save')
+      if (!saved || dirtyRef.current) return
+      setExitSource(null)
+      if (source === 'host') {
+        window.markdownApi.sendCloseSaveResult(true)
+      } else {
+        await window.markdownApi.exit?.call(window.markdownApi)
+      }
+    } finally {
+      setExitSaving(false)
+    }
+  }, [doSave, exitSaving, exitSource])
 
   const openDocument = useCallback(async (): Promise<void> => {
     const open = window.markdownApi.openDocument
@@ -429,10 +469,17 @@ export default function App() {
       (mode) => void doSave(mode).then((ok) => window.markdownApi.sendSaveRequestAck(ok)),
     )
     const offClose = window.markdownApi.onCloseSaveRequest(() => {
+      // UC Web owns the same three-way prompt for File -> Exit and window close.
+      // Electron keeps its native main-process close prompt and only asks us to save after "Save".
+      if (window.markdownApi.exit) {
+        requestExit('host')
+        return
+      }
       void doSave('save').then((ok) => window.markdownApi.sendCloseSaveResult(ok))
     })
     const offRenamed = window.markdownApi.onFileRenamed((newPath) => setFilePath(newPath))
     const onKeyDown = (event: KeyboardEvent) => {
+      if (exitSource) return
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 's') {
         event.preventDefault()
         void doSave(event.shiftKey ? 'saveAs' : 'save')
@@ -455,7 +502,7 @@ export default function App() {
       offRenamed()
       window.removeEventListener('keydown', onKeyDown, true)
     }
-  }, [doSave, openDocument])
+  }, [doSave, exitSource, openDocument, requestExit])
 
   const aiDeps: MarkdownAiDeps = {
     getEditor: () => editorRef.current,
@@ -507,13 +554,15 @@ export default function App() {
                   status === 'ready' && Boolean(filePath) && saveState !== 'saving'
                 }
                 canDownload={status === 'ready' && saveState !== 'saving'}
-                canExit={status === 'ready' && saveState !== 'saving'}
+                canExit={
+                  status === 'ready' && saveState !== 'saving' && Boolean(window.markdownApi.exit)
+                }
                 onOpen={() => void openDocument()}
                 onSave={() => void doSave('save')}
                 onSaveAs={() => void doSave('saveAs')}
                 onSaveHistoryVersion={() => void saveHistoryVersion()}
                 onDownload={() => void downloadMarkdown()}
-                onExit={() => void exitMarkdown()}
+                onExit={() => requestExit('menu')}
               />
               <button
                 type="button"
@@ -577,6 +626,14 @@ export default function App() {
       </div>
       <SlashMenu ref={slashMenuRef} state={slashState} onDismiss={() => setSlashState(null)} />
       <TableMenu editor={editor} scrollRef={scrollRef} />
+      {exitSource && (
+        <ExitConfirmModal
+          saving={exitSaving}
+          onSave={() => void saveAndExit()}
+          onDiscard={discardAndExit}
+          onCancel={cancelExit}
+        />
+      )}
       <div className="status-bar">
         {fileName && <span className="status-file">{fileName}</span>}
         {statusText && <span className={`status-save status-${saveState}`}>{statusText}</span>}

@@ -18,6 +18,7 @@ export {
   IconHighlight,
   IconUndo,
   IconRedo,
+  IconSave,
   IconCopy,
   IconRowInsertAbove,
   IconRowInsertBelow,
@@ -126,16 +127,6 @@ export function IconQuoteMark(props: IconProps) {
     <Svg {...props}>
       <path d="M3 4.5v7" />
       <path d="M6.4 5h6.8M6.4 8h6.8M6.4 11h4.4" />
-    </Svg>
-  )
-}
-
-export function IconSave(props: IconProps) {
-  return (
-    <Svg {...props}>
-      <path d="M3 2.5h8.4L13.5 4.6V13.5H2.5V2.5z" />
-      <path d="M5 2.5v4h5v-4" />
-      <path d="M5 10h6v3.5H5z" />
     </Svg>
   )
 }

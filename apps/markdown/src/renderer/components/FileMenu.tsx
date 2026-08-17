@@ -163,7 +163,6 @@ export function FileMenu({
             <span>{labels.saveAs}</span>
             <span className="markdown-file-menu-key">Ctrl+Shift+S</span>
           </button>
-          <div className="markdown-file-menu-separator" role="separator" />
           <button
             type="button"
             role="menuitem"
@@ -182,7 +181,6 @@ export function FileMenu({
           >
             <span>{labels.download}</span>
           </button>
-          <div className="markdown-file-menu-separator" role="separator" />
           <button
             type="button"
             role="menuitem"

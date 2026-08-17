@@ -8,6 +8,21 @@ const ONE_PIXEL_PNG = Buffer.from(
   'base64',
 )
 
+async function requestHostWindowClose(page: import('@playwright/test').Page, requestId: string) {
+  await page.locator('#office-frame').evaluate((element, id) => {
+    const frame = element as HTMLIFrameElement
+    frame.contentWindow?.postMessage(
+      {
+        protocol: 1,
+        type: 'office:request-close',
+        requestId: id,
+        payload: { reason: 'window-close' },
+      },
+      new URL(frame.src).origin,
+    )
+  }, requestId)
+}
+
 test('standalone Markdown Web starts as an editable AI-free document', async ({ page }) => {
   await page.goto(MARKDOWN_WEB_URL)
 
@@ -18,7 +33,7 @@ test('standalone Markdown Web starts as an editable AI-free document', async ({ 
   await expect(page.locator('.ai-dock:visible')).toHaveCount(0)
 })
 
-test('embedded Markdown Web File menu opens, saves, switches documents, and inserts Host assets', async ({
+test('embedded Markdown Web File menu, save UI, exit prompt, Host close, and asset flow match UC lifecycle', async ({
   page,
 }) => {
   await page.goto(MARKDOWN_WEB_HOST_URL)
@@ -42,9 +57,15 @@ test('embedded Markdown Web File menu opens, saves, switches documents, and inse
   await expect(fileMenu.getByRole('menuitem', { name: /存为新的历史版本/ })).toBeVisible()
   await expect(fileMenu.getByRole('menuitem', { name: '下载到本地' })).toBeVisible()
   await expect(fileMenu.getByRole('menuitem', { name: '退出' })).toBeVisible()
+  await expect(fileMenu.locator('.markdown-file-menu-separator')).toHaveCount(0)
   await expect(fileMenu.locator('button').filter({ hasText: '保存' })).toBeDisabled()
+
   const quickSave = officeFrame.locator('.markdown-quick-save')
   await expect(quickSave).toBeDisabled()
+  await expect(quickSave).toHaveCSS('width', '30px')
+  await expect(quickSave).toHaveCSS('height', '28px')
+  await expect(quickSave).toHaveCSS('border-radius', '4px')
+  await expect(officeFrame.locator('.markdown-quick-save + .rb-sep')).toBeHidden()
   await fileTab.click()
 
   const paragraph = editor.locator('p').filter({ hasText: 'Initial paragraph' })
@@ -72,7 +93,8 @@ test('embedded Markdown Web File menu opens, saves, switches documents, and inse
   })
 
   await expect(editor.locator('h1')).toHaveText('Second Markdown')
-  await expect(editor.locator('p')).toContainText('Opened from File menu')
+  const secondParagraph = editor.locator('p').filter({ hasText: 'Opened from File menu' })
+  await expect(secondParagraph).toBeVisible()
   await expect(page.locator('#file-name')).toHaveText('second.md')
   await expect(page.locator('#host-state')).toHaveText('clean')
 
@@ -105,7 +127,42 @@ test('embedded Markdown Web File menu opens, saves, switches documents, and inse
   await expect(page.locator('#host-state')).toHaveText('clean')
   await expect(officeFrame.locator('.ai-entry:visible')).toHaveCount(0)
 
+  // File -> Exit: dirty documents use the same Word-style three-choice in-page prompt.
+  await secondParagraph.click()
+  await editor.press('End')
+  await editor.pressSequentially(' file-exit')
+  await expect(page.locator('#host-state')).toHaveText('dirty')
+
   await fileTab.click()
   await fileMenu.locator('.markdown-file-menu-exit').click()
+  const exitModal = officeFrame.locator('.modal-backdrop')
+  await expect(exitModal).toBeVisible()
+  await expect(exitModal.getByRole('heading')).toHaveText('退出前保存更改?')
+  await expect(exitModal).toContainText('此文档有尚未保存的更改。')
+  await expect(exitModal.getByRole('button', { name: '取消' })).toBeVisible()
+  await expect(exitModal.getByRole('button', { name: '放弃并退出' })).toBeVisible()
+  await expect(exitModal.getByRole('button', { name: '保存并退出' })).toBeVisible()
+  await exitModal.getByRole('button', { name: '保存并退出' }).click()
+  await expect(page.locator('#saved-text')).toContainText('file-exit')
   await expect(page.locator('#host-state')).toHaveText('close approved (file-menu)')
+  await expect(exitModal).toHaveCount(0)
+
+  // Host/window close uses the identical prompt and completes the existing
+  // office:request-close -> approve/cancel bridge rather than auto-saving.
+  await secondParagraph.click()
+  await editor.press('End')
+  await editor.pressSequentially(' window-exit')
+  await expect(page.locator('#host-state')).toHaveText('dirty')
+
+  await requestHostWindowClose(page, 'e2e-window-close-cancel')
+  await expect(exitModal).toBeVisible()
+  await exitModal.getByRole('button', { name: '取消' }).click()
+  await expect(page.locator('#host-state')).toHaveText('close cancelled')
+  await expect(exitModal).toHaveCount(0)
+
+  await requestHostWindowClose(page, 'e2e-window-close-discard')
+  await expect(exitModal).toBeVisible()
+  await exitModal.getByRole('button', { name: '放弃并退出' }).click()
+  await expect(page.locator('#host-state')).toHaveText('close approved (window-close)')
+  await expect(exitModal).toHaveCount(0)
 })
