@@ -31,14 +31,16 @@ test('embedded Markdown Web opens, edits, saves, and inserts a Host-picked image
   })
 
   await expect(officeFrame.locator('.doc-editor h1')).toHaveText('Markdown Web')
-  const paragraph = officeFrame.locator('.doc-editor p').filter({ hasText: 'Initial paragraph' })
+  const editor = officeFrame.locator('.doc-editor')
+  const paragraph = editor.locator('p').filter({ hasText: 'Initial paragraph' })
   await expect(paragraph).toBeVisible()
   await paragraph.click()
-  await paragraph.press('End')
-  await paragraph.type(' edited')
+  await editor.press('End')
+  await editor.pressSequentially(' edited')
+  await expect(paragraph).toHaveText('Initial paragraph edited')
   await expect(page.locator('#host-state')).toHaveText('dirty')
 
-  await officeFrame.locator('.doc-editor').press('Control+s')
+  await editor.press('Control+s')
   await expect(page.locator('#host-state')).toHaveText('saved')
   await expect(page.locator('#saved-text')).toContainText('Initial paragraph edited')
 
@@ -51,12 +53,12 @@ test('embedded Markdown Web opens, edits, saves, and inserts a Host-picked image
     buffer: ONE_PIXEL_PNG,
   })
 
-  const image = officeFrame.locator('.doc-editor img').last()
+  const image = editor.locator('img').last()
   await expect(image).toBeVisible()
   await expect(image).toHaveAttribute('src', /^data:image\/png;base64,/)
   await expect(page.locator('#host-state')).toHaveText('dirty')
 
-  await officeFrame.locator('.doc-editor').press('Control+s')
+  await editor.press('Control+s')
   await expect(page.locator('#host-state')).toHaveText('saved')
   await expect(page.locator('#saved-text')).toContainText('data:image/png;base64')
   await expect(officeFrame.locator('.ai-entry:visible')).toHaveCount(0)
