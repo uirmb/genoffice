@@ -312,7 +312,11 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
     [pageCount],
   )
   const pageVisibility = useVisibleSet(scrollRef, pageCount, '900px 0px')
-  const thumbVisibility = useVisibleSet(thumbsRef, pageCount, '500px 0px')
+  const thumbVisibility = useVisibleSet(
+    thumbsRef,
+    sidebar === 'thumbs' ? pageCount : 0,
+    '500px 0px',
+  )
 
   const preparePdf = useCallback(async (file: OfficeFile): Promise<PreparedPdf> => {
     if (!isPdfOfficeFile(file)) throw new Error(`Unsupported file type: ${file.name}`)
