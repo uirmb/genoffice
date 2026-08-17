@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement, RefObject } from 'react'
 import { GlobalWorkerOptions, TextLayer, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
+import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import type {
   OfficeDocumentKind,
@@ -35,6 +35,7 @@ interface PageMetric {
 
 interface PreparedPdf {
   file: OfficeFile
+  loadingTask: PDFDocumentLoadingTask
   doc: PDFDocumentProxy
   pageMetrics: PageMetric[]
   outline: OutlineNode[]
@@ -54,6 +55,10 @@ interface PdfWebAppProps {
   runtimeMode: WebRuntimeMode
 }
 
+interface ViewportTransform {
+  transform: number[]
+}
+
 function descriptorWithBytes(descriptor: OfficeFileDescriptor, source: OfficeFile): OfficeFile {
   return {
     ...source,
@@ -65,6 +70,29 @@ function descriptorWithBytes(descriptor: OfficeFileDescriptor, source: OfficeFil
 
 function clampScale(scale: number): number {
   return Math.min(4, Math.max(0.25, scale))
+}
+
+function transformPoint(transform: number[], x: number, y: number): [number, number] {
+  const [a = 1, b = 0, c = 0, d = 1, e = 0, f = 0] = transform
+  return [a * x + c * y + e, b * x + d * y + f]
+}
+
+function viewportRect(
+  viewport: ViewportTransform,
+  rect: number[],
+): { left: number; top: number; width: number; height: number } | null {
+  if (rect.length < 4) return null
+  const [x1 = 0, y1 = 0, x2 = 0, y2 = 0] = rect
+  const first = transformPoint(viewport.transform, x1, y1)
+  const second = transformPoint(viewport.transform, x2, y2)
+  const left = Math.min(first[0], second[0])
+  const top = Math.min(first[1], second[1])
+  return {
+    left,
+    top,
+    width: Math.abs(second[0] - first[0]),
+    height: Math.abs(second[1] - first[1]),
+  }
 }
 
 function useVisibleSet(
@@ -109,14 +137,12 @@ function PdfPage({
   pageNo,
   scale,
   visible,
-  searchTarget,
   onGoToDest,
 }: {
   doc: PDFDocumentProxy
   pageNo: number
   scale: number
   visible: boolean
-  searchTarget: boolean
   onGoToDest: (dest: unknown) => void
 }): ReactElement {
   const holderRef = useRef<HTMLDivElement>(null)
@@ -174,15 +200,15 @@ function PdfPage({
         if (annotation.subtype !== 'Link' || !annotation.rect) continue
         const url = annotation.url || annotation.unsafeUrl
         if (!url && annotation.dest == null) continue
-        const rect = viewport.convertToViewportRectangle(annotation.rect)
-        const left = Math.min(rect[0], rect[2])
-        const top = Math.min(rect[1], rect[3])
+        const box = viewportRect(viewport, annotation.rect)
+        if (!box) continue
+
         const anchor = document.createElement('a')
         anchor.className = 'pdf-web-link'
-        anchor.style.left = `${left}px`
-        anchor.style.top = `${top}px`
-        anchor.style.width = `${Math.abs(rect[2] - rect[0])}px`
-        anchor.style.height = `${Math.abs(rect[3] - rect[1])}px`
+        anchor.style.left = `${box.left}px`
+        anchor.style.top = `${box.top}px`
+        anchor.style.width = `${box.width}px`
+        anchor.style.height = `${box.height}px`
         if (url) {
           anchor.href = url
           anchor.target = '_blank'
@@ -206,12 +232,7 @@ function PdfPage({
     }
   }, [doc, onGoToDest, pageNo, scale, visible])
 
-  return (
-    <div
-      ref={holderRef}
-      className={`pdf-web-page-content${searchTarget ? ' pdf-web-page-search-target' : ''}`}
-    />
-  )
+  return <div ref={holderRef} className="pdf-web-page-content" />
 }
 
 function PdfThumbnail({
@@ -280,20 +301,24 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
   const scrollRef = useRef<HTMLDivElement>(null)
   const thumbsRef = useRef<HTMLDivElement>(null)
   const searchIndexRef = useRef<SearchIndex | null>(null)
+  const loadingTaskRef = useRef<PDFDocumentLoadingTask | null>(null)
   const prepareSequenceRef = useRef(0)
 
   const pageCount = pdfDocument?.numPages ?? 0
   const currentSearchPage =
     searchMatchIndex >= 0 ? (searchMatches[searchMatchIndex]?.pageIndex ?? -1) + 1 : -1
-  const pages = useMemo(() => Array.from({ length: pageCount }, (_, index) => index + 1), [pageCount])
+  const pages = useMemo(
+    () => Array.from({ length: pageCount }, (_, index) => index + 1),
+    [pageCount],
+  )
   const pageVisibility = useVisibleSet(scrollRef, pageCount, '900px 0px')
   const thumbVisibility = useVisibleSet(thumbsRef, pageCount, '500px 0px')
 
   const preparePdf = useCallback(async (file: OfficeFile): Promise<PreparedPdf> => {
     if (!isPdfOfficeFile(file)) throw new Error(`Unsupported file type: ${file.name}`)
-    const task = getDocument({ data: file.bytes.slice(0), ...DOC_OPTS })
-    const doc = await task.promise
+    const loadingTask = getDocument({ data: file.bytes.slice(0), ...DOC_OPTS })
     try {
+      const doc = await loadingTask.promise
       const metrics: PageMetric[] = []
       for (let pageNo = 1; pageNo <= doc.numPages; pageNo += 1) {
         const page = await doc.getPage(pageNo)
@@ -303,25 +328,26 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
       const rawOutline = await doc.getOutline()
       return {
         file,
+        loadingTask,
         doc,
         pageMetrics: metrics,
         outline: (rawOutline ?? []) as OutlineNode[],
       }
     } catch (prepareError) {
-      await doc.destroy()
+      await loadingTask.destroy()
       throw prepareError
     }
   }, [])
 
   const installPreparedPdf = useCallback(
     (prepared: PreparedPdf, authoritativeFile?: OfficeFileDescriptor): void => {
+      const previousTask = loadingTaskRef.current
+      loadingTaskRef.current = prepared.loadingTask
       const nextFile = authoritativeFile
         ? descriptorWithBytes(authoritativeFile, prepared.file)
         : prepared.file
-      setPdfDocument((previous) => {
-        if (previous && previous !== prepared.doc) void previous.destroy()
-        return prepared.doc
-      })
+
+      setPdfDocument(prepared.doc)
       setCurrentFile(nextFile)
       setPageMetrics(prepared.pageMetrics)
       setOutline(prepared.outline)
@@ -334,6 +360,8 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
       setError(null)
       host.setDirty(false)
       host.setTitle(nextFile.name)
+
+      if (previousTask && previousTask !== prepared.loadingTask) void previousTask.destroy()
     },
     [host],
   )
@@ -346,7 +374,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
       try {
         const prepared = await preparePdf(file)
         if (sequence !== prepareSequenceRef.current) {
-          await prepared.doc.destroy()
+          await prepared.loadingTask.destroy()
           return
         }
         installPreparedPdf(prepared)
@@ -383,7 +411,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           installPreparedPdf(prepared, bound.file)
           prepared = null
         } catch (openError) {
-          if (prepared) await prepared.doc.destroy()
+          if (prepared) await prepared.loadingTask.destroy()
           await host.releasePickedDocument?.(selection.selectionId)
           throw openError
         }
@@ -410,11 +438,14 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
     }
   }, [host, installPreparedPdf, loading, preparePdf])
 
-  const scrollToPage = useCallback((pageNo: number): void => {
-    const normalized = Math.min(Math.max(pageNo, 1), pageCount || 1)
-    document.getElementById(`pdf-web-page-${normalized}`)?.scrollIntoView({ block: 'start' })
-    setCurrentPage(normalized)
-  }, [pageCount])
+  const scrollToPage = useCallback(
+    (pageNo: number): void => {
+      const normalized = Math.min(Math.max(pageNo, 1), pageCount || 1)
+      document.getElementById(`pdf-web-page-${normalized}`)?.scrollIntoView({ block: 'start' })
+      setCurrentPage(normalized)
+    },
+    [pageCount],
+  )
 
   const goToDestination = useCallback(
     (dest: unknown): void => {
@@ -425,7 +456,9 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           if (!Array.isArray(resolved) || resolved.length === 0) return
           const ref = resolved[0]
           if (!ref || typeof ref !== 'object') return
-          const pageIndex = await pdfDocument.getPageIndex(ref as Parameters<PDFDocumentProxy['getPageIndex']>[0])
+          const pageIndex = await pdfDocument.getPageIndex(
+            ref as Parameters<PDFDocumentProxy['getPageIndex']>[0],
+          )
           scrollToPage(pageIndex + 1)
         } catch {
           // Invalid destinations are ignored, matching normal PDF viewer behavior.
@@ -514,7 +547,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
     const unsubscribe = bridge.subscribe((message) => {
       switch (message.type) {
         case 'office:init':
-          if ((message.payload.kind as string) !== 'pdf') {
+          if (message.payload.kind !== 'pdf') {
             bridge.send({
               protocol: OFFICE_PROTOCOL_VERSION,
               type: 'office:error',
@@ -578,11 +611,17 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
 
   useEffect(() => {
     host.setDirty(false)
-    return () => {
+  }, [host])
+
+  useEffect(
+    () => () => {
       prepareSequenceRef.current += 1
-      if (pdfDocument) void pdfDocument.destroy()
-    }
-  }, [host, pdfDocument])
+      const loadingTask = loadingTaskRef.current
+      loadingTaskRef.current = null
+      if (loadingTask) void loadingTask.destroy()
+    },
+    [],
+  )
 
   const pageStyle = useCallback(
     (pageNo: number): CSSProperties => {
@@ -601,11 +640,22 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
     <div className="pdf-web-app">
       <header className="pdf-web-toolbar">
         <div className="pdf-web-product">PDF</div>
-        <button className="pdf-web-button primary" type="button" onClick={() => void openPdf()} disabled={loading}>
+        <button
+          className="pdf-web-button primary"
+          type="button"
+          onClick={() => void openPdf()}
+          disabled={loading}
+        >
           打开
         </button>
         <div className="pdf-web-separator" />
-        <button className="pdf-web-button compact" type="button" onClick={() => scrollToPage(currentPage - 1)} disabled={!pdfDocument || currentPage <= 1} aria-label="上一页">
+        <button
+          className="pdf-web-button compact"
+          type="button"
+          onClick={() => scrollToPage(currentPage - 1)}
+          disabled={!pdfDocument || currentPage <= 1}
+          aria-label="上一页"
+        >
           ‹
         </button>
         <label className="pdf-web-page-field">
@@ -615,7 +665,9 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             aria-label="当前页"
             onChange={(event) => {
               const value = Number(event.target.value)
-              if (Number.isFinite(value) && value > 0) setCurrentPage(Math.min(value, pageCount || 1))
+              if (Number.isFinite(value) && value > 0) {
+                setCurrentPage(Math.min(value, pageCount || 1))
+              }
             }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') scrollToPage(currentPage)
@@ -624,21 +676,49 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           />
           <span>/ {pageCount || 0}</span>
         </label>
-        <button className="pdf-web-button compact" type="button" onClick={() => scrollToPage(currentPage + 1)} disabled={!pdfDocument || currentPage >= pageCount} aria-label="下一页">
+        <button
+          className="pdf-web-button compact"
+          type="button"
+          onClick={() => scrollToPage(currentPage + 1)}
+          disabled={!pdfDocument || currentPage >= pageCount}
+          aria-label="下一页"
+        >
           ›
         </button>
         <div className="pdf-web-separator" />
-        <button className="pdf-web-button compact" type="button" onClick={() => changeZoom(-1)} disabled={!pdfDocument} aria-label="缩小">
+        <button
+          className="pdf-web-button compact"
+          type="button"
+          onClick={() => changeZoom(-1)}
+          disabled={!pdfDocument}
+          aria-label="缩小"
+        >
           −
         </button>
         <span className="pdf-web-zoom">{Math.round(scale * 100)}%</span>
-        <button className="pdf-web-button compact" type="button" onClick={() => changeZoom(1)} disabled={!pdfDocument} aria-label="放大">
+        <button
+          className="pdf-web-button compact"
+          type="button"
+          onClick={() => changeZoom(1)}
+          disabled={!pdfDocument}
+          aria-label="放大"
+        >
           +
         </button>
-        <button className="pdf-web-button" type="button" onClick={fitWidth} disabled={!pdfDocument}>
+        <button
+          className="pdf-web-button"
+          type="button"
+          onClick={fitWidth}
+          disabled={!pdfDocument}
+        >
           适合宽度
         </button>
-        <button className="pdf-web-button" type="button" onClick={fitPage} disabled={!pdfDocument}>
+        <button
+          className="pdf-web-button"
+          type="button"
+          onClick={fitPage}
+          disabled={!pdfDocument}
+        >
           适合页面
         </button>
         <div className="pdf-web-toolbar-spacer" />
@@ -656,7 +736,9 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             aria-label="搜索文档"
             disabled={!pdfDocument}
           />
-          <button type="submit" disabled={!pdfDocument || searching}>查找</button>
+          <button type="submit" disabled={!pdfDocument || searching}>
+            查找
+          </button>
           <span className="pdf-web-search-count">
             {searchMatches.length && searchMatchIndex >= 0
               ? `${searchMatchIndex + 1}/${searchMatches.length}`
@@ -664,10 +746,20 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
                 ? '0'
                 : ''}
           </span>
-          <button type="button" onClick={() => stepSearch(-1)} disabled={!searchMatches.length} aria-label="上一个匹配">
+          <button
+            type="button"
+            onClick={() => stepSearch(-1)}
+            disabled={!searchMatches.length}
+            aria-label="上一个匹配"
+          >
             ↑
           </button>
-          <button type="button" onClick={() => stepSearch(1)} disabled={!searchMatches.length} aria-label="下一个匹配">
+          <button
+            type="button"
+            onClick={() => stepSearch(1)}
+            disabled={!searchMatches.length}
+            aria-label="下一个匹配"
+          >
             ↓
           </button>
         </form>
@@ -677,13 +769,26 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
         {pdfDocument && sidebar ? (
           <aside className="pdf-web-sidebar">
             <div className="pdf-web-sidebar-tabs">
-              <button className={sidebar === 'thumbs' ? 'active' : ''} type="button" onClick={() => setSidebar('thumbs')}>
+              <button
+                className={sidebar === 'thumbs' ? 'active' : ''}
+                type="button"
+                onClick={() => setSidebar('thumbs')}
+              >
                 页面
               </button>
-              <button className={sidebar === 'outline' ? 'active' : ''} type="button" onClick={() => setSidebar('outline')}>
+              <button
+                className={sidebar === 'outline' ? 'active' : ''}
+                type="button"
+                onClick={() => setSidebar('outline')}
+              >
                 目录
               </button>
-              <button type="button" className="close" onClick={() => setSidebar(null)} aria-label="关闭侧栏">
+              <button
+                type="button"
+                className="close"
+                onClick={() => setSidebar(null)}
+                aria-label="关闭侧栏"
+              >
                 ×
               </button>
             </div>
@@ -692,14 +797,22 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
                 {pages.map((pageNo, index) => (
                   <button
                     key={pageNo}
-                    ref={thumbVisibility.setItemRef(index) as (element: HTMLButtonElement | null) => void}
+                    ref={
+                      thumbVisibility.setItemRef(index) as (
+                        element: HTMLButtonElement | null,
+                      ) => void
+                    }
                     data-index={index}
                     type="button"
                     className={`pdf-web-thumb${currentPage === pageNo ? ' active' : ''}`}
                     onClick={() => scrollToPage(pageNo)}
                   >
                     <span className="pdf-web-thumb-canvas">
-                      <PdfThumbnail doc={pdfDocument} pageNo={pageNo} visible={thumbVisibility.visible.has(index)} />
+                      <PdfThumbnail
+                        doc={pdfDocument}
+                        pageNo={pageNo}
+                        visible={thumbVisibility.visible.has(index)}
+                      />
                     </span>
                     <span>{pageNo}</span>
                   </button>
@@ -718,7 +831,11 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
         ) : null}
 
         {pdfDocument && !sidebar ? (
-          <button className="pdf-web-sidebar-open" type="button" onClick={() => setSidebar('thumbs')}>
+          <button
+            className="pdf-web-sidebar-open"
+            type="button"
+            onClick={() => setSidebar('thumbs')}
+          >
             页面
           </button>
         ) : null}
@@ -731,7 +848,11 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
                 <h1>PDF 预览</h1>
                 <p>Web 版本仅提供阅读能力，不包含编辑、批注、签名或表单修改。</p>
                 <button type="button" onClick={() => void openPdf()} disabled={loading}>
-                  {loading ? '正在打开…' : runtimeMode === 'embedded' ? '从系统中选择 PDF' : '打开 PDF'}
+                  {loading
+                    ? '正在打开…'
+                    : runtimeMode === 'embedded'
+                      ? '从系统中选择 PDF'
+                      : '打开 PDF'}
                 </button>
               </div>
             </div>
@@ -752,7 +873,6 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
                     pageNo={pageNo}
                     scale={scale}
                     visible={pageVisibility.visible.has(index)}
-                    searchTarget={currentSearchPage === pageNo}
                     onGoToDest={goToDestination}
                   />
                 </section>
@@ -773,7 +893,9 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
       {error ? (
         <div className="pdf-web-error" role="alert">
           <span>{error}</span>
-          <button type="button" onClick={() => setError(null)}>关闭</button>
+          <button type="button" onClick={() => setError(null)}>
+            关闭
+          </button>
         </div>
       ) : null}
     </div>
