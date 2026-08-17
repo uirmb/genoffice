@@ -41,8 +41,8 @@ test('embedded Markdown Web opens, edits, saves, and inserts a Host-picked image
   await expect(page.locator('#host-state')).toHaveText('dirty')
 
   await editor.press('Control+s')
-  await expect(page.locator('#host-state')).toHaveText('saved')
   await expect(page.locator('#saved-text')).toContainText('Initial paragraph edited')
+  await expect(page.locator('#host-state')).toHaveText('clean')
 
   const chooserPromise = page.waitForEvent('filechooser')
   await officeFrame.getByTitle('插入图片').click()
@@ -59,7 +59,7 @@ test('embedded Markdown Web opens, edits, saves, and inserts a Host-picked image
   await expect(page.locator('#host-state')).toHaveText('dirty')
 
   await editor.press('Control+s')
-  await expect(page.locator('#host-state')).toHaveText('saved')
   await expect(page.locator('#saved-text')).toContainText('data:image/png;base64')
+  await expect(page.locator('#host-state')).toHaveText('clean')
   await expect(officeFrame.locator('.ai-entry:visible')).toHaveCount(0)
 })
