@@ -1,4 +1,3 @@
-import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   StandaloneOfficeHost,
@@ -45,9 +44,7 @@ function bootstrap(): void {
 
   const root = createRoot(rootElement)
   root.render(
-    <StrictMode>
-      <PdfWebApp host={host} bridge={embeddedRuntime?.bridge ?? null} runtimeMode={runtimeMode} />
-    </StrictMode>,
+    <PdfWebApp host={host} bridge={embeddedRuntime?.bridge ?? null} runtimeMode={runtimeMode} />,
   )
 
   window.addEventListener(
