@@ -1,0 +1,21 @@
+html.genoffice-markdown-web,
+html.genoffice-markdown-web body,
+html.genoffice-markdown-web #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+/* AI is intentionally deferred until the shared office-agent-protocol lands. */
+html.genoffice-markdown-web .ai-entry,
+html.genoffice-markdown-web .ai-dock {
+  display: none !important;
+}
+
+html.genoffice-markdown-web .app-main {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+html.genoffice-markdown-web .editor-scroll {
+  min-width: 0;
+}
