@@ -5,9 +5,15 @@ import { useI18n } from '../i18n/locale'
 interface Props {
   disabled: boolean
   canSave: boolean
+  canSaveHistoryVersion: boolean
+  canDownload: boolean
+  canExit: boolean
   onOpen: () => void
   onSave: () => void
   onSaveAs: () => void
+  onSaveHistoryVersion: () => void
+  onDownload: () => void
+  onExit: () => void
 }
 
 type FileLabels = {
@@ -15,9 +21,12 @@ type FileLabels = {
   open: string
   save: string
   saveAs: string
+  saveHistoryVersion: string
+  download: string
+  exit: string
 }
 
-const FILE_LABELS: Record<Lang, FileLabels> = {
+const BASE_LABELS: Record<Lang, Pick<FileLabels, 'file' | 'open' | 'save' | 'saveAs'>> = {
   zh: { file: '文件', open: '打开', save: '保存', saveAs: '另存为' },
   'zh-TW': { file: '檔案', open: '開啟', save: '儲存', saveAs: '另存新檔' },
   en: { file: 'File', open: 'Open', save: 'Save', saveAs: 'Save As' },
@@ -39,9 +48,71 @@ const FILE_LABELS: Record<Lang, FileLabels> = {
   hi: { file: 'फ़ाइल', open: 'खोलें', save: 'सहेजें', saveAs: 'इस रूप में सहेजें' },
 }
 
-export function FileMenu({ disabled, canSave, onOpen, onSave, onSaveAs }: Props) {
+const ACTION_LABELS: Record<Lang, Pick<FileLabels, 'saveHistoryVersion' | 'download' | 'exit'>> = {
+  zh: { saveHistoryVersion: '存为新的历史版本', download: '下载到本地', exit: '退出' },
+  'zh-TW': { saveHistoryVersion: '儲存為新的歷史版本', download: '下載到本機', exit: '結束' },
+  en: { saveHistoryVersion: 'Save as New History Version', download: 'Download', exit: 'Exit' },
+  ja: { saveHistoryVersion: '新しい履歴版として保存', download: 'ダウンロード', exit: '終了' },
+  ko: { saveHistoryVersion: '새 기록 버전으로 저장', download: '다운로드', exit: '종료' },
+  fr: {
+    saveHistoryVersion: 'Enregistrer une nouvelle version',
+    download: 'Télécharger',
+    exit: 'Quitter',
+  },
+  de: {
+    saveHistoryVersion: 'Als neue Verlaufsversion speichern',
+    download: 'Herunterladen',
+    exit: 'Beenden',
+  },
+  es: {
+    saveHistoryVersion: 'Guardar nueva versión del historial',
+    download: 'Descargar',
+    exit: 'Salir',
+  },
+  th: { saveHistoryVersion: 'บันทึกเป็นเวอร์ชันประวัติใหม่', download: 'ดาวน์โหลด', exit: 'ออก' },
+  id: {
+    saveHistoryVersion: 'Simpan sebagai versi riwayat baru',
+    download: 'Unduh',
+    exit: 'Keluar',
+  },
+  ru: { saveHistoryVersion: 'Сохранить новую версию истории', download: 'Скачать', exit: 'Выйти' },
+  ar: { saveHistoryVersion: 'حفظ كإصدار سجل جديد', download: 'تنزيل', exit: 'خروج' },
+  pt: { saveHistoryVersion: 'Salvar nova versão do histórico', download: 'Baixar', exit: 'Sair' },
+  it: { saveHistoryVersion: 'Salva nuova versione cronologia', download: 'Scarica', exit: 'Esci' },
+  pl: { saveHistoryVersion: 'Zapisz nową wersję historii', download: 'Pobierz', exit: 'Wyjdź' },
+  nl: {
+    saveHistoryVersion: 'Opslaan als nieuwe geschiedenisversie',
+    download: 'Downloaden',
+    exit: 'Afsluiten',
+  },
+  ms: {
+    saveHistoryVersion: 'Simpan sebagai versi sejarah baharu',
+    download: 'Muat turun',
+    exit: 'Keluar',
+  },
+  he: { saveHistoryVersion: 'שמירה כגרסת היסטוריה חדשה', download: 'הורדה', exit: 'יציאה' },
+  hi: {
+    saveHistoryVersion: 'नए इतिहास संस्करण के रूप में सहेजें',
+    download: 'डाउनलोड',
+    exit: 'बाहर निकलें',
+  },
+}
+
+export function FileMenu({
+  disabled,
+  canSave,
+  canSaveHistoryVersion,
+  canDownload,
+  canExit,
+  onOpen,
+  onSave,
+  onSaveAs,
+  onSaveHistoryVersion,
+  onDownload,
+  onExit,
+}: Props) {
   const { lang } = useI18n()
-  const labels = FILE_LABELS[lang]
+  const labels: FileLabels = { ...BASE_LABELS[lang], ...ACTION_LABELS[lang] }
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -91,6 +162,35 @@ export function FileMenu({ disabled, canSave, onOpen, onSave, onSaveAs }: Props)
           <button type="button" role="menuitem" onClick={() => run(onSaveAs)}>
             <span>{labels.saveAs}</span>
             <span className="markdown-file-menu-key">Ctrl+Shift+S</span>
+          </button>
+          <div className="markdown-file-menu-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            className="markdown-file-menu-history"
+            disabled={!canSaveHistoryVersion}
+            onClick={() => run(onSaveHistoryVersion)}
+          >
+            <span>{labels.saveHistoryVersion}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="markdown-file-menu-download"
+            disabled={!canDownload}
+            onClick={() => run(onDownload)}
+          >
+            <span>{labels.download}</span>
+          </button>
+          <div className="markdown-file-menu-separator" role="separator" />
+          <button
+            type="button"
+            role="menuitem"
+            className="markdown-file-menu-exit"
+            disabled={!canExit}
+            onClick={() => run(onExit)}
+          >
+            <span>{labels.exit}</span>
           </button>
         </div>
       )}
