@@ -24,6 +24,7 @@ import {
 } from './icons'
 
 interface Props {
+  leading?: ReactNode
   editor: Editor | null
   disabled: boolean
   imageEnabled: boolean
@@ -160,6 +161,7 @@ function IconBtn({
 }
 
 export function Ribbon({
+  leading,
   editor,
   disabled,
   imageEnabled,
@@ -242,6 +244,9 @@ export function Ribbon({
 
   return (
     <div className="ribbon">
+      {leading}
+      {leading && <div className="rb-sep" />}
+
       <div className="ribbon-group">
         <div className="ribbon-group-items">
           <button

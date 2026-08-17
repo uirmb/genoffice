@@ -14,6 +14,7 @@ import { buildSlashItems } from './editor/slashCommand'
 import type { SlashController, SlashMenuState } from './editor/slashCommand'
 import { setImageBaseDir } from './editor/localImage'
 import { Ribbon } from './components/Ribbon'
+import { FileMenu } from './components/FileMenu'
 import { SlashMenu, type SlashMenuHandle } from './components/SlashMenu'
 import { TableMenu } from './components/TableMenu'
 import { FrontmatterPanel } from './components/FrontmatterPanel'
@@ -165,7 +166,7 @@ export default function App() {
           setFilePath(path)
           const inner = frontmatterInner(envelope.frontmatter)
           setFmText(inner)
-          if (inner) setFmOpen(true)
+          setFmOpen(Boolean(inner))
         } else {
           envelopeRef.current = { ...EMPTY_ENVELOPE }
         }
@@ -236,6 +237,68 @@ export default function App() {
     }
   }, [])
 
+  const openDocument = useCallback(async (): Promise<void> => {
+    const open = window.markdownApi.openDocument
+    const current = editorRef.current
+    if (!open || !current || statusRef.current !== 'ready' || savingRef.current) return
+
+    if (dirtyRef.current) {
+      const isChinese = document.documentElement.lang.toLowerCase().startsWith('zh')
+      const proceed = window.confirm(
+        isChinese
+          ? '当前文档有未保存的更改。打开其他文件将丢失这些更改，是否继续？'
+          : 'This document has unsaved changes. Opening another file will discard them. Continue?',
+      )
+      if (!proceed) return
+    }
+
+    const result = await open.call(window.markdownApi)
+    if (result.status === 'cancelled') return
+    if (result.status === 'failed') {
+      console.error('[markdown] host open failed:', result.error)
+      return
+    }
+
+    let bound = result.selectionId === null
+    try {
+      const envelope = parseDocText(result.text)
+      if (result.selectionId) {
+        const confirm = await window.markdownApi.confirmOpenDocument?.(result.selectionId)
+        if (!confirm?.ok) throw new Error(confirm?.error || 'Unable to bind selected Markdown.')
+        bound = true
+      }
+
+      // Suppress onUpdate dirty detection while replacing the whole document.
+      statusRef.current = 'loading'
+      setStatus('loading')
+      envelopeRef.current = envelope
+      setImageBaseDir(dirOf(result.path))
+      current
+        .chain()
+        .setMeta('addToHistory', false)
+        .setContent(envelope.body, { contentType: 'markdown' })
+        .run()
+      setFilePath(result.path)
+      const inner = frontmatterInner(envelope.frontmatter)
+      setFmText(inner)
+      setFmOpen(Boolean(inner))
+      dirtyRef.current = false
+      setDirty(false)
+      window.markdownApi.setDirty(false)
+      setSaveState('idle')
+      statusRef.current = 'ready'
+      setStatus('ready')
+      current.commands.focus('start')
+    } catch (error) {
+      if (!bound && result.selectionId) {
+        await window.markdownApi.releaseOpenDocument?.(result.selectionId)
+      }
+      statusRef.current = 'ready'
+      setStatus('ready')
+      console.error('[markdown] selected file could not be opened:', error)
+    }
+  }, [])
+
   const runExport = useCallback(async (format: ExportFormat) => {
     const current = editorRef.current
     if (!current || statusRef.current !== 'ready') return
@@ -291,6 +354,16 @@ export default function App() {
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 's') {
         event.preventDefault()
         void doSave(event.shiftKey ? 'saveAs' : 'save')
+        return
+      }
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'o' &&
+        window.markdownApi.openDocument
+      ) {
+        event.preventDefault()
+        void openDocument()
       }
     }
     window.addEventListener('keydown', onKeyDown, true)
@@ -300,7 +373,7 @@ export default function App() {
       offRenamed()
       window.removeEventListener('keydown', onKeyDown, true)
     }
-  }, [doSave])
+  }, [doSave, openDocument])
 
   const aiDeps: MarkdownAiDeps = {
     getEditor: () => editorRef.current,
@@ -342,6 +415,17 @@ export default function App() {
   return (
     <div className="app">
       <Ribbon
+        leading={
+          window.markdownApi.openDocument ? (
+            <FileMenu
+              disabled={status !== 'ready' || saveState === 'saving'}
+              canSave={status === 'ready' && dirty && saveState !== 'saving'}
+              onOpen={() => void openDocument()}
+              onSave={() => void doSave('save')}
+              onSaveAs={() => void doSave('saveAs')}
+            />
+          ) : undefined
+        }
         editor={editor}
         disabled={status !== 'ready'}
         imageEnabled={Boolean(filePath)}
