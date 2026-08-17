@@ -4,7 +4,7 @@ const MARKDOWN_WEB_URL = process.env.MARKDOWN_WEB_E2E_URL ?? 'http://127.0.0.1:5
 const MARKDOWN_WEB_HOST_URL = process.env.MARKDOWN_WEB_HOST_E2E_URL ?? 'http://127.0.0.1:8084/'
 
 const ONE_PIXEL_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n0AAAAAASUVORK5CYII=',
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC0lEQVR42mP8/x8AAusB9Wl2n0AAAAAASUVORK5CYII=',
   'base64',
 )
 
@@ -39,9 +39,9 @@ test('embedded Markdown Web File menu opens, saves, switches documents, and inse
   await fileTab.click()
   const fileMenu = officeFrame.locator('.markdown-file-menu')
   await expect(fileMenu).toBeVisible()
-  await expect(fileMenu.getByRole('button', { name: /存为新的历史版本/ })).toBeVisible()
-  await expect(fileMenu.getByRole('button', { name: '下载到本地' })).toBeVisible()
-  await expect(fileMenu.getByRole('button', { name: '退出' })).toBeVisible()
+  await expect(fileMenu.getByRole('menuitem', { name: /存为新的历史版本/ })).toBeVisible()
+  await expect(fileMenu.getByRole('menuitem', { name: '下载到本地' })).toBeVisible()
+  await expect(fileMenu.getByRole('menuitem', { name: '退出' })).toBeVisible()
   await expect(fileMenu.locator('button').filter({ hasText: '保存' })).toBeDisabled()
   const quickSave = officeFrame.locator('.markdown-quick-save')
   await expect(quickSave).toBeDisabled()
@@ -78,7 +78,8 @@ test('embedded Markdown Web File menu opens, saves, switches documents, and inse
 
   await fileTab.click()
   await fileMenu.locator('.markdown-file-menu-history').click()
-  await expect(page.locator('#host-state')).toHaveText('history saved')
+  await expect(page.locator('#saved-text')).toContainText('Second Markdown')
+  await expect(page.locator('#host-state')).toHaveText('clean')
 
   await fileTab.click()
   await fileMenu.locator('.markdown-file-menu-download').click()
