@@ -81,10 +81,10 @@ jobs:
 
       - name: Start iframe Host Demo
         run: |
-          npx vite preview --config examples/web-markdown-host/vite.config.ts --host 127.0.0.1 --port 8084 > /tmp/markdown-web-host.log 2>&1 &
+          npx vite preview --config examples/web-markdown-host/vite.config.ts --host 127.0.0.1 --port 18084 > /tmp/markdown-web-host.log 2>&1 &
           echo $! > /tmp/markdown-web-host.pid
           for i in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:8084/ >/dev/null; then
+            if curl --fail --silent http://127.0.0.1:18084/ >/dev/null; then
               exit 0
             fi
             sleep 1
@@ -95,7 +95,7 @@ jobs:
       - name: Browser E2E (Markdown Web)
         env:
           MARKDOWN_WEB_E2E_URL: http://127.0.0.1:5277/
-          MARKDOWN_WEB_HOST_E2E_URL: http://127.0.0.1:8084/
+          MARKDOWN_WEB_HOST_E2E_URL: http://127.0.0.1:18084/
         run: npx playwright test e2e/markdown-web.spec.ts --config e2e/playwright.config.ts
 
       - name: Upload browser artifacts on failure
