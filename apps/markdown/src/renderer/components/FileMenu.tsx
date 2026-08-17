@@ -84,12 +84,7 @@ export function FileMenu({ disabled, canSave, onOpen, onSave, onSaveAs }: Props)
             <span>{labels.open}</span>
             <span className="markdown-file-menu-key">Ctrl+O</span>
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            disabled={!canSave}
-            onClick={() => run(onSave)}
-          >
+          <button type="button" role="menuitem" disabled={!canSave} onClick={() => run(onSave)}>
             <span>{labels.save}</span>
             <span className="markdown-file-menu-key">Ctrl+S</span>
           </button>
