@@ -36,9 +36,7 @@ export interface SaveMarkdownRequest {
 }
 
 export type SaveMarkdownResult =
-  | { ok: true; path: string }
-  | { ok: true; canceled: true }
-  | { ok: false; error: string }
+  { ok: true; path: string } | { ok: true; canceled: true } | { ok: false; error: string }
 
 /**
  * Transactional file-open result used by Markdown Web. Desktop keeps its native
@@ -86,9 +84,7 @@ export interface ExportPdfRequest {
 }
 
 export type ExportResult =
-  | { ok: true; path: string }
-  | { ok: true; canceled: true }
-  | { ok: false; error: string }
+  { ok: true; path: string } | { ok: true; canceled: true } | { ok: false; error: string }
 
 export interface ImageData {
   base64: string
