@@ -15,16 +15,22 @@ on:
       - '.github/workflows/pdf-web-e2e.yml'
   workflow_dispatch:
 
+concurrency:
+  group: pdf-web-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   pdf-web-e2e:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -36,13 +42,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck shared protocol and PDF Web
-        run: |
-          npm run typecheck -w @genoffice/office-host-api
-          npm run typecheck -w @genoffice/office-protocol
-          npm run typecheck -w @genoffice/iframe-bridge
-          npm run typecheck -w @genoffice/web-runtime
-          npm run typecheck -w @genoffice/pdf
+      - name: Check changed-file formatting
+        env:
+          FORMAT_BASE_REF: ${{ github.event.pull_request.base.sha }}
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Full workspace typecheck
+        run: npm run typecheck
 
       - name: PDF unit tests
         run: npm run test -w @genoffice/pdf
