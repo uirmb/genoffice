@@ -202,7 +202,9 @@ export class MarkdownWebApi implements MarkdownApi {
     const bytes = new TextEncoder().encode(request.text).buffer
     const existing = this.currentFile
     const name = ensureMarkdownName(
-      existing?.name || request.suggestedName || (this.runtimeMode === 'standalone' ? 'Untitled.md' : 'Untitled.md'),
+      existing?.name ||
+        request.suggestedName ||
+        (this.runtimeMode === 'standalone' ? 'Untitled.md' : 'Untitled.md'),
     )
     const file: OfficeFileDescriptor = existing
       ? descriptorOf(existing)
@@ -291,7 +293,8 @@ export class MarkdownWebApi implements MarkdownApi {
 
   async saveImage(data: { base64: string; ext: string }): Promise<string | null> {
     const ext = data.ext.toLowerCase()
-    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : 'image/png'
+    const mime =
+      ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : 'image/png'
     return `data:${mime};base64,${data.base64}`
   }
 
@@ -350,7 +353,9 @@ export class MarkdownWebApi implements MarkdownApi {
   }
 
   async webSearch(_query: string, _maxResults?: number): Promise<WebSearchResult> {
-    throw new Error('Web search is disabled in Markdown Web until office-agent-protocol is integrated.')
+    throw new Error(
+      'Web search is disabled in Markdown Web until office-agent-protocol is integrated.',
+    )
   }
 
   destroy(): void {

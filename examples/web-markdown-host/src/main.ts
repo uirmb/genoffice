@@ -83,7 +83,9 @@ async function browserFileToOfficeFile(file: File, prefix: string): Promise<Offi
   return {
     id: `${prefix}:${crypto.randomUUID()}`,
     name: file.name,
-    mimeType: file.type || (file.name.match(/\.(md|markdown)$/i) ? MARKDOWN_MIME : 'application/octet-stream'),
+    mimeType:
+      file.type ||
+      (file.name.match(/\.(md|markdown)$/i) ? MARKDOWN_MIME : 'application/octet-stream'),
     size: bytes.byteLength,
     version: String(file.lastModified || Date.now()),
     transport: 'buffer',
@@ -191,7 +193,8 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
         transport: 'buffer',
       }
       currentFile = { ...savedDescriptor, bytes, transport: 'buffer' }
-      savedText.textContent = new TextDecoder().decode(bytes).replace(/\s+/g, ' ').trim() || '(empty)'
+      savedText.textContent =
+        new TextDecoder().decode(bytes).replace(/\s+/g, ' ').trim() || '(empty)'
       render()
       setHostState('saved')
       send({
