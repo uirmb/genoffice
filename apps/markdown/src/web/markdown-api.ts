@@ -9,11 +9,13 @@ import type {
 import { OFFICE_PROTOCOL_VERSION } from '@genoffice/office-protocol'
 import type { EditorIframeBridge, WebRuntimeMode } from '@genoffice/web-runtime'
 import type {
+  ConfirmOpenMarkdownResult,
   ExportDocxRequest,
   ExportPdfRequest,
   ExportResult,
   ImageData,
   MarkdownApi,
+  OpenMarkdownResult,
   SaveMarkdownRequest,
   SaveMarkdownResult,
   SaveMode,
@@ -78,6 +80,7 @@ function unsupportedExport(): ExportResult {
 
 export class MarkdownWebApi implements MarkdownApi {
   private currentFile: OfficeFile | null = null
+  private readonly pendingDocumentSelections = new Map<string, OfficeFile>()
   private dirty = false
   private pendingResolved = false
   private pendingResolve!: (value: string | null) => void
@@ -196,6 +199,82 @@ export class MarkdownWebApi implements MarkdownApi {
   async readFile(_path: string): Promise<string> {
     if (!this.currentFile) return ''
     return new TextDecoder('utf-8').decode(this.currentFile.bytes)
+  }
+
+  async openDocument(): Promise<OpenMarkdownResult> {
+    try {
+      if (
+        this.host.pickDocument &&
+        this.host.confirmDocumentOpened &&
+        this.host.releasePickedDocument
+      ) {
+        const picked = await this.host.pickDocument({ accept: MARKDOWN_ACCEPT })
+        if (picked.status === 'cancelled') return { status: 'cancelled' }
+        if (picked.status === 'failed') return { status: 'failed', error: picked.error }
+
+        const file = cloneFile(picked.file)
+        this.pendingDocumentSelections.set(picked.selectionId, file)
+        return {
+          status: 'selected',
+          selectionId: picked.selectionId,
+          path: virtualPath(file),
+          text: new TextDecoder('utf-8').decode(file.bytes),
+        }
+      }
+
+      // Compatibility path for older/custom hosts that still expose only pickFile/readFile.
+      const selected = await this.host.pickFile({
+        multiple: false,
+        accept: MARKDOWN_ACCEPT,
+        mode: 'file',
+      })
+      const first = selected?.[0]
+      if (!first) return { status: 'cancelled' }
+      const file =
+        first.transport === 'buffer' && first.bytes
+          ? ({ ...first, bytes: first.bytes.slice(0), transport: 'buffer' } as OfficeFile)
+          : await this.host.readFile(first.id)
+      this.currentFile = cloneFile(file)
+      this.host.setTitle(this.currentFile.name)
+      return {
+        status: 'selected',
+        selectionId: null,
+        path: virtualPath(this.currentFile),
+        text: new TextDecoder('utf-8').decode(this.currentFile.bytes),
+      }
+    } catch (error) {
+      return {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  async confirmOpenDocument(selectionId: string): Promise<ConfirmOpenMarkdownResult> {
+    const candidate = this.pendingDocumentSelections.get(selectionId)
+    if (!candidate || !this.host.confirmDocumentOpened) {
+      return { ok: false, error: 'The pending Markdown selection is no longer available.' }
+    }
+
+    const result = await this.host.confirmDocumentOpened(selectionId)
+    if (!result.ok) return { ok: false, error: result.error || 'Unable to bind selected Markdown.' }
+
+    const descriptor = result.file
+      ? { ...descriptorOf(candidate), ...result.file, transport: 'buffer' as const }
+      : descriptorOf(candidate)
+    this.currentFile = {
+      ...descriptor,
+      bytes: candidate.bytes.slice(0),
+      transport: 'buffer',
+    }
+    this.pendingDocumentSelections.delete(selectionId)
+    this.host.setTitle(this.currentFile.name)
+    return { ok: true }
+  }
+
+  async releaseOpenDocument(selectionId: string): Promise<void> {
+    this.pendingDocumentSelections.delete(selectionId)
+    await this.host.releasePickedDocument?.(selectionId)
   }
 
   async save(request: SaveMarkdownRequest): Promise<SaveMarkdownResult> {
@@ -362,6 +441,10 @@ export class MarkdownWebApi implements MarkdownApi {
     this.unsubscribeBridge?.()
     this.unsubscribeBridge = null
     this.languageListeners.clear()
+    for (const selectionId of this.pendingDocumentSelections.keys()) {
+      void this.host.releasePickedDocument?.(selectionId)
+    }
+    this.pendingDocumentSelections.clear()
     this.host.setDirty(false)
   }
 }
