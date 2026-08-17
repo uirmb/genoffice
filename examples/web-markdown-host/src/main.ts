@@ -42,21 +42,6 @@ function send(message: HostToEditorMessage, transfer: Transferable[] = []): void
   frame.contentWindow?.postMessage(message, markdownOrigin, transfer)
 }
 
-function descriptorOf(file: OfficeFile): OfficeFileDescriptor {
-  return {
-    id: file.id,
-    ...(file.nodeId ? { nodeId: file.nodeId } : {}),
-    ...(file.tenantId ? { tenantId: file.tenantId } : {}),
-    ...(file.parentId !== undefined ? { parentId: file.parentId } : {}),
-    name: file.name,
-    mimeType: file.mimeType,
-    size: file.size,
-    version: file.version,
-    ...(file.updatedAt ? { updatedAt: file.updatedAt } : {}),
-    transport: 'buffer',
-  }
-}
-
 function capabilities() {
   return {
     ai: false,
