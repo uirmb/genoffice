@@ -13,11 +13,12 @@ test('standalone Markdown Web starts as an editable AI-free document', async ({ 
 
   await expect(page.locator('.doc-editor')).toBeVisible()
   await expect(page.locator('.doc-editor')).toHaveAttribute('contenteditable', 'true')
+  await expect(page.locator('.markdown-file-tab')).toBeVisible()
   await expect(page.locator('.ai-entry:visible')).toHaveCount(0)
   await expect(page.locator('.ai-dock:visible')).toHaveCount(0)
 })
 
-test('embedded Markdown Web opens, edits, saves, and inserts a Host-picked image', async ({
+test('embedded Markdown Web File menu opens, saves, switches documents, and inserts Host assets', async ({
   page,
 }) => {
   await page.goto(MARKDOWN_WEB_HOST_URL)
@@ -32,6 +33,15 @@ test('embedded Markdown Web opens, edits, saves, and inserts a Host-picked image
 
   await expect(officeFrame.locator('.doc-editor h1')).toHaveText('Markdown Web')
   const editor = officeFrame.locator('.doc-editor')
+  const fileTab = officeFrame.locator('.markdown-file-tab')
+
+  await expect(fileTab).toHaveText('文件')
+  await fileTab.click()
+  const fileMenu = officeFrame.locator('.markdown-file-menu')
+  await expect(fileMenu).toBeVisible()
+  await expect(fileMenu.locator('button').filter({ hasText: '保存' })).toBeDisabled()
+  await fileTab.click()
+
   const paragraph = editor.locator('p').filter({ hasText: 'Initial paragraph' })
   await expect(paragraph).toBeVisible()
   await paragraph.click()
@@ -40,14 +50,32 @@ test('embedded Markdown Web opens, edits, saves, and inserts a Host-picked image
   await expect(paragraph).toHaveText('Initial paragraph edited')
   await expect(page.locator('#host-state')).toHaveText('dirty')
 
-  await editor.press('Control+s')
+  await fileTab.click()
+  const saveButton = fileMenu.locator('button').filter({ hasText: '保存' })
+  await expect(saveButton).toBeEnabled()
+  await saveButton.click()
   await expect(page.locator('#saved-text')).toContainText('Initial paragraph edited')
   await expect(page.locator('#host-state')).toHaveText('clean')
 
-  const chooserPromise = page.waitForEvent('filechooser')
+  const openChooserPromise = page.waitForEvent('filechooser')
+  await fileTab.click()
+  await fileMenu.locator('button').filter({ hasText: '打开' }).click()
+  const openChooser = await openChooserPromise
+  await openChooser.setFiles({
+    name: 'second.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('# Second Markdown\n\nOpened from File menu\n', 'utf8'),
+  })
+
+  await expect(editor.locator('h1')).toHaveText('Second Markdown')
+  await expect(editor.locator('p')).toContainText('Opened from File menu')
+  await expect(page.locator('#file-name')).toHaveText('second.md')
+  await expect(page.locator('#host-state')).toHaveText('clean')
+
+  const assetChooserPromise = page.waitForEvent('filechooser')
   await officeFrame.getByTitle('插入图片').click()
-  const chooser = await chooserPromise
-  await chooser.setFiles({
+  const assetChooser = await assetChooserPromise
+  await assetChooser.setFiles({
     name: 'uc-image.png',
     mimeType: 'image/png',
     buffer: ONE_PIXEL_PNG,
@@ -58,7 +86,8 @@ test('embedded Markdown Web opens, edits, saves, and inserts a Host-picked image
   await expect(image).toHaveAttribute('src', /^data:image\/png;base64,/)
   await expect(page.locator('#host-state')).toHaveText('dirty')
 
-  await editor.press('Control+s')
+  await fileTab.click()
+  await fileMenu.locator('button').filter({ hasText: '另存为' }).click()
   await expect(page.locator('#saved-text')).toContainText('data:image/png;base64')
   await expect(page.locator('#host-state')).toHaveText('clean')
   await expect(officeFrame.locator('.ai-entry:visible')).toHaveCount(0)
