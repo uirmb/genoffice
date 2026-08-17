@@ -52,13 +52,13 @@ function capabilities() {
     pickAssets: true,
     save: true,
     saveAs: true,
-    saveHistoryVersion: false,
+    saveHistoryVersion: true,
     exportDocx: false,
     exportPptx: false,
     exportXlsx: false,
     close: true,
     autoSave: 'disabled' as const,
-    download: false,
+    download: true,
     print: false,
     systemFilePicker: true,
     pageCropMarks: false,
@@ -299,6 +299,46 @@ async function handleEditorMessage(message: EditorToHostMessage): Promise<void> 
       })
       return
     }
+    case 'office:save-history-version': {
+      saveVersion += 1
+      const bytes = message.payload.bytes.slice(0)
+      const savedDescriptor: OfficeFileDescriptor = {
+        ...message.payload.file,
+        size: bytes.byteLength,
+        version: `history-${saveVersion}`,
+        transport: 'buffer',
+      }
+      currentFile = { ...savedDescriptor, bytes, transport: 'buffer' }
+      savedText.textContent =
+        new TextDecoder().decode(bytes).replace(/\s+/g, ' ').trim() || '(empty)'
+      render()
+      setHostState('history saved')
+      send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:save-history-version-result',
+        requestId: message.requestId,
+        payload: { ok: true, file: savedDescriptor },
+      })
+      return
+    }
+    case 'office:download-document':
+      if (message.payload.format !== 'markdown') {
+        send({
+          protocol: OFFICE_PROTOCOL_VERSION,
+          type: 'office:download-document-result',
+          requestId: message.requestId,
+          payload: { ok: false, code: 'UNSUPPORTED_FORMAT', error: 'Expected markdown.' },
+        })
+        return
+      }
+      setHostState('downloaded')
+      send({
+        protocol: OFFICE_PROTOCOL_VERSION,
+        type: 'office:download-document-result',
+        requestId: message.requestId,
+        payload: { ok: true },
+      })
+      return
     case 'office:pick-assets':
       pendingAssetRequestId = message.requestId
       assetPicker.accept = message.payload.accept?.join(',') || 'image/png,image/jpeg,image/gif'

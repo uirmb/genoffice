@@ -16,6 +16,8 @@ import type {
   ImageData,
   MarkdownApi,
   OpenMarkdownResult,
+  MarkdownHostActionResult,
+  MarkdownTextRequest,
   SaveMarkdownRequest,
   SaveMarkdownResult,
   SaveMode,
@@ -319,6 +321,68 @@ export class MarkdownWebApi implements MarkdownApi {
     }
     this.host.setTitle(this.currentFile.name)
     return { ok: true, path: virtualPath(this.currentFile) }
+  }
+
+  async saveHistoryVersion(request: MarkdownTextRequest): Promise<MarkdownHostActionResult> {
+    const existing = this.currentFile
+    if (!existing)
+      return { ok: false, error: 'Save the Markdown document before creating history.' }
+    if (!this.host.saveHistoryVersion) {
+      return { ok: false, error: 'History versions are not supported by this host.' }
+    }
+
+    const bytes = new TextEncoder().encode(request.text).buffer
+    const result = await this.host.saveHistoryVersion({
+      file: descriptorOf(existing),
+      bytes,
+      baseVersion: existing.version,
+    })
+    if (!result.ok) {
+      return { ok: false, error: result.error || 'Creating a Markdown history version failed.' }
+    }
+
+    const saved = result.file ?? { ...descriptorOf(existing), size: bytes.byteLength }
+    this.currentFile = {
+      ...saved,
+      mimeType: saved.mimeType || 'text/markdown',
+      size: bytes.byteLength,
+      bytes: bytes.slice(0),
+      transport: 'buffer',
+    }
+    this.host.setTitle(this.currentFile.name)
+    return { ok: true }
+  }
+
+  async download(request: MarkdownTextRequest): Promise<MarkdownHostActionResult> {
+    const download = this.host.downloadDocument ?? this.host.exportDocument
+    if (!download) return { ok: false, error: 'Download is not supported by this host.' }
+
+    const bytes = new TextEncoder().encode(request.text).buffer
+    const existing = this.currentFile
+    const name = ensureMarkdownName(existing?.name || 'Untitled.md')
+    const file: OfficeFileDescriptor = existing
+      ? { ...descriptorOf(existing), name, size: bytes.byteLength }
+      : {
+          id: 'download:markdown',
+          name,
+          mimeType: 'text/markdown',
+          size: bytes.byteLength,
+          version: null,
+          transport: 'buffer',
+        }
+    const result = await download.call(this.host, {
+      format: 'markdown',
+      file,
+      bytes,
+    })
+    return result.ok
+      ? { ok: true }
+      : { ok: false, error: result.error || 'Downloading Markdown failed.' }
+  }
+
+  async exit(): Promise<void> {
+    if (this.host.approveClose) await this.host.approveClose()
+    else await this.host.requestClose?.()
   }
 
   setDirty(dirty: boolean): void {

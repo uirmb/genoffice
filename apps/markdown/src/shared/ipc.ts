@@ -38,6 +38,13 @@ export interface SaveMarkdownRequest {
 export type SaveMarkdownResult =
   { ok: true; path: string } | { ok: true; canceled: true } | { ok: false; error: string }
 
+export interface MarkdownTextRequest {
+  /** Full UTF-8 Markdown text including frontmatter. */
+  text: string
+}
+
+export type MarkdownHostActionResult = { ok: true } | { ok: false; error: string }
+
 /**
  * Transactional file-open result used by Markdown Web. Desktop keeps its native
  * shell open flow and therefore does not need to implement these optional hooks.
@@ -110,6 +117,10 @@ export interface MarkdownApi {
    * save dialog first. The resolved path is granted to the view and returned.
    */
   save(request: SaveMarkdownRequest): Promise<SaveMarkdownResult>
+  /** Web-only UC Host actions. Desktop preload may omit these hooks. */
+  saveHistoryVersion?(request: MarkdownTextRequest): Promise<MarkdownHostActionResult>
+  download?(request: MarkdownTextRequest): Promise<MarkdownHostActionResult>
+  exit?(): Promise<void>
   /** Mirror unsaved-changes state to the main process; drives the save prompt before closing a tab/window */
   setDirty(dirty: boolean): void
   /** Shell menu Save / Save As → renderer serializes and calls save() with the given mode */

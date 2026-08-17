@@ -39,7 +39,12 @@ test('embedded Markdown Web File menu opens, saves, switches documents, and inse
   await fileTab.click()
   const fileMenu = officeFrame.locator('.markdown-file-menu')
   await expect(fileMenu).toBeVisible()
+  await expect(fileMenu.getByRole('menuitem', { name: /存为新的历史版本/ })).toBeVisible()
+  await expect(fileMenu.getByRole('menuitem', { name: '下载到本地' })).toBeVisible()
+  await expect(fileMenu.getByRole('menuitem', { name: '退出' })).toBeVisible()
   await expect(fileMenu.locator('button').filter({ hasText: '保存' })).toBeDisabled()
+  const quickSave = officeFrame.locator('.markdown-quick-save')
+  await expect(quickSave).toBeDisabled()
   await fileTab.click()
 
   const paragraph = editor.locator('p').filter({ hasText: 'Initial paragraph' })
@@ -50,12 +55,11 @@ test('embedded Markdown Web File menu opens, saves, switches documents, and inse
   await expect(paragraph).toHaveText('Initial paragraph edited')
   await expect(page.locator('#host-state')).toHaveText('dirty')
 
-  await fileTab.click()
-  const saveButton = fileMenu.locator('button').filter({ hasText: '保存' })
-  await expect(saveButton).toBeEnabled()
-  await saveButton.click()
+  await expect(quickSave).toBeEnabled()
+  await quickSave.click()
   await expect(page.locator('#saved-text')).toContainText('Initial paragraph edited')
   await expect(page.locator('#host-state')).toHaveText('clean')
+  await expect(quickSave).toBeDisabled()
 
   const openChooserPromise = page.waitForEvent('filechooser')
   await fileTab.click()
@@ -71,6 +75,15 @@ test('embedded Markdown Web File menu opens, saves, switches documents, and inse
   await expect(editor.locator('p')).toContainText('Opened from File menu')
   await expect(page.locator('#file-name')).toHaveText('second.md')
   await expect(page.locator('#host-state')).toHaveText('clean')
+
+  await fileTab.click()
+  await fileMenu.locator('.markdown-file-menu-history').click()
+  await expect(page.locator('#saved-text')).toContainText('Second Markdown')
+  await expect(page.locator('#host-state')).toHaveText('clean')
+
+  await fileTab.click()
+  await fileMenu.locator('.markdown-file-menu-download').click()
+  await expect(page.locator('#host-state')).toHaveText('downloaded')
 
   const assetChooserPromise = page.waitForEvent('filechooser')
   await officeFrame.getByTitle('插入图片').click()
@@ -91,4 +104,8 @@ test('embedded Markdown Web File menu opens, saves, switches documents, and inse
   await expect(page.locator('#saved-text')).toContainText('data:image/png;base64')
   await expect(page.locator('#host-state')).toHaveText('clean')
   await expect(officeFrame.locator('.ai-entry:visible')).toHaveCount(0)
+
+  await fileTab.click()
+  await fileMenu.locator('.markdown-file-menu-exit').click()
+  await expect(page.locator('#host-state')).toHaveText('close approved (file-menu)')
 })

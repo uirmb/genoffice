@@ -129,3 +129,13 @@ export function IconQuoteMark(props: IconProps) {
     </Svg>
   )
 }
+
+export function IconSave(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 2.5h8.4L13.5 4.6V13.5H2.5V2.5z" />
+      <path d="M5 2.5v4h5v-4" />
+      <path d="M5 10h6v3.5H5z" />
+    </Svg>
+  )
+}

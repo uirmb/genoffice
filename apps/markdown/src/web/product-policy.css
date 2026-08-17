@@ -92,3 +92,13 @@ html.genoffice-markdown-web .markdown-file-menu-key {
   font-size: 12px;
   white-space: nowrap;
 }
+
+html.genoffice-markdown-web .markdown-file-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: #edebe9;
+}
+
+html.genoffice-markdown-web .markdown-quick-save {
+  flex: 0 0 auto;
+}
