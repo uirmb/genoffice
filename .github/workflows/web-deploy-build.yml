@@ -58,3 +58,39 @@ jobs:
 
       - name: Build XLSX Engine image
         run: docker build --progress=plain -f deploy/xlsx-engine/Dockerfile -t genoffice-xlsx-engine:ci .
+
+  build-web-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unified Web bundle
+        run: npm run build:web:all
+
+      - name: Verify Web release layout
+        shell: pwsh
+        run: |
+          @(
+            'dist/web/docx/index.html',
+            'dist/web/xlsx/index.html',
+            'dist/web/pptx/index.html',
+            'dist/web/md/index.html',
+            'dist/web/pdf/index.html',
+            'dist/web/pdf/pdfjs'
+          ) | ForEach-Object {
+            if (-not (Test-Path $_)) {
+              throw "Missing expected Web release path: $_"
+            }
+          }
