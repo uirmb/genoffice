@@ -76,6 +76,7 @@ function __genofficeDecodeBase64(input) {
 
 export default defineConfig({
   root: 'src/web',
+  base: process.env.GENOFFICE_WEB_BASE || '/',
   plugins: [xlsxGatewayBrowserBoundary(), react()],
   server: {
     host: '0.0.0.0',
