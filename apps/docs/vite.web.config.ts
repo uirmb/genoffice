@@ -3,6 +3,7 @@ import { defineConfig } from 'vite'
 
 export default defineConfig({
   root: 'src/web',
+  base: process.env.GENOFFICE_WEB_BASE || '/',
   plugins: [react()],
   server: {
     port: Number(process.env.DOCS_WEB_PORT) || 5273,
