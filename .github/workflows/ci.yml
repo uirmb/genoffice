@@ -9,7 +9,7 @@ on:
   push:
     branches: [main, 'dev_*', 'release_*']
   pull_request:
-    branches: [main]
+    branches: [main, web/stable]
   workflow_dispatch:
 
 concurrency:
