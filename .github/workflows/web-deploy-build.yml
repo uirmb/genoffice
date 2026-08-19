@@ -47,10 +47,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check changed-file formatting
+      - name: Show exact formatting diff
         env:
           FORMAT_BASE_REF: ${{ github.event.pull_request.base.sha }}
-        run: npm run format:check
+        run: |
+          npm run format
+          git diff --exit-code
 
       - name: Build unified Web bundle
         run: npm run build:web:all
