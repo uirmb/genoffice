@@ -7,7 +7,7 @@ services:
       context: ../..
       dockerfile: deploy/xlsx-engine/Dockerfile
     ports:
-      - "${XLSX_ENGINE_BIND_ADDRESS:-0.0.0.0}:${XLSX_ENGINE_PORT:-7301}:7301"
+      - '${XLSX_ENGINE_BIND_ADDRESS:-0.0.0.0}:${XLSX_ENGINE_PORT:-7301}:7301'
     environment:
       XLSX_ENGINE_LISTEN: 0.0.0.0:7301
       XLSX_ENGINE_WORK_ROOT: /var/lib/genoffice-xlsx-engine/work
