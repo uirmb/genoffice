@@ -67,7 +67,14 @@ Every HTTP response carries `X-Request-Id`.
 Each completed request writes one JSON line to stdout with only operational fields:
 
 ```json
-{"event":"http_request","requestId":"req_...","method":"POST","path":"/v1/workbooks","status":201,"durationMs":42}
+{
+  "event": "http_request",
+  "requestId": "req_...",
+  "method": "POST",
+  "path": "/v1/workbooks",
+  "status": 201,
+  "durationMs": 42
+}
 ```
 
 The log intentionally records the URL **path only**. It does not log query strings, workbook names, request bodies, file bytes, UC users, tenants, FsNode IDs, JWTs, or plugin permissions.
