@@ -127,6 +127,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Chromium
+        run: npx playwright install chromium
+
       - name: Build apps
         run: npm run build:all
 
