@@ -1,0 +1,21 @@
+name: genoffice-xlsx-engine
+
+services:
+  xlsx-engine:
+    image: ${XLSX_ENGINE_IMAGE:-genoffice-xlsx-engine:0.1.0}
+    build:
+      context: ../..
+      dockerfile: deploy/xlsx-engine/Dockerfile
+    ports:
+      - "${XLSX_ENGINE_BIND_ADDRESS:-0.0.0.0}:${XLSX_ENGINE_PORT:-7301}:7301"
+    environment:
+      XLSX_ENGINE_LISTEN: 0.0.0.0:7301
+      XLSX_ENGINE_WORK_ROOT: /var/lib/genoffice-xlsx-engine/work
+      XLSX_ENGINE_SESSION_TTL_SECS: ${XLSX_ENGINE_SESSION_TTL_SECS:-3600}
+      XLSX_ENGINE_CLEANUP_INTERVAL_SECS: ${XLSX_ENGINE_CLEANUP_INTERVAL_SECS:-60}
+      XLSX_ENGINE_MAX_HEAVY_REQUESTS: ${XLSX_ENGINE_MAX_HEAVY_REQUESTS:-4}
+      XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS: ${XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS:-15}
+      XLSX_ENGINE_MAX_WORKBOOK_MB: ${XLSX_ENGINE_MAX_WORKBOOK_MB:-100}
+      XLSX_ENGINE_MAX_REQUEST_MB: ${XLSX_ENGINE_MAX_REQUEST_MB:-384}
+    restart: unless-stopped
+    stop_grace_period: 30s
