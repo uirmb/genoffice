@@ -52,6 +52,9 @@ jobs:
           FORMAT_BASE_REF: ${{ github.event.pull_request.base.sha }}
         run: npm run format:check
 
+      - name: Test DOCX Web SHA-256 compatibility
+        run: npm run test -w @genoffice/docs -- tests/web-sha256.test.ts
+
       - name: Build unified Web bundle
         run: npm run build:web:all
 
