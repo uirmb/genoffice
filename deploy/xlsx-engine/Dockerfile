@@ -12,7 +12,7 @@ RUN cargo build --release --manifest-path services/xlsx-engine-service/Cargo.tom
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home --home-dir /var/lib/genoffice-xlsx-engine genoffice \
     && mkdir -p /var/lib/genoffice-xlsx-engine/work \
@@ -29,8 +29,13 @@ ENV XLSX_ENGINE_LISTEN=0.0.0.0:7301 \
     XLSX_ENGINE_SESSION_TTL_SECS=3600 \
     XLSX_ENGINE_CLEANUP_INTERVAL_SECS=60 \
     XLSX_ENGINE_MAX_HEAVY_REQUESTS=4 \
-    XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS=15
+    XLSX_ENGINE_HEAVY_QUEUE_TIMEOUT_SECS=15 \
+    XLSX_ENGINE_MAX_WORKBOOK_MB=100 \
+    XLSX_ENGINE_MAX_REQUEST_MB=384
 
 EXPOSE 7301
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl --fail --silent --show-error http://127.0.0.1:7301/health > /dev/null || exit 1
 
 ENTRYPOINT ["/usr/local/bin/xlsx-engine-service"]
