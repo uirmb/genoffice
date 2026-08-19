@@ -2,7 +2,7 @@ name: Markdown Web E2E
 
 on:
   pull_request:
-    branches: [web/develop]
+    branches: [web/develop, web/stable]
     paths:
       - 'apps/markdown/**'
       - 'packages/office-host-api/**'
