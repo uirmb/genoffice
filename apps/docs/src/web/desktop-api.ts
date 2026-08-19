@@ -16,6 +16,7 @@ import type {
   OpenFileResult,
   PickImageResult,
 } from '../shared/ipc'
+import { sha256 } from './sha256'
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 const IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/gif'] as const
@@ -62,11 +63,6 @@ function normalizeLang(value: string): DocsLang {
 
 function virtualPath(file: OfficeFileDescriptor): string {
   return `web-office://files/${encodeURIComponent(file.id)}/${encodeURIComponent(file.name)}`
-}
-
-async function sha256(bytes: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('')
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
