@@ -10,6 +10,7 @@ const pdfjsDir = (sub: string) => normalizePath(join(pdfjsRoot, 'pdfjs-dist', su
 
 export default defineConfig({
   root: 'src/web',
+  base: process.env.GENOFFICE_WEB_BASE || '/',
   plugins: [
     react(),
     viteStaticCopy({

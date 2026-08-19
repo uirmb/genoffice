@@ -56,6 +56,7 @@
     "build:web-pdf-host": "npx vite build --config examples/web-pdf-host/vite.config.ts",
     "build:web:markdown": "npm run build:web -w @genoffice/markdown",
     "build:web-markdown-host": "npx vite build --config examples/web-markdown-host/vite.config.ts",
+    "build:web:all": "node tools/build-web-all.mjs",
     "build:xlsx-engine": "cargo build --release --manifest-path services/xlsx-engine-service/Cargo.toml",
     "build:all": "npm run build -w @genoffice/docs && npm run build -w @genoffice/sheets && npm run build -w @genoffice/slides && npm run build -w @genoffice/pdf && npm run build -w @genoffice/markdown && npm run build -w @genoffice/shell",
     "shell": "npm run build:all && electron apps/shell",
