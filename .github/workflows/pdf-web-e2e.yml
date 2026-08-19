@@ -2,7 +2,7 @@ name: PDF Web E2E
 
 on:
   pull_request:
-    branches: [web/develop]
+    branches: [web/develop, web/stable]
     paths:
       - 'apps/pdf/**'
       - 'packages/office-host-api/**'
