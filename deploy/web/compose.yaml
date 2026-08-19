@@ -7,7 +7,7 @@ services:
       context: ../..
       dockerfile: deploy/web/Dockerfile
     ports:
-      - "${GENOFFICE_WEB_BIND_ADDRESS:-0.0.0.0}:${GENOFFICE_WEB_PORT:-8080}:80"
+      - '${GENOFFICE_WEB_BIND_ADDRESS:-0.0.0.0}:${GENOFFICE_WEB_PORT:-8080}:80'
     environment:
       XLSX_ENGINE_SERVERS: ${XLSX_ENGINE_SERVERS:?set XLSX_ENGINE_SERVERS in deploy/web/.env}
       XLSX_ENGINE_STICKY_COOKIE_SECURE: ${XLSX_ENGINE_STICKY_COOKIE_SECURE:-false}
