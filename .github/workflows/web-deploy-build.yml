@@ -5,11 +5,16 @@ on:
     branches: [web/develop]
     paths:
       - '.dockerignore'
+      - 'apps/docs/src/web/**'
+      - 'apps/docs/tests/web-sha256.test.ts'
       - 'apps/docs/vite.web.config.ts'
       - 'apps/sheets/vite.web.config.ts'
+      - 'apps/slides/src/web/**'
       - 'apps/slides/vite.web.config.ts'
+      - 'apps/pdf/src/web/**'
       - 'apps/pdf/vite.web.config.ts'
       - 'apps/markdown/vite.web.config.ts'
+      - 'packages/pptx-engine/**'
       - 'services/xlsx-engine-service/**'
       - 'apps/sheets/native/xlsx-engine/**'
       - 'deploy/web/**'
@@ -54,6 +59,9 @@ jobs:
 
       - name: Test DOCX Web SHA-256 compatibility
         run: npm run test -w @genoffice/docs -- tests/web-sha256.test.ts
+
+      - name: Test PPTX Web SHA-256 compatibility
+        run: npm run test -w @genoffice/pptx-engine -- tests/bytes-sha256.test.ts
 
       - name: Build unified Web bundle
         run: npm run build:web:all
@@ -113,11 +121,20 @@ jobs:
           docker logs genoffice-web-ci || true
           exit 1
 
-      - name: Verify Web routes, Engine proxy and sticky cookie
+      - name: Verify Web routes, PDF worker MIME, Engine proxy and sticky cookie
         run: |
           for path in docx xlsx pptx md pdf; do
             curl --fail --silent --show-error --output /dev/null "http://127.0.0.1:18080/$path/"
           done
+
+          pdf_worker_path=$(docker exec genoffice-web-ci sh -c "find /usr/share/nginx/html/pdf -type f -name '*.mjs' | head -n 1")
+          test -n "$pdf_worker_path"
+          pdf_worker_url=${pdf_worker_path#/usr/share/nginx/html}
+          pdf_worker_type=$(curl --fail --silent --show-error --head "http://127.0.0.1:18080$pdf_worker_url" | tr -d '\r' | awk 'BEGIN { IGNORECASE=1 } /^Content-Type:/ { print $2; exit }')
+          case "$pdf_worker_type" in
+            application/javascript*|text/javascript*) ;;
+            *) echo "Unexpected PDF worker Content-Type: $pdf_worker_type" >&2; exit 1 ;;
+          esac
 
           curl --fail --silent --show-error \
             --dump-header /tmp/xlsx-engine-headers.txt \
