@@ -63,7 +63,7 @@ jobs:
         run: npm run build:web-markdown-host
 
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Start Markdown Web
         run: |
