@@ -2,7 +2,7 @@ name: Web Deploy Build
 
 on:
   pull_request:
-    branches: [web/develop]
+    branches: [web/develop, web/stable]
     paths:
       - '.dockerignore'
       - 'apps/docs/src/web/**'
