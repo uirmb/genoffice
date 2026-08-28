@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
 import { buildExtensions } from '../src/renderer/editor/extensions'
 import {
+  getProtectedInlineDataImage,
+  isProtectedInlineDataImage,
   protectInlineDataImages,
   restoreInlineDataImage,
 } from '../src/renderer/markdown/inlineDataImages'
@@ -49,21 +51,34 @@ describe('inline data image protection', () => {
     expect(restoreInlineDataImage(placeholder!)).toBe(dataUrl)
   })
 
-  it('protects the first synchronous setContent call without waiting for onCreate', () => {
+  it('keeps the first synchronous setContent lightweight while serialization stays lossless', () => {
     const editor = createEditor()
     const payload = 'A'.repeat(20 * 1024 * 1024)
     const dataUrl = `data:image/jpeg;base64,${payload}`
     const markdown = `# Large image\n\n![photo](${dataUrl})\n\nAfter image\n`
 
     expect(editor.commands.setContent(markdown, { contentType: 'markdown' })).toBe(true)
-    expect(findImageSrcs(editor.getJSON())).toEqual([dataUrl])
+
+    const [storedSrc] = findImageSrcs(editor.getJSON())
+    expect(storedSrc).toBeTruthy()
+    expect(isProtectedInlineDataImage(storedSrc!)).toBe(true)
+    expect(storedSrc!.length).toBeLessThan(128)
+    expect(getProtectedInlineDataImage(storedSrc!)).toBe(dataUrl)
+    expect(JSON.stringify(editor.getJSON()).length).toBeLessThan(2048)
+    expect(editor.view.dom.textContent).toContain('Large image')
+    expect(editor.view.dom.textContent).toContain('After image')
+
+    const image = editor.view.dom.querySelector('img')
+    expect(image?.getAttribute('src')).toMatch(/^data:image\/svg\+xml,/)
+    expect(image?.getAttribute('data-md-deferred-image')).toBe(storedSrc)
 
     const serialized = editor.getMarkdown()
     expect(serialized).toContain(dataUrl)
     expect(serialized).toContain('After image')
+    expect(serialized).not.toContain('genoffice.invalid/__inline-data-image/')
   })
 
-  it('loads a 46 MB Markdown body containing several large embedded images', () => {
+  it('loads a 46 MB Markdown body into a small first-paint document with four placeholders', () => {
     const editor = createEditor()
     const sizes = [12, 12, 11, 11].map((mb) => mb * 1024 * 1024)
     const dataUrls = sizes.map(
@@ -81,7 +96,17 @@ describe('inline data image protection', () => {
 
     expect(markdown.length).toBeGreaterThan(46 * 1024 * 1024)
     expect(editor.commands.setContent(markdown, { contentType: 'markdown' })).toBe(true)
-    expect(findImageSrcs(editor.getJSON())).toEqual(dataUrls)
+
+    const storedSrcs = findImageSrcs(editor.getJSON())
+    expect(storedSrcs).toHaveLength(4)
+    expect(storedSrcs.every(isProtectedInlineDataImage)).toBe(true)
+    expect(storedSrcs.map((src) => getProtectedInlineDataImage(src))).toEqual(dataUrls)
+    expect(JSON.stringify(editor.getJSON()).length).toBeLessThan(16 * 1024)
+    expect(editor.view.dom.querySelectorAll('img[data-md-deferred-image]')).toHaveLength(4)
+    expect(editor.view.dom.textContent).toContain('Text after image 4.')
+
+    const serialized = editor.getMarkdown()
+    for (const dataUrl of dataUrls) expect(serialized).toContain(dataUrl)
   })
 
   it('does not rewrite a data URL that is not a Markdown image destination', () => {
