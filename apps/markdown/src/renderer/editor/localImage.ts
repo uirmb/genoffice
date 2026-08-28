@@ -1,7 +1,6 @@
 import { Image } from '@tiptap/extension-image'
 import { mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
-import { restoreInlineDataImage } from '../markdown/inlineDataImages'
 
 /** Directory of the open .md file; relative image paths resolve against it for display */
 let imageBaseDir: string | null = null
@@ -73,17 +72,6 @@ async function persistAndInsert(
  * Pasted / dropped image files are persisted into `assets/` beside the file.
  */
 export const LocalImage = Image.extend({
-  parseMarkdown(token) {
-    return {
-      type: 'image',
-      attrs: {
-        src: restoreInlineDataImage(String(token.href ?? '')),
-        alt: typeof token.text === 'string' ? token.text : null,
-        title: typeof token.title === 'string' ? token.title : null,
-      },
-    }
-  },
-
   renderHTML({ node, HTMLAttributes }) {
     return [
       'img',
