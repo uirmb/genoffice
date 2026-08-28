@@ -1,5 +1,6 @@
 import { Extension, type JSONContent } from '@tiptap/core'
 
+const PROTECT_THRESHOLD = 512 * 1024
 const PLACEHOLDER_SESSION = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const PLACEHOLDER_ROOT = `https://genoffice.invalid/__inline-data-image/${PLACEHOLDER_SESSION}/`
 
@@ -52,10 +53,10 @@ function nextImageDestination(
 }
 
 /**
- * MarkedJS does not need to inspect the Base64 body of an embedded image. Very
- * large data URLs can otherwise turn one Markdown line into tens of megabytes
- * and overflow the lexer stack. Replace only Markdown image destinations with a
- * short HTTPS placeholder before lexing.
+ * MarkedJS does not need to inspect the Base64 body of a large embedded image.
+ * Very large data URLs can otherwise turn one Markdown line into tens of MB and
+ * overflow the lexer stack. Small inline images stay on the normal immediate
+ * path; only large Markdown image destinations are replaced before lexing.
  *
  * The placeholder intentionally stays in the editor document. Keeping the tens
  * of megabytes of Base64 outside ProseMirror makes the first setContent cheap
@@ -94,6 +95,11 @@ export function protectInlineDataImages(markdown: string): string {
     }
     if (payloadEnd === payloadStart) {
       searchFrom = marker + 2
+      continue
+    }
+
+    if (payloadEnd - dataStart < PROTECT_THRESHOLD) {
+      searchFrom = payloadEnd
       continue
     }
 
