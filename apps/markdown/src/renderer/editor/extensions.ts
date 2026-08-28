@@ -16,6 +16,7 @@ import { BlockKeymap } from './blockKeymap'
 import { AiHighlight } from './aiHighlight'
 import { SlashCommand } from './slashCommand'
 import type { SlashController, SlashItem } from './slashCommand'
+import { InlineDataImageProtection } from '../markdown/inlineDataImages'
 import { t } from '../i18n/locale'
 
 export interface BuildExtensionsOptions {
@@ -40,6 +41,7 @@ export function buildExtensions(options: BuildExtensionsOptions): AnyExtension[]
     }),
     Highlight,
     Markdown,
+    InlineDataImageProtection,
     TableKit.configure({ table: { resizable: false } }),
     TaskList,
     TaskItem.configure({ nested: true }),
