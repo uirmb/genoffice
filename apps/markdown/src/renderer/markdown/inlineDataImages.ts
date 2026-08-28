@@ -123,15 +123,16 @@ function restoreInlineDataImages(content: JSONContent): JSONContent {
 }
 
 /**
- * Tiptap 3.29 creates a parse-local Marked lexer inside MarkdownManager.parse(),
- * so Marked preprocess hooks are bypassed. Wrap the manager entry point instead:
- * every editor Markdown parse now shields inline image data before lexing and
- * restores the exact authored Base64 URL in the returned Tiptap JSON.
+ * Tiptap's Markdown extension creates editor.markdown in its onBeforeCreate hook.
+ * This protection extension has a lower priority, so its onBeforeCreate runs after
+ * Markdown has installed the manager but before React effects can load a document.
+ * Wrapping here is important: onCreate is too late for the first setContent call in
+ * the Web editor and can let a large Base64 line reach MarkedJS unprotected.
  */
 export const InlineDataImageProtection = Extension.create({
   name: 'inlineDataImageProtection',
   priority: 50,
-  onCreate() {
+  onBeforeCreate() {
     const markdown = this.editor.markdown
     if (!markdown) return
     const originalParse = markdown.parse.bind(markdown)
