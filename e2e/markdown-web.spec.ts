@@ -33,6 +33,39 @@ test('standalone Markdown Web starts as an editable AI-free document', async ({ 
   await expect(page.locator('.ai-dock:visible')).toHaveCount(0)
 })
 
+test('embedded Markdown Web uses the iframe locale on first render and follows live Host changes', async ({
+  page,
+}) => {
+  await page.goto(MARKDOWN_WEB_HOST_URL)
+  const frame = page.locator('#office-frame')
+  await expect(page.locator('#host-state')).toHaveText('ready')
+
+  // UC includes locale on the plugin iframe URL. Reload the demo iframe with the
+  // same host origin plus an English locale before any document is bound.
+  await frame.evaluate((element) => {
+    const iframe = element as HTMLIFrameElement
+    const url = new URL(iframe.src)
+    url.searchParams.set('locale', 'en-US')
+    iframe.src = url.toString()
+  })
+
+  const officeFrame = page.frameLocator('#office-frame')
+  await expect(officeFrame.locator('.markdown-file-tab')).toHaveText('File')
+
+  await frame.evaluate((element) => {
+    const iframe = element as HTMLIFrameElement
+    iframe.contentWindow?.postMessage(
+      {
+        protocol: 1,
+        type: 'office:set-locale',
+        payload: { locale: 'zh-CN' },
+      },
+      new URL(iframe.src).origin,
+    )
+  })
+  await expect(officeFrame.locator('.markdown-file-tab')).toHaveText('文件')
+})
+
 test('embedded Markdown Web File menu, save UI, exit prompt, Host close, and asset flow match UC lifecycle', async ({
   page,
 }) => {
