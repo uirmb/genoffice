@@ -21,26 +21,32 @@ function isBase64Char(code: number): boolean {
 }
 
 function nextImageDestination(markdown: string, from: number): { marker: number; dataStart: number } | null {
-  const direct = markdown.indexOf('](data:image/', from)
-  const angle = markdown.indexOf('](<data:image/', from)
+  let searchFrom = from
 
-  let marker = -1
-  let dataStart = -1
-  if (direct >= 0 && (angle < 0 || direct < angle)) {
-    marker = direct
-    dataStart = direct + 2
-  } else if (angle >= 0) {
-    marker = angle
-    dataStart = angle + 3
+  while (searchFrom < markdown.length) {
+    const direct = markdown.indexOf('](data:image/', searchFrom)
+    const angle = markdown.indexOf('](<data:image/', searchFrom)
+
+    let marker = -1
+    let dataStart = -1
+    if (direct >= 0 && (angle < 0 || direct < angle)) {
+      marker = direct
+      dataStart = direct + 2
+    } else if (angle >= 0) {
+      marker = angle
+      dataStart = angle + 3
+    }
+    if (marker < 0) return null
+
+    const imageOpen = markdown.lastIndexOf('![', marker)
+    if (imageOpen >= 0 && markdown.indexOf(']', imageOpen + 2) === marker) {
+      return { marker, dataStart }
+    }
+
+    searchFrom = marker + 2
   }
-  if (marker < 0) return null
 
-  const imageOpen = markdown.lastIndexOf('![', marker)
-  if (imageOpen < 0 || markdown.indexOf(']', imageOpen + 2) !== marker) {
-    return nextImageDestination(markdown, marker + 2)
-  }
-
-  return { marker, dataStart }
+  return null
 }
 
 /**
