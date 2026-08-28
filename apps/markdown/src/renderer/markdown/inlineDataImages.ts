@@ -7,23 +7,10 @@ const PLACEHOLDER_ROOT = `https://genoffice.invalid/__inline-data-image/${PLACEH
 const protectedImages = new Map<string, string>()
 let sequence = 0
 
-function isBase64Char(code: number): boolean {
-  return (
-    (code >= 48 && code <= 57) ||
-    (code >= 65 && code <= 90) ||
-    (code >= 97 && code <= 122) ||
-    code === 43 ||
-    code === 47 ||
-    code === 45 ||
-    code === 95 ||
-    code === 61
-  )
-}
-
 function nextImageDestination(
   markdown: string,
   from: number,
-): { marker: number; dataStart: number } | null {
+): { marker: number; dataStart: number; angleWrapped: boolean } | null {
   let searchFrom = from
 
   while (searchFrom < markdown.length) {
@@ -32,18 +19,20 @@ function nextImageDestination(
 
     let marker = -1
     let dataStart = -1
+    let angleWrapped = false
     if (direct >= 0 && (angle < 0 || direct < angle)) {
       marker = direct
       dataStart = direct + 2
     } else if (angle >= 0) {
       marker = angle
       dataStart = angle + 3
+      angleWrapped = true
     }
     if (marker < 0) return null
 
     const imageOpen = markdown.lastIndexOf('![', marker)
     if (imageOpen >= 0 && markdown.indexOf(']', imageOpen + 2) === marker) {
-      return { marker, dataStart }
+      return { marker, dataStart, angleWrapped }
     }
 
     searchFrom = marker + 2
@@ -57,6 +46,10 @@ function nextImageDestination(
  * Very large data URLs can otherwise turn one Markdown line into tens of MB and
  * overflow the lexer stack. Small inline images stay on the normal immediate
  * path; only large Markdown image destinations are replaced before lexing.
+ *
+ * Base64 cannot contain ')' or '>', so the destination end is found with native
+ * indexOf rather than tens of millions of JavaScript character checks. This is
+ * important for first paint on 40+ MB self-contained Markdown files.
  *
  * The placeholder intentionally stays in the editor document. Keeping the tens
  * of megabytes of Base64 outside ProseMirror makes the first setContent cheap
@@ -75,7 +68,7 @@ export function protectInlineDataImages(markdown: string): string {
     const destination = nextImageDestination(markdown, searchFrom)
     if (!destination) break
 
-    const { marker, dataStart } = destination
+    const { marker, dataStart, angleWrapped } = destination
     const base64Marker = markdown.indexOf(';base64,', dataStart)
     if (base64Marker < 0 || base64Marker - dataStart > 96) {
       searchFrom = marker + 2
@@ -89,17 +82,14 @@ export function protectInlineDataImages(markdown: string): string {
     }
 
     const payloadStart = base64Marker + ';base64,'.length
-    let payloadEnd = payloadStart
-    while (payloadEnd < markdown.length && isBase64Char(markdown.charCodeAt(payloadEnd))) {
-      payloadEnd += 1
-    }
-    if (payloadEnd === payloadStart) {
+    const payloadEnd = markdown.indexOf(angleWrapped ? '>' : ')', payloadStart)
+    if (payloadEnd <= payloadStart) {
       searchFrom = marker + 2
       continue
     }
 
     if (payloadEnd - dataStart < PROTECT_THRESHOLD) {
-      searchFrom = payloadEnd
+      searchFrom = payloadEnd + 1
       continue
     }
 
@@ -110,7 +100,7 @@ export function protectInlineDataImages(markdown: string): string {
     output += markdown.slice(cursor, dataStart)
     output += placeholder
     cursor = payloadEnd
-    searchFrom = payloadEnd
+    searchFrom = payloadEnd + 1
   }
 
   if (cursor === 0) return markdown
