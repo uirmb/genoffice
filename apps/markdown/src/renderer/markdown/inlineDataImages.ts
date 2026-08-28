@@ -56,6 +56,11 @@ function nextImageDestination(
  * large data URLs can otherwise turn one Markdown line into tens of megabytes
  * and overflow the lexer stack. Replace only Markdown image destinations with a
  * short HTTPS placeholder before lexing.
+ *
+ * The placeholder intentionally stays in the editor document. Keeping the tens
+ * of megabytes of Base64 outside ProseMirror makes the first setContent cheap
+ * enough to paint the text and image placeholders immediately. Serialization,
+ * export and image display resolve the authored Base64 through this side table.
  */
 export function protectInlineDataImages(markdown: string): string {
   protectedImages.clear()
@@ -107,18 +112,31 @@ export function protectInlineDataImages(markdown: string): string {
   return output
 }
 
-export function restoreInlineDataImage(src: string): string {
-  const original = protectedImages.get(src)
-  if (!original) return src
-  protectedImages.delete(src)
-  return original
+export function isProtectedInlineDataImage(src: string): boolean {
+  return protectedImages.has(src)
 }
 
-function restoreInlineDataImages(content: JSONContent): JSONContent {
+export function getProtectedInlineDataImage(src: string): string | null {
+  return protectedImages.get(src) ?? null
+}
+
+export function restoreInlineDataImage(src: string): string {
+  return protectedImages.get(src) ?? src
+}
+
+export function restoreProtectedInlineDataImagesInMarkdown(markdown: string): string {
+  let restored = markdown
+  for (const [placeholder, source] of protectedImages) {
+    if (restored.includes(placeholder)) restored = restored.split(placeholder).join(source)
+  }
+  return restored
+}
+
+export function restoreProtectedInlineDataImagesInJson(content: JSONContent): JSONContent {
   if (content.type === 'image' && typeof content.attrs?.src === 'string') {
     content.attrs.src = restoreInlineDataImage(content.attrs.src)
   }
-  for (const child of content.content ?? []) restoreInlineDataImages(child)
+  for (const child of content.content ?? []) restoreProtectedInlineDataImagesInJson(child)
   return content
 }
 
@@ -126,8 +144,10 @@ function restoreInlineDataImages(content: JSONContent): JSONContent {
  * Tiptap's Markdown extension creates editor.markdown in its onBeforeCreate hook.
  * This protection extension has a lower priority, so its onBeforeCreate runs after
  * Markdown has installed the manager but before React effects can load a document.
- * Wrapping here is important: onCreate is too late for the first setContent call in
- * the Web editor and can let a large Base64 line reach MarkedJS unprotected.
+ *
+ * Parsing keeps protected placeholders in the editor document so ProseMirror does
+ * not carry/copy huge Base64 strings during first render. Serialization restores
+ * the exact authored Base64, preserving Save / Save As / history / download.
  */
 export const InlineDataImageProtection = Extension.create({
   name: 'inlineDataImageProtection',
@@ -135,8 +155,12 @@ export const InlineDataImageProtection = Extension.create({
   onBeforeCreate() {
     const markdown = this.editor.markdown
     if (!markdown) return
+
     const originalParse = markdown.parse.bind(markdown)
-    markdown.parse = (source: string) =>
-      restoreInlineDataImages(originalParse(protectInlineDataImages(source)))
+    const originalSerialize = markdown.serialize.bind(markdown)
+
+    markdown.parse = (source: string) => originalParse(protectInlineDataImages(source))
+    markdown.serialize = (content: JSONContent) =>
+      restoreProtectedInlineDataImagesInMarkdown(originalSerialize(content))
   },
 })
