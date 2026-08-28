@@ -120,7 +120,9 @@ export const InlineDataImageProtection = Extension.create({
   name: 'inlineDataImageProtection',
   priority: 50,
   onCreate() {
-    this.editor.markdown.instance.use({
+    const markdown = this.editor.markdown
+    if (!markdown) return
+    markdown.instance.use({
       hooks: {
         preprocess: protectInlineDataImages,
       },
