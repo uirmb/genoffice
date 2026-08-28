@@ -1,4 +1,4 @@
-import { Extension } from '@tiptap/core'
+import { Extension, type JSONContent } from '@tiptap/core'
 
 const PLACEHOLDER_SESSION = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const PLACEHOLDER_ROOT = `https://genoffice.invalid/__inline-data-image/${PLACEHOLDER_SESSION}/`
@@ -55,8 +55,7 @@ function nextImageDestination(
  * MarkedJS does not need to inspect the Base64 body of an embedded image. Very
  * large data URLs can otherwise turn one Markdown line into tens of megabytes
  * and overflow the lexer stack. Replace only Markdown image destinations with a
- * short HTTPS placeholder before lexing; LocalImage.parseMarkdown restores the
- * authored data URL immediately after tokenization.
+ * short HTTPS placeholder before lexing.
  */
 export function protectInlineDataImages(markdown: string): string {
   protectedImages.clear()
@@ -115,17 +114,28 @@ export function restoreInlineDataImage(src: string): string {
   return original
 }
 
-/** Install the Marked preprocess hook before any Markdown content is loaded. */
+function restoreInlineDataImages(content: JSONContent): JSONContent {
+  if (content.type === 'image' && typeof content.attrs?.src === 'string') {
+    content.attrs.src = restoreInlineDataImage(content.attrs.src)
+  }
+  for (const child of content.content ?? []) restoreInlineDataImages(child)
+  return content
+}
+
+/**
+ * Tiptap 3.29 creates a parse-local Marked lexer inside MarkdownManager.parse(),
+ * so Marked preprocess hooks are bypassed. Wrap the manager entry point instead:
+ * every editor Markdown parse now shields inline image data before lexing and
+ * restores the exact authored Base64 URL in the returned Tiptap JSON.
+ */
 export const InlineDataImageProtection = Extension.create({
   name: 'inlineDataImageProtection',
   priority: 50,
   onCreate() {
     const markdown = this.editor.markdown
     if (!markdown) return
-    markdown.instance.use({
-      hooks: {
-        preprocess: protectInlineDataImages,
-      },
-    })
+    const originalParse = markdown.parse.bind(markdown)
+    markdown.parse = (source: string) =>
+      restoreInlineDataImages(originalParse(protectInlineDataImages(source)))
   },
 })
