@@ -20,7 +20,10 @@ function isBase64Char(code: number): boolean {
   )
 }
 
-function nextImageDestination(markdown: string, from: number): { marker: number; dataStart: number } | null {
+function nextImageDestination(
+  markdown: string,
+  from: number,
+): { marker: number; dataStart: number } | null {
   let searchFrom = from
 
   while (searchFrom < markdown.length) {
@@ -83,7 +86,10 @@ export function protectInlineDataImages(markdown: string): string {
 
     const payloadStart = base64Marker + ';base64,'.length
     let payloadEnd = payloadStart
-    while (payloadEnd < markdown.length && isBase64Char(markdown.charCodeAt(payloadEnd))) {
+    while (
+      payloadEnd < markdown.length &&
+      isBase64Char(markdown.charCodeAt(payloadEnd))
+    ) {
       payloadEnd += 1
     }
     if (payloadEnd === payloadStart) {
