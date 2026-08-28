@@ -1,8 +1,7 @@
 import { Extension } from '@tiptap/core'
 
-const PLACEHOLDER_ROOT = `https://genoffice.invalid/__inline-data-image/${Date.now().toString(36)}-${Math.random()
-  .toString(36)
-  .slice(2)}/`
+const PLACEHOLDER_SESSION = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+const PLACEHOLDER_ROOT = `https://genoffice.invalid/__inline-data-image/${PLACEHOLDER_SESSION}/`
 
 const protectedImages = new Map<string, string>()
 let sequence = 0
@@ -86,10 +85,7 @@ export function protectInlineDataImages(markdown: string): string {
 
     const payloadStart = base64Marker + ';base64,'.length
     let payloadEnd = payloadStart
-    while (
-      payloadEnd < markdown.length &&
-      isBase64Char(markdown.charCodeAt(payloadEnd))
-    ) {
+    while (payloadEnd < markdown.length && isBase64Char(markdown.charCodeAt(payloadEnd))) {
       payloadEnd += 1
     }
     if (payloadEnd === payloadStart) {
