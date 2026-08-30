@@ -58,9 +58,9 @@ test('Markdown Web zooms the paper from the status bar without changing document
 
   await zoomSlider.evaluate((element) => {
     const input = element as HTMLInputElement
-    input.value = '250'
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, '250')
     input.dispatchEvent(new Event('input', { bubbles: true }))
-    input.dispatchEvent(new Event('change', { bubbles: true }))
   })
   await expect(zoomValue).toHaveText('250%')
   await expect(paper).toHaveAttribute('data-zoom', '250')
