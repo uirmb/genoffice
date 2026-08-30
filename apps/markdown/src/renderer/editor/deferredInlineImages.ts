@@ -16,6 +16,15 @@ const loadQueue: Array<{ element: HTMLImageElement; key: string }> = []
 let sequence = 0
 let activeLoad = false
 let queueStartScheduled = false
+let visiblePaintLogged = false
+
+function now(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function perf(stage: string, extra: Record<string, unknown> = {}): void {
+  console.info('[markdown:perf]', { stage, t: Math.round(now()), ...extra })
+}
 
 export function shouldDeferInlineImage(src: string): boolean {
   return (
@@ -96,11 +105,18 @@ function runNext(): void {
     activeLoad = true
     const loader = new ImageCtor()
     loader.decoding = 'async'
+    const startedAt = now()
+    perf('image-decode-start', { chars: source.length })
 
     let settled = false
     const watchdog = setTimeout(() => {
       if (settled) return
       settled = true
+      perf('image-decode-finish', {
+        ms: Math.round(now() - startedAt),
+        success: true,
+        watchdog: true,
+      })
       finishLoad(element, key, source, true)
     }, 30_000)
 
@@ -108,6 +124,7 @@ function runNext(): void {
       if (settled) return
       settled = true
       clearTimeout(watchdog)
+      perf('image-decode-finish', { ms: Math.round(now() - startedAt), success })
       finishLoad(element, key, source, success)
     }
 
@@ -118,22 +135,56 @@ function runNext(): void {
   }
 }
 
+function elementCanPaint(element: HTMLImageElement): boolean {
+  return element.isConnected && element.getClientRects().length > 0
+}
+
+function hasPaintableQueuedImage(): boolean {
+  return loadQueue.some(
+    ({ element, key }) => Boolean(sourceForKey(key)) && elementCanPaint(element),
+  )
+}
+
 function scheduleQueueStart(): void {
   if (activeLoad || queueStartScheduled) return
   queueStartScheduled = true
 
-  const start = () => {
+  const release = () => {
     queueStartScheduled = false
     runNext()
   }
 
-  // Two frames guarantee that text + SVG placeholders get a paint opportunity
-  // before any multi-megabyte Base64 image is handed to the decoder.
-  if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(() => requestAnimationFrame(start))
-  } else {
-    setTimeout(start, 0)
+  if (typeof requestAnimationFrame !== 'function') {
+    setTimeout(release, 0)
+    return
   }
+
+  const waitUntilVisible = () => {
+    if (loadQueue.length === 0) {
+      queueStartScheduled = false
+      return
+    }
+
+    // App.tsx historically hides .app-main while status=loading. Do not let the
+    // decoder consume the large Base64 sources while those placeholders are
+    // invisible; otherwise the user only sees the final image after loading.
+    if (!hasPaintableQueuedImage()) {
+      requestAnimationFrame(waitUntilVisible)
+      return
+    }
+
+    if (!visiblePaintLogged) {
+      visiblePaintLogged = true
+      perf('placeholder-visible', { queued: loadQueue.length })
+    }
+
+    // The first frame observes that the editor is actually visible. Two more
+    // frames guarantee at least one browser paint containing text + placeholders
+    // before the first multi-megabyte data URL is handed to the image decoder.
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(release, 0)))
+  }
+
+  requestAnimationFrame(waitUntilVisible)
 }
 
 function enqueueDeferredImages(root: ParentNode): void {

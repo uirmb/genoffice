@@ -27,8 +27,28 @@ import type {
 const MARKDOWN_ACCEPT = ['text/markdown', 'text/plain', '.md', '.markdown']
 const IMAGE_ACCEPT = ['image/png', 'image/jpeg', 'image/gif', '.png', '.jpg', '.jpeg', '.gif']
 
-function cloneFile(file: OfficeFile): OfficeFile {
-  return { ...file, bytes: file.bytes.slice(0), transport: 'buffer' }
+function now(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function perf(stage: string, extra: Record<string, unknown> = {}): void {
+  console.info('[markdown:perf]', { stage, t: Math.round(now()), ...extra })
+}
+
+/**
+ * postMessage / picker results already own their ArrayBuffer in this iframe.
+ * Keep that buffer instead of synchronously duplicating tens of megabytes during
+ * document open. Markdown never mutates the source ArrayBuffer.
+ */
+function retainFile(file: OfficeFile): OfficeFile {
+  return { ...file, bytes: file.bytes, transport: 'buffer' }
+}
+
+function decodeMarkdownBytes(bytes: ArrayBuffer, stage: string): string {
+  const startedAt = now()
+  const text = new TextDecoder('utf-8').decode(bytes)
+  perf(stage, { bytes: bytes.byteLength, chars: text.length, ms: Math.round(now() - startedAt) })
+  return text
 }
 
 function descriptorOf(file: OfficeFile): OfficeFileDescriptor {
@@ -96,6 +116,7 @@ export class MarkdownWebApi implements MarkdownApi {
   private closeRequestId: string | null = null
   private languageListeners = new Set<(lang: Lang) => void>()
   private unsubscribeBridge: (() => void) | null = null
+  private readySentAt = 0
 
   constructor(
     private readonly host: OfficeHostApi,
@@ -132,7 +153,11 @@ export class MarkdownWebApi implements MarkdownApi {
               })
               return
             }
-            this.currentFile = cloneFile(message.payload.file)
+            perf('office-init-received', {
+              bytes: message.payload.file.bytes.byteLength,
+              sinceReadyMs: this.readySentAt ? Math.round(now() - this.readySentAt) : null,
+            })
+            this.currentFile = retainFile(message.payload.file)
             this.host.setTitle(this.currentFile.name)
             this.resolvePending(virtualPath(this.currentFile))
             return
@@ -180,6 +205,7 @@ export class MarkdownWebApi implements MarkdownApi {
         }
       })
 
+      this.readySentAt = now()
       bridge.send({
         protocol: OFFICE_PROTOCOL_VERSION,
         type: 'office:ready',
@@ -200,7 +226,7 @@ export class MarkdownWebApi implements MarkdownApi {
 
   async readFile(_path: string): Promise<string> {
     if (!this.currentFile) return ''
-    return new TextDecoder('utf-8').decode(this.currentFile.bytes)
+    return decodeMarkdownBytes(this.currentFile.bytes, 'utf8-decode')
   }
 
   async openDocument(): Promise<OpenMarkdownResult> {
@@ -214,13 +240,13 @@ export class MarkdownWebApi implements MarkdownApi {
         if (picked.status === 'cancelled') return { status: 'cancelled' }
         if (picked.status === 'failed') return { status: 'failed', error: picked.error }
 
-        const file = cloneFile(picked.file)
+        const file = retainFile(picked.file)
         this.pendingDocumentSelections.set(picked.selectionId, file)
         return {
           status: 'selected',
           selectionId: picked.selectionId,
           path: virtualPath(file),
-          text: new TextDecoder('utf-8').decode(file.bytes),
+          text: decodeMarkdownBytes(file.bytes, 'open-document-utf8-decode'),
         }
       }
 
@@ -234,15 +260,15 @@ export class MarkdownWebApi implements MarkdownApi {
       if (!first) return { status: 'cancelled' }
       const file =
         first.transport === 'buffer' && first.bytes
-          ? ({ ...first, bytes: first.bytes.slice(0), transport: 'buffer' } as OfficeFile)
+          ? ({ ...first, bytes: first.bytes, transport: 'buffer' } as OfficeFile)
           : await this.host.readFile(first.id)
-      this.currentFile = cloneFile(file)
+      this.currentFile = retainFile(file)
       this.host.setTitle(this.currentFile.name)
       return {
         status: 'selected',
         selectionId: null,
         path: virtualPath(this.currentFile),
-        text: new TextDecoder('utf-8').decode(this.currentFile.bytes),
+        text: decodeMarkdownBytes(this.currentFile.bytes, 'open-document-utf8-decode'),
       }
     } catch (error) {
       return {
@@ -266,7 +292,7 @@ export class MarkdownWebApi implements MarkdownApi {
       : descriptorOf(candidate)
     this.currentFile = {
       ...descriptor,
-      bytes: candidate.bytes.slice(0),
+      bytes: candidate.bytes,
       transport: 'buffer',
     }
     this.pendingDocumentSelections.delete(selectionId)

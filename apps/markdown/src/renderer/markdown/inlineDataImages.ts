@@ -7,6 +7,10 @@ const PLACEHOLDER_ROOT = `https://genoffice.invalid/__inline-data-image/${PLACEH
 const protectedImages = new Map<string, string>()
 let sequence = 0
 
+function now(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
 function nextImageDestination(
   markdown: string,
   from: number,
@@ -155,7 +159,27 @@ export const InlineDataImageProtection = Extension.create({
     const originalParse = markdown.parse.bind(markdown)
     const originalSerialize = markdown.serialize.bind(markdown)
 
-    markdown.parse = (source: string) => originalParse(protectInlineDataImages(source))
+    markdown.parse = (source: string) => {
+      const startedAt = now()
+      const protectedSource = protectInlineDataImages(source)
+      const protectedAt = now()
+      const result = originalParse(protectedSource)
+      const parsedAt = now()
+
+      if (source.length >= PROTECT_THRESHOLD) {
+        console.info('[markdown:perf]', {
+          stage: 'markdown-parse',
+          t: Math.round(parsedAt),
+          inputChars: source.length,
+          protectedChars: protectedSource.length,
+          protectedImages: sequence,
+          protectMs: Math.round(protectedAt - startedAt),
+          parseMs: Math.round(parsedAt - protectedAt),
+          totalMs: Math.round(parsedAt - startedAt),
+        })
+      }
+      return result
+    }
     markdown.serialize = (content: JSONContent) =>
       restoreProtectedInlineDataImagesInMarkdown(originalSerialize(content))
   },
