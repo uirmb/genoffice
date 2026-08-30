@@ -3,10 +3,7 @@ import {
   getProtectedInlineDataImage,
   isProtectedInlineDataImage,
 } from '../markdown/inlineDataImages'
-import {
-  readInlineImageDimensions,
-  type InlineImageDimensions,
-} from './inlineImageDimensions'
+import { readInlineImageDimensions, type InlineImageDimensions } from './inlineImageDimensions'
 
 const DEFER_THRESHOLD = 512 * 1024
 const DEFERRED_ATTR = 'data-md-deferred-image'
