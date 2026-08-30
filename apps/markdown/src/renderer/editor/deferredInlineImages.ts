@@ -3,11 +3,14 @@ import {
   getProtectedInlineDataImage,
   isProtectedInlineDataImage,
 } from '../markdown/inlineDataImages'
+import {
+  readInlineImageDimensions,
+  type InlineImageDimensions,
+} from './inlineImageDimensions'
 
 const DEFER_THRESHOLD = 512 * 1024
 const DEFERRED_ATTR = 'data-md-deferred-image'
-const PLACEHOLDER =
-  'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22720%22 height=%22180%22 viewBox=%220 0 720 180%22%3E%3Crect width=%22720%22 height=%22180%22 rx=%228%22 fill=%22%23f4f6f8%22/%3E%3Crect x=%220.5%22 y=%220.5%22 width=%22719%22 height=%22179%22 rx=%227.5%22 fill=%22none%22 stroke=%22%23d9dde2%22 stroke-dasharray=%226 6%22/%3E%3Cg fill=%22none%22 stroke=%22%23a8b0ba%22 stroke-width=%224%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Crect x=%22324%22 y=%2257%22 width=%2272%22 height=%2266%22 rx=%228%22/%3E%3Ccircle cx=%22348%22 cy=%2279%22 r=%228%22/%3E%3Cpath d=%22m333 112 18-18 14 14 10-10 16 14%22/%3E%3C/g%3E%3C/svg%3E'
+const FALLBACK_DIMENSIONS: InlineImageDimensions = { width: 720, height: 180 }
 
 const SESSION = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const directDeferredSources = new Map<string, string>()
@@ -24,6 +27,22 @@ function now(): number {
 
 function perf(stage: string, extra: Record<string, unknown> = {}): void {
   console.info('[markdown:perf]', { stage, t: Math.round(now()), ...extra })
+}
+
+function placeholderDataUrl(dimensions: InlineImageDimensions | null): string {
+  const { width, height } = dimensions ?? FALLBACK_DIMENSIONS
+  const minDimension = Math.min(width, height)
+  const strokeWidth = Math.max(1, minDimension * 0.004)
+  const radius = Math.max(4, minDimension * 0.02)
+  const iconSize = Math.max(48, Math.min(220, minDimension * 0.16))
+  const iconWidth = iconSize
+  const iconHeight = iconSize * 0.88
+  const iconX = (width - iconWidth) / 2
+  const iconY = (height - iconHeight) / 2
+  const iconStroke = Math.max(2, iconSize * 0.045)
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" rx="${radius}" fill="#f4f6f8"/><rect x="${strokeWidth / 2}" y="${strokeWidth / 2}" width="${Math.max(1, width - strokeWidth)}" height="${Math.max(1, height - strokeWidth)}" rx="${radius}" fill="none" stroke="#d9dde2" stroke-width="${strokeWidth}" stroke-dasharray="${strokeWidth * 5} ${strokeWidth * 5}"/><g transform="translate(${iconX} ${iconY})" fill="none" stroke="#a8b0ba" stroke-width="${iconStroke}" stroke-linecap="round" stroke-linejoin="round"><rect x="0" y="0" width="${iconWidth}" height="${iconHeight}" rx="${iconSize * 0.1}"/><circle cx="${iconSize * 0.33}" cy="${iconSize * 0.3}" r="${iconSize * 0.11}"/><path d="M ${iconSize * 0.13} ${iconSize * 0.73} L ${iconSize * 0.38} ${iconSize * 0.48} L ${iconSize * 0.57} ${iconSize * 0.66} L ${iconSize * 0.72} ${iconSize * 0.52} L ${iconSize * 0.9} ${iconSize * 0.69}"/></g></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
 }
 
 export function shouldDeferInlineImage(src: string): boolean {
@@ -49,12 +68,23 @@ export function deferredInlineImageAttributes(src: string): Record<string, strin
     directDeferredSources.set(key, src)
   }
 
+  const source = sourceForKey(key)
+  const dimensions = source ? readInlineImageDimensions(source) : null
+
   return {
-    src: PLACEHOLDER,
+    src: placeholderDataUrl(dimensions),
+    ...(dimensions
+      ? {
+          width: String(dimensions.width),
+          height: String(dimensions.height),
+        }
+      : {}),
     [DEFERRED_ATTR]: key,
     'aria-busy': 'true',
     decoding: 'async',
-    loading: 'lazy',
+    // The placeholder is tiny and must paint immediately. The large authored
+    // image is still gated by the explicit decode queue below.
+    loading: 'eager',
   }
 }
 
