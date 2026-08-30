@@ -1,0 +1,37 @@
+.editor-scroll {
+  overflow: auto;
+}
+
+.markdown-zoom-control {
+  margin-left: auto;
+}
+
+.markdown-zoom-value {
+  height: 20px;
+  padding: 0 3px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.markdown-zoom-value:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.zoom-btn:disabled:hover {
+  background: transparent;
+}
+
+@media (max-width: 720px) {
+  .zoom-slider {
+    width: 76px;
+  }
+}
