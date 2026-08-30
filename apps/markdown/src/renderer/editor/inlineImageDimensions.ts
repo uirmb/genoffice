@@ -6,7 +6,10 @@ export interface InlineImageDimensions {
 const JPEG_HEADER_LIMIT = 256 * 1024
 
 function decodeBase64Prefix(payload: string, maxBytes: number): Uint8Array | null {
-  const requestedChars = Math.ceil((maxBytes * 4) / 3)
+  // Base64 encodes each three bytes into four characters. Round the requested
+  // byte count up to a complete quartet so small headers such as GIF's 10-byte
+  // logical-screen descriptor do not lose the final decoded byte.
+  const requestedChars = Math.ceil(maxBytes / 3) * 4
   const availableChars = Math.min(payload.length, requestedChars)
   const alignedChars =
     availableChars === payload.length
