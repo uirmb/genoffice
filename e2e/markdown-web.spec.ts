@@ -33,6 +33,44 @@ test('standalone Markdown Web starts as an editable AI-free document', async ({ 
   await expect(page.locator('.ai-dock:visible')).toHaveCount(0)
 })
 
+test('Markdown Web zooms the paper from the status bar without changing document content', async ({
+  page,
+}) => {
+  await page.goto(MARKDOWN_WEB_URL)
+
+  const editor = page.locator('.doc-editor')
+  await editor.fill('Zoom must stay view-only')
+  const originalText = await editor.textContent()
+  const paper = page.locator('.doc-page')
+  const zoomIn = page.locator('.markdown-zoom-in')
+  const zoomSlider = page.locator('.markdown-zoom-slider')
+  const zoomValue = page.locator('.markdown-zoom-value')
+
+  await expect(zoomValue).toHaveText('100%')
+  await expect(paper).toHaveAttribute('data-zoom', '100')
+  const widthAt100 = (await paper.boundingBox())?.width ?? 0
+
+  await zoomIn.click()
+  await expect(zoomValue).toHaveText('110%')
+  await expect(paper).toHaveAttribute('data-zoom', '110')
+  const widthAt110 = (await paper.boundingBox())?.width ?? 0
+  expect(widthAt110).toBeGreaterThan(widthAt100)
+
+  await zoomSlider.evaluate((element) => {
+    const input = element as HTMLInputElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, '250')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await expect(zoomValue).toHaveText('250%')
+  await expect(paper).toHaveAttribute('data-zoom', '250')
+
+  await zoomValue.click()
+  await expect(zoomValue).toHaveText('100%')
+  await expect(paper).toHaveAttribute('data-zoom', '100')
+  await expect(editor).toHaveText(originalText ?? '')
+})
+
 test('embedded Markdown Web uses the iframe locale on first render and follows live Host changes', async ({
   page,
 }) => {
