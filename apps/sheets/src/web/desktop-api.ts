@@ -4,6 +4,7 @@ import type {
   AiStreamChunk,
   GenSparkAccountStatus,
 } from '@genoffice/ai-provider'
+import { normalizeLang } from '@genoffice/i18n'
 import type {
   OfficeEditorMode,
   OfficeFile,
@@ -112,21 +113,6 @@ function hasWorkbookMutations(request: WorkbookSaveRequest): boolean {
   )
 }
 
-function normalizeLanguage(locale: string): SheetsLanguage {
-  const value = locale.toLowerCase()
-  if (value.startsWith('zh')) return 'zh'
-  if (value.startsWith('ja')) return 'ja'
-  if (value.startsWith('ko')) return 'ko'
-  if (value.startsWith('fr')) return 'fr'
-  if (value.startsWith('de')) return 'de'
-  if (value.startsWith('es')) return 'es'
-  if (value.startsWith('th')) return 'th'
-  if (value.startsWith('id')) return 'id'
-  if (value.startsWith('ru')) return 'ru'
-  if (value.startsWith('ar')) return 'ar'
-  return 'en'
-}
-
 async function selectedToOfficeFile(
   host: OfficeHostApi,
   selected: SelectedOfficeFile,
@@ -210,7 +196,7 @@ export function createSheetsWebDesktopController(
   host: OfficeHostApi,
   bridge?: EditorIframeBridge,
 ): SheetsWebDesktopController {
-  let currentLanguage = normalizeLanguage(
+  let currentLanguage = normalizeLang(
     document.documentElement.lang || navigator.language || 'en',
   )
   let currentMode: OfficeEditorMode = 'edit'
@@ -289,7 +275,7 @@ export function createSheetsWebDesktopController(
   window.addEventListener(SHEETS_WEB_FILE_ACTION_EVENT, handleWebFileAction)
 
   const setLanguage = (locale: string): void => {
-    const next = normalizeLanguage(locale)
+    const next = normalizeLang(locale)
     if (next === currentLanguage) return
     currentLanguage = next
     for (const handler of languageHandlers) handler(next)

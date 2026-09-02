@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement, RefObject } from 'react'
+import { createI18n, htmlLang, normalizeLang, type Lang, type Params } from '@genoffice/i18n'
 import { GlobalWorkerOptions, TextLayer, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
@@ -13,11 +14,14 @@ import { OFFICE_PROTOCOL_VERSION } from '@genoffice/office-protocol'
 import type { EditorIframeBridge, WebRuntimeMode } from '@genoffice/web-runtime'
 import { OutlinePanel } from '../renderer/OutlinePanel'
 import type { OutlineNode } from '../renderer/OutlinePanel'
+import { strings } from '../renderer/i18n/strings'
 import { buildSearchIndex, searchInIndex } from '../renderer/search'
 import type { SearchIndex, SearchMatch } from '../renderer/search'
 import { isPdfOfficeFile, PDF_WEB_ACCEPT } from './viewer-policy'
 
 GlobalWorkerOptions.workerSrc = workerUrl
+
+const translate = createI18n(strings)
 
 const ASSET_BASE = new URL('pdfjs/', document.baseURI).href
 const DOC_OPTS = {
@@ -286,6 +290,9 @@ function PdfThumbnail({
 
 export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactElement {
   const [currentFile, setCurrentFile] = useState<OfficeFile | null>(null)
+  const [language, setLanguage] = useState<Lang>(() =>
+    normalizeLang(document.documentElement.lang || navigator.language || 'en'),
+  )
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null)
   const [pageMetrics, setPageMetrics] = useState<PageMetric[]>([])
   const [outline, setOutline] = useState<OutlineNode[]>([])
@@ -303,6 +310,15 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
   const searchIndexRef = useRef<SearchIndex | null>(null)
   const loadingTaskRef = useRef<PDFDocumentLoadingTask | null>(null)
   const prepareSequenceRef = useRef(0)
+
+  const t = useCallback(
+    (key: keyof typeof strings.zh, params?: Params) => translate(language, key, params),
+    [language],
+  )
+
+  useEffect(() => {
+    document.documentElement.lang = htmlLang(language)
+  }, [language])
 
   const pageCount = pdfDocument?.numPages ?? 0
   const currentSearchPage =
@@ -560,6 +576,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             })
             return
           }
+          if (message.payload.locale) setLanguage(normalizeLang(message.payload.locale))
           void loadInitialFile(message.payload.file)
           return
         case 'office:new':
@@ -576,7 +593,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
         case 'office:set-mode':
           return
         case 'office:set-locale':
-          document.documentElement.lang = message.payload.locale
+          setLanguage(normalizeLang(message.payload.locale))
           return
         case 'office:save':
           bridge.send({
@@ -644,7 +661,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
   )
 
   return (
-    <div className="pdf-web-app">
+    <div className="pdf-web-app" data-runtime-mode={runtimeMode}>
       <header className="pdf-web-toolbar">
         <div className="pdf-web-product">PDF</div>
         <button
@@ -653,7 +670,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           onClick={() => void openPdf()}
           disabled={loading}
         >
-          打开
+          {t('pwOpen')}
         </button>
         <div className="pdf-web-separator" />
         <button
@@ -661,7 +678,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           type="button"
           onClick={() => scrollToPage(currentPage - 1)}
           disabled={!pdfDocument || currentPage <= 1}
-          aria-label="上一页"
+          aria-label={t('searchPrev')}
         >
           ‹
         </button>
@@ -669,7 +686,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           <input
             value={pdfDocument ? currentPage : ''}
             inputMode="numeric"
-            aria-label="当前页"
+            aria-label={t('appPageOf', { current: currentPage, total: pageCount })}
             onChange={(event) => {
               const value = Number(event.target.value)
               if (Number.isFinite(value) && value > 0) {
@@ -688,7 +705,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           type="button"
           onClick={() => scrollToPage(currentPage + 1)}
           disabled={!pdfDocument || currentPage >= pageCount}
-          aria-label="下一页"
+          aria-label={t('searchNext')}
         >
           ›
         </button>
@@ -698,7 +715,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           type="button"
           onClick={() => changeZoom(-1)}
           disabled={!pdfDocument}
-          aria-label="缩小"
+          aria-label={t('zoomOut')}
         >
           −
         </button>
@@ -708,15 +725,15 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           type="button"
           onClick={() => changeZoom(1)}
           disabled={!pdfDocument}
-          aria-label="放大"
+          aria-label={t('zoomIn')}
         >
           +
         </button>
         <button className="pdf-web-button" type="button" onClick={fitWidth} disabled={!pdfDocument}>
-          适合宽度
+          {t('fitWidth')}
         </button>
         <button className="pdf-web-button" type="button" onClick={fitPage} disabled={!pdfDocument}>
-          适合页面
+          {t('fitPage')}
         </button>
         <div className="pdf-web-toolbar-spacer" />
         <form
@@ -729,12 +746,12 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索文档"
-            aria-label="搜索文档"
+            placeholder={t('search')}
+            aria-label={t('search')}
             disabled={!pdfDocument}
           />
           <button type="submit" disabled={!pdfDocument || searching}>
-            查找
+            {t('search')}
           </button>
           <span className="pdf-web-search-count">
             {searchMatches.length && searchMatchIndex >= 0
@@ -747,7 +764,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             type="button"
             onClick={() => stepSearch(-1)}
             disabled={!searchMatches.length}
-            aria-label="上一个匹配"
+            aria-label={t('searchPrev')}
           >
             ↑
           </button>
@@ -755,7 +772,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             type="button"
             onClick={() => stepSearch(1)}
             disabled={!searchMatches.length}
-            aria-label="下一个匹配"
+            aria-label={t('searchNext')}
           >
             ↓
           </button>
@@ -771,20 +788,20 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
                 type="button"
                 onClick={() => setSidebar('thumbs')}
               >
-                页面
+                {t('thumbs')}
               </button>
               <button
                 className={sidebar === 'outline' ? 'active' : ''}
                 type="button"
                 onClick={() => setSidebar('outline')}
               >
-                目录
+                {t('outline')}
               </button>
               <button
                 type="button"
                 className="close"
                 onClick={() => setSidebar(null)}
-                aria-label="关闭侧栏"
+                aria-label={t('close')}
               >
                 ×
               </button>
@@ -820,7 +837,9 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
                 {outline.length ? (
                   <OutlinePanel outline={outline} onGoToDest={goToDestination} />
                 ) : (
-                  <div className="pdf-web-empty-side">此 PDF 没有目录</div>
+                  <div className="pdf-web-empty-side">
+                    {t('outline') + ': ' + t('searchNoResults')}
+                  </div>
                 )}
               </div>
             )}
@@ -833,7 +852,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             type="button"
             onClick={() => setSidebar('thumbs')}
           >
-            页面
+            {t('thumbs')}
           </button>
         ) : null}
 
@@ -842,14 +861,10 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             <div className="pdf-web-empty">
               <div className="pdf-web-empty-card">
                 <div className="pdf-web-empty-mark">PDF</div>
-                <h1>PDF 预览</h1>
-                <p>Web 版本仅提供阅读能力，不包含编辑、批注、签名或表单修改。</p>
+                <h1>PDF</h1>
+                <p>{t('noFile')}</p>
                 <button type="button" onClick={() => void openPdf()} disabled={loading}>
-                  {loading
-                    ? '正在打开…'
-                    : runtimeMode === 'embedded'
-                      ? '从系统中选择 PDF'
-                      : '打开 PDF'}
+                  {loading ? t('loading') : t('pwOpen')}
                 </button>
               </div>
             </div>
@@ -880,18 +895,20 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
       </div>
 
       <footer className="pdf-web-statusbar">
-        <span>{currentFile?.name ?? '未打开 PDF'}</span>
+        <span>{currentFile?.name ?? t('noFile')}</span>
         <span className="pdf-web-status-spacer" />
-        <span>只读</span>
-        {pdfDocument ? <span>{pageCount} 页</span> : null}
+        <span>{t('readOnly')}</span>
+        {pdfDocument ? (
+          <span>{t('appPageOf', { current: currentPage, total: pageCount })}</span>
+        ) : null}
       </footer>
 
-      {loading && pdfDocument ? <div className="pdf-web-loading">正在打开 PDF…</div> : null}
+      {loading && pdfDocument ? <div className="pdf-web-loading">{t('loading')}</div> : null}
       {error ? (
         <div className="pdf-web-error" role="alert">
           <span>{error}</span>
           <button type="button" onClick={() => setError(null)}>
-            关闭
+            {t('close')}
           </button>
         </div>
       ) : null}
