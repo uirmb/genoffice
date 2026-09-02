@@ -295,9 +295,7 @@ function PdfThumbnail({
 
 export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactElement {
   const [currentFile, setCurrentFile] = useState<OfficeFile | null>(null)
-  const [language, setLanguage] = useState<Lang>(() =>
-    normalizeLang(document.documentElement.lang || navigator.language || 'en'),
-  )
+  const [language, setLanguage] = useState<Lang>('zh')
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null)
   const [pageMetrics, setPageMetrics] = useState<PageMetric[]>([])
   const [outline, setOutline] = useState<OutlineNode[]>([])
