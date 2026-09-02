@@ -678,7 +678,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           type="button"
           onClick={() => scrollToPage(currentPage - 1)}
           disabled={!pdfDocument || currentPage <= 1}
-          aria-label={t('searchPrev')}
+          aria-label={t('previousPage')}
         >
           ‹
         </button>
@@ -686,7 +686,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           <input
             value={pdfDocument ? currentPage : ''}
             inputMode="numeric"
-            aria-label={t('appPageOf', { current: currentPage, total: pageCount })}
+            aria-label={t('currentPage')}
             onChange={(event) => {
               const value = Number(event.target.value)
               if (Number.isFinite(value) && value > 0) {
@@ -705,7 +705,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           type="button"
           onClick={() => scrollToPage(currentPage + 1)}
           disabled={!pdfDocument || currentPage >= pageCount}
-          aria-label={t('searchNext')}
+          aria-label={t('nextPage')}
         >
           ›
         </button>
@@ -730,10 +730,10 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           +
         </button>
         <button className="pdf-web-button" type="button" onClick={fitWidth} disabled={!pdfDocument}>
-          {t('fitWidth')}
+          {t('webFitWidth')}
         </button>
         <button className="pdf-web-button" type="button" onClick={fitPage} disabled={!pdfDocument}>
-          {t('fitPage')}
+          {t('webFitPage')}
         </button>
         <div className="pdf-web-toolbar-spacer" />
         <form
@@ -746,12 +746,12 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={t('search')}
-            aria-label={t('search')}
+            placeholder={t('searchDocument')}
+            aria-label={t('searchDocument')}
             disabled={!pdfDocument}
           />
           <button type="submit" disabled={!pdfDocument || searching}>
-            {t('search')}
+            {t('find')}
           </button>
           <span className="pdf-web-search-count">
             {searchMatches.length && searchMatchIndex >= 0
@@ -764,7 +764,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             type="button"
             onClick={() => stepSearch(-1)}
             disabled={!searchMatches.length}
-            aria-label={t('searchPrev')}
+            aria-label={t('previousMatch')}
           >
             ↑
           </button>
@@ -772,7 +772,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             type="button"
             onClick={() => stepSearch(1)}
             disabled={!searchMatches.length}
-            aria-label={t('searchNext')}
+            aria-label={t('nextMatch')}
           >
             ↓
           </button>
@@ -788,20 +788,20 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
                 type="button"
                 onClick={() => setSidebar('thumbs')}
               >
-                {t('thumbs')}
+                {t('pageTab')}
               </button>
               <button
                 className={sidebar === 'outline' ? 'active' : ''}
                 type="button"
                 onClick={() => setSidebar('outline')}
               >
-                {t('outline')}
+                {t('outlineTab')}
               </button>
               <button
                 type="button"
                 className="close"
                 onClick={() => setSidebar(null)}
-                aria-label={t('close')}
+                aria-label={t('closeSidebar')}
               >
                 ×
               </button>
@@ -838,7 +838,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
                   <OutlinePanel outline={outline} onGoToDest={goToDestination} />
                 ) : (
                   <div className="pdf-web-empty-side">
-                    {t('outline') + ': ' + t('searchNoResults')}
+                    {t('noOutline')}
                   </div>
                 )}
               </div>
@@ -852,7 +852,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             type="button"
             onClick={() => setSidebar('thumbs')}
           >
-            {t('thumbs')}
+            {t('pageTab')}
           </button>
         ) : null}
 
@@ -861,10 +861,14 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
             <div className="pdf-web-empty">
               <div className="pdf-web-empty-card">
                 <div className="pdf-web-empty-mark">PDF</div>
-                <h1>PDF</h1>
-                <p>{t('noFile')}</p>
+                <h1>{t('pdfPreview')}</h1>
+                <p>{t('viewerOnlyDescription')}</p>
                 <button type="button" onClick={() => void openPdf()} disabled={loading}>
-                  {loading ? t('loading') : t('pwOpen')}
+                  {loading
+                    ? t('loadingPdf')
+                    : runtimeMode === 'embedded'
+                      ? t('choosePdf')
+                      : t('openPdf')}
                 </button>
               </div>
             </div>
@@ -895,15 +899,15 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
       </div>
 
       <footer className="pdf-web-statusbar">
-        <span>{currentFile?.name ?? t('noFile')}</span>
+        <span>{currentFile?.name ?? t('noFileOpened')}</span>
         <span className="pdf-web-status-spacer" />
         <span>{t('readOnly')}</span>
         {pdfDocument ? (
-          <span>{t('appPageOf', { current: currentPage, total: pageCount })}</span>
+          <span>{t('pageCount', { total: pageCount })}</span>
         ) : null}
       </footer>
 
-      {loading && pdfDocument ? <div className="pdf-web-loading">{t('loading')}</div> : null}
+      {loading && pdfDocument ? <div className="pdf-web-loading">{t('loadingPdf')}</div> : null}
       {error ? (
         <div className="pdf-web-error" role="alert">
           <span>{error}</span>
