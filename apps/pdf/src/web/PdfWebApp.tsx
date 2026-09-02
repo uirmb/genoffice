@@ -103,7 +103,10 @@ function useVisibleSet(
   rootRef: RefObject<HTMLElement | null>,
   count: number,
   rootMargin: string,
-): { visible: Set<number>; setItemRef: (index: number) => (element: HTMLElement | null) => void } {
+): {
+  visible: Set<number>
+  setItemRef: (index: number) => (element: HTMLElement | null) => void
+} {
   const [visible, setVisible] = useState<Set<number>>(new Set())
   const itemRefs = useRef<(HTMLElement | null)[]>([])
 
@@ -198,7 +201,9 @@ function PdfPage({
       }
       if (cancelled) return
 
-      const annotations = (await page.getAnnotations({ intent: 'display' })) as RawLinkAnnotation[]
+      const annotations = (await page.getAnnotations({
+        intent: 'display',
+      })) as RawLinkAnnotation[]
       if (cancelled) return
       for (const annotation of annotations) {
         if (annotation.subtype !== 'Link' || !annotation.rect) continue
@@ -336,7 +341,10 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
 
   const preparePdf = useCallback(async (file: OfficeFile): Promise<PreparedPdf> => {
     if (!isPdfOfficeFile(file)) throw new Error(`Unsupported file type: ${file.name}`)
-    const loadingTask = getDocument({ data: file.bytes.slice(0), ...DOC_OPTS })
+    const loadingTask = getDocument({
+      data: file.bytes.slice(0),
+      ...DOC_OPTS,
+    })
     try {
       const doc = await loadingTask.promise
       const metrics: PageMetric[] = []
@@ -415,7 +423,9 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
     setError(null)
     try {
       if (host.pickDocument) {
-        const selection = await host.pickDocument({ accept: [...PDF_WEB_ACCEPT] })
+        const selection = await host.pickDocument({
+          accept: [...PDF_WEB_ACCEPT],
+        })
         if (selection.status === 'cancelled') return
         if (selection.status === 'failed') throw new Error(selection.error)
 
@@ -447,7 +457,11 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
       if (!first) return
       const file =
         first.transport === 'buffer' && first.bytes
-          ? ({ ...first, bytes: first.bytes, transport: 'buffer' } as OfficeFile)
+          ? ({
+              ...first,
+              bytes: first.bytes,
+              transport: 'buffer',
+            } as OfficeFile)
           : await host.readFile(first.id)
       const prepared = await preparePdf(file)
       installPreparedPdf(prepared)
@@ -572,7 +586,10 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
               protocol: OFFICE_PROTOCOL_VERSION,
               type: 'office:error',
               requestId: message.requestId,
-              payload: { code: 'UNSUPPORTED_KIND', message: 'PDF Web only accepts PDF files.' },
+              payload: {
+                code: 'UNSUPPORTED_KIND',
+                message: 'PDF Web only accepts PDF files.',
+              },
             })
             return
           }
@@ -837,9 +854,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
                 {outline.length ? (
                   <OutlinePanel outline={outline} onGoToDest={goToDestination} />
                 ) : (
-                  <div className="pdf-web-empty-side">
-                    {t('noOutline')}
-                  </div>
+                  <div className="pdf-web-empty-side">{t('noOutline')}</div>
                 )}
               </div>
             )}
@@ -902,9 +917,7 @@ export function PdfWebApp({ host, bridge, runtimeMode }: PdfWebAppProps): ReactE
         <span>{currentFile?.name ?? t('noFileOpened')}</span>
         <span className="pdf-web-status-spacer" />
         <span>{t('readOnly')}</span>
-        {pdfDocument ? (
-          <span>{t('pageCount', { total: pageCount })}</span>
-        ) : null}
+        {pdfDocument ? <span>{t('pageCount', { total: pageCount })}</span> : null}
       </footer>
 
       {loading && pdfDocument ? <div className="pdf-web-loading">{t('loadingPdf')}</div> : null}

@@ -166,7 +166,8 @@ export const strings = {
   en: {
     close: 'Close',
     pdfPreview: 'PDF preview',
-    viewerOnlyDescription: 'The Web version is view-only and does not include editing, annotations, signatures, or form changes.',
+    viewerOnlyDescription:
+      'The Web version is view-only and does not include editing, annotations, signatures, or form changes.',
     openPdf: 'Open PDF',
     choosePdf: 'Choose PDF from system',
     pageTab: 'Pages',
@@ -332,7 +333,8 @@ export const strings = {
   ja: {
     close: '閉じる',
     pdfPreview: 'PDF プレビュー',
-    viewerOnlyDescription: 'Web 版は閲覧専用で、編集、注釈、署名、フォームの変更には対応していません。',
+    viewerOnlyDescription:
+      'Web 版は閲覧専用で、編集、注釈、署名、フォームの変更には対応していません。',
     openPdf: 'PDF を開く',
     choosePdf: 'システムから PDF を選択',
     pageTab: 'ページ',
@@ -498,7 +500,8 @@ export const strings = {
   ko: {
     close: '닫기',
     pdfPreview: 'PDF 미리보기',
-    viewerOnlyDescription: 'Web 버전은 보기 전용이며 편집, 주석, 서명 또는 양식 수정을 지원하지 않습니다.',
+    viewerOnlyDescription:
+      'Web 버전은 보기 전용이며 편집, 주석, 서명 또는 양식 수정을 지원하지 않습니다.',
     openPdf: 'PDF 열기',
     choosePdf: '시스템에서 PDF 선택',
     pageTab: '페이지',
@@ -664,7 +667,8 @@ export const strings = {
   fr: {
     close: 'Fermer',
     pdfPreview: 'Aperçu PDF',
-    viewerOnlyDescription: 'La version Web est en lecture seule et ne permet pas l’édition, les annotations, les signatures ni la modification des formulaires.',
+    viewerOnlyDescription:
+      'La version Web est en lecture seule et ne permet pas l’édition, les annotations, les signatures ni la modification des formulaires.',
     openPdf: 'Ouvrir le PDF',
     choosePdf: 'Choisir un PDF dans le système',
     pageTab: 'Pages',
@@ -830,7 +834,8 @@ export const strings = {
   de: {
     close: 'Schließen',
     pdfPreview: 'PDF-Vorschau',
-    viewerOnlyDescription: 'Die Web-Version ist schreibgeschützt und unterstützt keine Bearbeitung, Anmerkungen, Signaturen oder Formularänderungen.',
+    viewerOnlyDescription:
+      'Die Web-Version ist schreibgeschützt und unterstützt keine Bearbeitung, Anmerkungen, Signaturen oder Formularänderungen.',
     openPdf: 'PDF öffnen',
     choosePdf: 'PDF aus dem System auswählen',
     pageTab: 'Seiten',
@@ -996,7 +1001,8 @@ export const strings = {
   es: {
     close: 'Cerrar',
     pdfPreview: 'Vista previa de PDF',
-    viewerOnlyDescription: 'La versión web es solo de lectura y no permite editar, anotar, firmar ni modificar formularios.',
+    viewerOnlyDescription:
+      'La versión web es solo de lectura y no permite editar, anotar, firmar ni modificar formularios.',
     openPdf: 'Abrir PDF',
     choosePdf: 'Elegir PDF del sistema',
     pageTab: 'Páginas',
@@ -1162,7 +1168,8 @@ export const strings = {
   th: {
     close: 'ปิด',
     pdfPreview: 'ตัวอย่าง PDF',
-    viewerOnlyDescription: 'เวอร์ชันเว็บใช้สำหรับดูเท่านั้น ไม่รองรับการแก้ไข คำอธิบายประกอบ ลายเซ็น หรือการแก้ไขแบบฟอร์ม',
+    viewerOnlyDescription:
+      'เวอร์ชันเว็บใช้สำหรับดูเท่านั้น ไม่รองรับการแก้ไข คำอธิบายประกอบ ลายเซ็น หรือการแก้ไขแบบฟอร์ม',
     openPdf: 'เปิด PDF',
     choosePdf: 'เลือก PDF จากระบบ',
     pageTab: 'หน้า',
@@ -1328,7 +1335,8 @@ export const strings = {
   id: {
     close: 'Tutup',
     pdfPreview: 'Pratinjau PDF',
-    viewerOnlyDescription: 'Versi Web hanya untuk melihat dan tidak mendukung pengeditan, anotasi, tanda tangan, atau perubahan formulir.',
+    viewerOnlyDescription:
+      'Versi Web hanya untuk melihat dan tidak mendukung pengeditan, anotasi, tanda tangan, atau perubahan formulir.',
     openPdf: 'Buka PDF',
     choosePdf: 'Pilih PDF dari sistem',
     pageTab: 'Halaman',
@@ -1494,7 +1502,8 @@ export const strings = {
   ru: {
     close: 'Закрыть',
     pdfPreview: 'Предпросмотр PDF',
-    viewerOnlyDescription: 'Веб-версия предназначена только для просмотра и не поддерживает редактирование, аннотации, подписи или изменение форм.',
+    viewerOnlyDescription:
+      'Веб-версия предназначена только для просмотра и не поддерживает редактирование, аннотации, подписи или изменение форм.',
     openPdf: 'Открыть PDF',
     choosePdf: 'Выбрать PDF из системы',
     pageTab: 'Страницы',
@@ -1660,7 +1669,8 @@ export const strings = {
   ar: {
     close: 'إغلاق',
     pdfPreview: 'معاينة PDF',
-    viewerOnlyDescription: 'إصدار الويب للعرض فقط ولا يتضمن التحرير أو التعليقات التوضيحية أو التوقيعات أو تعديل النماذج.',
+    viewerOnlyDescription:
+      'إصدار الويب للعرض فقط ولا يتضمن التحرير أو التعليقات التوضيحية أو التوقيعات أو تعديل النماذج.',
     openPdf: 'فتح PDF',
     choosePdf: 'اختيار PDF من النظام',
     pageTab: 'الصفحات',
@@ -1826,7 +1836,8 @@ export const strings = {
   pt: {
     close: 'Fechar',
     pdfPreview: 'Visualização de PDF',
-    viewerOnlyDescription: 'A versão Web é somente para visualização e não inclui edição, anotações, assinaturas ou alterações em formulários.',
+    viewerOnlyDescription:
+      'A versão Web é somente para visualização e não inclui edição, anotações, assinaturas ou alterações em formulários.',
     openPdf: 'Abrir PDF',
     choosePdf: 'Escolher PDF do sistema',
     pageTab: 'Páginas',
@@ -1992,7 +2003,8 @@ export const strings = {
   it: {
     close: 'Chiudi',
     pdfPreview: 'Anteprima PDF',
-    viewerOnlyDescription: 'La versione Web è di sola visualizzazione e non include modifica, annotazioni, firme o modifiche ai moduli.',
+    viewerOnlyDescription:
+      'La versione Web è di sola visualizzazione e non include modifica, annotazioni, firme o modifiche ai moduli.',
     openPdf: 'Apri PDF',
     choosePdf: 'Scegli PDF dal sistema',
     pageTab: 'Pagine',
@@ -2159,7 +2171,8 @@ export const strings = {
   pl: {
     close: 'Zamknij',
     pdfPreview: 'Podgląd PDF',
-    viewerOnlyDescription: 'Wersja internetowa służy tylko do przeglądania i nie obsługuje edycji, adnotacji, podpisów ani zmian formularzy.',
+    viewerOnlyDescription:
+      'Wersja internetowa służy tylko do przeglądania i nie obsługuje edycji, adnotacji, podpisów ani zmian formularzy.',
     openPdf: 'Otwórz PDF',
     choosePdf: 'Wybierz PDF z systemu',
     pageTab: 'Strony',
@@ -2325,7 +2338,8 @@ export const strings = {
   nl: {
     close: 'Sluiten',
     pdfPreview: 'PDF-voorbeeld',
-    viewerOnlyDescription: 'De webversie is alleen-lezen en ondersteunt geen bewerking, annotaties, handtekeningen of formulierwijzigingen.',
+    viewerOnlyDescription:
+      'De webversie is alleen-lezen en ondersteunt geen bewerking, annotaties, handtekeningen of formulierwijzigingen.',
     openPdf: 'PDF openen',
     choosePdf: 'PDF uit het systeem kiezen',
     pageTab: 'Pagina’s',
@@ -2491,7 +2505,8 @@ export const strings = {
   ms: {
     close: 'Tutup',
     pdfPreview: 'Pratonton PDF',
-    viewerOnlyDescription: 'Versi Web adalah untuk paparan sahaja dan tidak menyokong penyuntingan, anotasi, tandatangan atau perubahan borang.',
+    viewerOnlyDescription:
+      'Versi Web adalah untuk paparan sahaja dan tidak menyokong penyuntingan, anotasi, tandatangan atau perubahan borang.',
     openPdf: 'Buka PDF',
     choosePdf: 'Pilih PDF daripada sistem',
     pageTab: 'Halaman',
@@ -2657,7 +2672,8 @@ export const strings = {
   he: {
     close: 'סגירה',
     pdfPreview: 'תצוגה מקדימה של PDF',
-    viewerOnlyDescription: 'גרסת האינטרנט מיועדת לצפייה בלבד ואינה כוללת עריכה, הערות, חתימות או שינוי טפסים.',
+    viewerOnlyDescription:
+      'גרסת האינטרנט מיועדת לצפייה בלבד ואינה כוללת עריכה, הערות, חתימות או שינוי טפסים.',
     openPdf: 'פתיחת PDF',
     choosePdf: 'בחירת PDF מהמערכת',
     pageTab: 'עמודים',
@@ -2821,7 +2837,8 @@ export const strings = {
   hi: {
     close: 'बंद करें',
     pdfPreview: 'PDF पूर्वावलोकन',
-    viewerOnlyDescription: 'वेब संस्करण केवल देखने के लिए है और इसमें संपादन, एनोटेशन, हस्ताक्षर या फ़ॉर्म बदलाव शामिल नहीं हैं।',
+    viewerOnlyDescription:
+      'वेब संस्करण केवल देखने के लिए है और इसमें संपादन, एनोटेशन, हस्ताक्षर या फ़ॉर्म बदलाव शामिल नहीं हैं।',
     openPdf: 'PDF खोलें',
     choosePdf: 'सिस्टम से PDF चुनें',
     pageTab: 'पृष्ठ',
