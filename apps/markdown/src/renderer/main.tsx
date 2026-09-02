@@ -1,8 +1,10 @@
 import { createRoot } from 'react-dom/client'
 import { htmlLang, type Lang } from '@genoffice/i18n'
 import App from './App'
+import { ZoomControl } from './components/ZoomControl'
 import { LocaleProvider } from './i18n/locale'
 import './styles.css'
+import './viewControls.css'
 
 void (async () => {
   const lang: Lang = await window.markdownApi.getLanguage().catch(() => 'zh' as const)
@@ -10,6 +12,7 @@ void (async () => {
   createRoot(document.getElementById('root')!).render(
     <LocaleProvider initial={lang}>
       <App />
+      <ZoomControl />
     </LocaleProvider>,
   )
 })()

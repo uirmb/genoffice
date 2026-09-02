@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { Lang } from '@genoffice/i18n'
 
 import { ADDABLE_SHAPE_TYPES } from './shape-types'
 import type {
@@ -1898,13 +1899,9 @@ export interface AttachmentImageResult {
 
 export interface DesktopApi {
   /** current UI language (persisted by the shell in app-settings.json) */
-  getLanguage(): Promise<'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar'>
+  getLanguage(): Promise<Lang>
   /** language switched from the shell home page */
-  onLanguageChanged(
-    handler: (
-      lang: 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar',
-    ) => void,
-  ): () => void
+  onLanguageChanged(handler: (lang: Lang) => void): () => void
   selectWorkbook(): Promise<WorkbookFile | null>
   readWorkbookRange(request: WorkbookRangeRequest): Promise<WorkbookRangeResult>
   readWorkbookFormulas(request: WorkbookFormulaCellsRequest): Promise<WorkbookFormulaCellsResult>

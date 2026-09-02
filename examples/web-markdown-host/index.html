@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Markdown Web Host</title>
+  </head>
+  <body>
+    <header class="host-toolbar">
+      <strong>Markdown Web Host</strong>
+      <label class="picker-button">
+        选择 Markdown
+        <input id="markdown-picker" type="file" accept="text/markdown,text/plain,.md,.markdown" />
+      </label>
+      <span id="file-name">未选择 Markdown</span>
+      <span class="host-spacer"></span>
+      <span>状态：</span><strong id="host-state">waiting</strong>
+    </header>
+    <input
+      id="asset-picker"
+      class="hidden-picker"
+      type="file"
+      accept="image/png,image/jpeg,image/gif"
+    />
+    <div class="saved-row">最近保存内容：<code id="saved-text">—</code></div>
+    <iframe id="office-frame" title="GenOffice Markdown Web"></iframe>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

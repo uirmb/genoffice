@@ -1,0 +1,189 @@
+name: Web Deploy Build
+
+on:
+  pull_request:
+    branches: [web/develop, web/stable]
+    paths:
+      - '.dockerignore'
+      - 'apps/docs/src/web/**'
+      - 'apps/docs/tests/web-sha256.test.ts'
+      - 'apps/docs/vite.web.config.ts'
+      - 'apps/sheets/vite.web.config.ts'
+      - 'apps/slides/src/web/**'
+      - 'apps/slides/vite.web.config.ts'
+      - 'apps/pdf/src/web/**'
+      - 'apps/pdf/vite.web.config.ts'
+      - 'apps/markdown/vite.web.config.ts'
+      - 'packages/pptx-engine/**'
+      - 'services/xlsx-engine-service/**'
+      - 'apps/sheets/native/xlsx-engine/**'
+      - 'deploy/web/**'
+      - 'deploy/xlsx-engine/**'
+      - 'tools/build-web-all.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/web-deploy-build.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: web-deploy-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-deployables:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check changed-file formatting
+        env:
+          FORMAT_BASE_REF: ${{ github.event.pull_request.base.sha }}
+        run: npm run format:check
+
+      - name: Test DOCX Web SHA-256 compatibility
+        run: npm run test -w @genoffice/docs -- tests/web-sha256.test.ts
+
+      - name: Test PPTX Web SHA-256 compatibility
+        run: npm run test -w @genoffice/pptx-engine -- tests/bytes-sha256.test.ts
+
+      - name: Build unified Web bundle
+        run: npm run build:web:all
+
+      - name: Verify Web release layout
+        run: |
+          test -f dist/web/docx/index.html
+          test -f dist/web/xlsx/index.html
+          test -f dist/web/pptx/index.html
+          test -f dist/web/md/index.html
+          test -f dist/web/pdf/index.html
+          test -d dist/web/pdf/pdfjs
+
+      - name: Validate standalone Compose files
+        env:
+          XLSX_ENGINE_SERVERS: 127.0.0.1:7301
+        run: |
+          docker compose -f deploy/web/compose.yaml config > /tmp/genoffice-web-compose.yaml
+          docker compose -f deploy/xlsx-engine/compose.yaml config > /tmp/genoffice-xlsx-compose.yaml
+
+      - name: Build XLSX Engine image
+        run: docker build --progress=plain -f deploy/xlsx-engine/Dockerfile -t genoffice-xlsx-engine:ci .
+
+      - name: Build unified Web image
+        run: docker build --progress=plain -f deploy/web/Dockerfile -t genoffice-web:ci .
+
+      - name: Start container integration topology
+        run: |
+          docker network create genoffice-ci
+          docker run -d \
+            --name genoffice-xlsx-engine-ci \
+            --network genoffice-ci \
+            genoffice-xlsx-engine:ci
+          docker run -d \
+            --name genoffice-web-ci \
+            --network genoffice-ci \
+            -p 127.0.0.1:18080:80 \
+            -e XLSX_ENGINE_SERVERS=genoffice-xlsx-engine-ci:7301 \
+            genoffice-web:ci
+
+      - name: Wait for container health
+        run: |
+          for attempt in $(seq 1 60); do
+            engine_status=$(docker inspect --format '{{.State.Health.Status}}' genoffice-xlsx-engine-ci 2>/dev/null || true)
+            web_status=$(docker inspect --format '{{.State.Health.Status}}' genoffice-web-ci 2>/dev/null || true)
+            if [ "$engine_status" = healthy ] && [ "$web_status" = healthy ]; then
+              exit 0
+            fi
+            if [ "$engine_status" = unhealthy ] || [ "$web_status" = unhealthy ]; then
+              docker logs genoffice-xlsx-engine-ci || true
+              docker logs genoffice-web-ci || true
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs genoffice-xlsx-engine-ci || true
+          docker logs genoffice-web-ci || true
+          exit 1
+
+      - name: Verify Web routes, PDF worker MIME, Engine proxy and sticky cookie
+        run: |
+          for path in docx xlsx pptx md pdf; do
+            curl --fail --silent --show-error --output /dev/null "http://127.0.0.1:18080/$path/"
+          done
+
+          pdf_worker_path=$(docker exec genoffice-web-ci sh -c "find /usr/share/nginx/html/pdf -type f -name '*.mjs' | head -n 1")
+          test -n "$pdf_worker_path"
+          pdf_worker_url=${pdf_worker_path#/usr/share/nginx/html}
+          pdf_worker_type=$(curl --fail --silent --show-error --head "http://127.0.0.1:18080$pdf_worker_url" | tr -d '\r' | awk 'BEGIN { IGNORECASE=1 } /^Content-Type:/ { print $2; exit }')
+          case "$pdf_worker_type" in
+            application/javascript*|text/javascript*) ;;
+            *) echo "Unexpected PDF worker Content-Type: $pdf_worker_type" >&2; exit 1 ;;
+          esac
+
+          curl --fail --silent --show-error \
+            --dump-header /tmp/xlsx-engine-headers.txt \
+            --output /tmp/xlsx-engine-health.json \
+            http://127.0.0.1:18080/xlsx-engine/health
+
+          grep -q '"ok":true' /tmp/xlsx-engine-health.json
+          grep -qi '^set-cookie: genoffice_xlsx_route=' /tmp/xlsx-engine-headers.txt
+          docker exec genoffice-web-ci nginx -T 2>&1 | grep -F 'sticky cookie genoffice_xlsx_route'
+          docker exec genoffice-web-ci nginx -T 2>&1 | grep -F 'server genoffice-xlsx-engine-ci:7301'
+
+      - name: Clean up container integration topology
+        if: always()
+        run: |
+          docker rm -f genoffice-web-ci genoffice-xlsx-engine-ci >/dev/null 2>&1 || true
+          docker network rm genoffice-ci >/dev/null 2>&1 || true
+
+  build-web-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unified Web bundle
+        run: npm run build:web:all
+
+      - name: Verify Web release layout
+        shell: pwsh
+        run: |
+          @(
+            'dist/web/docx/index.html',
+            'dist/web/xlsx/index.html',
+            'dist/web/pptx/index.html',
+            'dist/web/md/index.html',
+            'dist/web/pdf/index.html',
+            'dist/web/pdf/pdfjs'
+          ) | ForEach-Object {
+            if (-not (Test-Path $_)) {
+              throw "Missing expected Web release path: $_"
+            }
+          }

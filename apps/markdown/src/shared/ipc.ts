@@ -38,6 +38,27 @@ export interface SaveMarkdownRequest {
 export type SaveMarkdownResult =
   { ok: true; path: string } | { ok: true; canceled: true } | { ok: false; error: string }
 
+export interface MarkdownTextRequest {
+  /** Full UTF-8 Markdown text including frontmatter. */
+  text: string
+}
+
+export type MarkdownHostActionResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * Transactional file-open result used by Markdown Web. Desktop keeps its native
+ * shell open flow and therefore does not need to implement these optional hooks.
+ */
+export type OpenMarkdownResult =
+  | { status: 'selected'; selectionId: string | null; path: string; text: string }
+  | { status: 'cancelled' }
+  | { status: 'failed'; error: string }
+
+export interface ConfirmOpenMarkdownResult {
+  ok: boolean
+  error?: string
+}
+
 /** AI channels are app-wide shared ipcMain handlers (shell registers via docs-main registerAiIpc); pass-through only */
 export const AI_CHANNELS = {
   getSettings: 'ai:get-settings',
@@ -84,11 +105,22 @@ export interface MarkdownApi {
   /** Read the file as UTF-8 text. Only paths granted to this view are allowed */
   readFile(path: string): Promise<string>
   /**
+   * Web-only transactional document selection. The selected file is not bound
+   * as current until confirmOpenDocument succeeds after renderer parsing.
+   */
+  openDocument?(): Promise<OpenMarkdownResult>
+  confirmOpenDocument?(selectionId: string): Promise<ConfirmOpenMarkdownResult>
+  releaseOpenDocument?(selectionId: string): Promise<void>
+  /**
    * Write the document text. With a granted file path the write is atomic
    * (tmp + rename); untitled documents and mode 'saveAs' go through a main-process
    * save dialog first. The resolved path is granted to the view and returned.
    */
   save(request: SaveMarkdownRequest): Promise<SaveMarkdownResult>
+  /** Web-only UC Host actions. Desktop preload may omit these hooks. */
+  saveHistoryVersion?(request: MarkdownTextRequest): Promise<MarkdownHostActionResult>
+  download?(request: MarkdownTextRequest): Promise<MarkdownHostActionResult>
+  exit?(): Promise<void>
   /** Mirror unsaved-changes state to the main process; drives the save prompt before closing a tab/window */
   setDirty(dirty: boolean): void
   /** Shell menu Save / Save As → renderer serializes and calls save() with the given mode */

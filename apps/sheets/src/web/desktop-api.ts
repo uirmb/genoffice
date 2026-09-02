@@ -4,6 +4,7 @@ import type {
   AiStreamChunk,
   GenSparkAccountStatus,
 } from '@genoffice/ai-provider'
+import { normalizeLang } from '@genoffice/i18n'
 import type {
   OfficeEditorMode,
   OfficeFile,
@@ -52,7 +53,6 @@ import {
 } from './file-actions'
 import { saveWorkbookRequestViaEngine } from './xlsx-save'
 
-type SheetsLanguage = Awaited<ReturnType<DesktopApi['getLanguage']>>
 type LanguageHandler = Parameters<DesktopApi['onLanguageChanged']>[0]
 type MenuHandler = Parameters<DesktopApi['onMenuAction']>[0]
 type MenuAction = Parameters<MenuHandler>[0]
@@ -110,21 +110,6 @@ function hasWorkbookMutations(request: WorkbookSaveRequest): boolean {
     request.sparklineAdditions.length > 0 ||
     request.definedNamesState !== null
   )
-}
-
-function normalizeLanguage(locale: string): SheetsLanguage {
-  const value = locale.toLowerCase()
-  if (value.startsWith('zh')) return 'zh'
-  if (value.startsWith('ja')) return 'ja'
-  if (value.startsWith('ko')) return 'ko'
-  if (value.startsWith('fr')) return 'fr'
-  if (value.startsWith('de')) return 'de'
-  if (value.startsWith('es')) return 'es'
-  if (value.startsWith('th')) return 'th'
-  if (value.startsWith('id')) return 'id'
-  if (value.startsWith('ru')) return 'ru'
-  if (value.startsWith('ar')) return 'ar'
-  return 'en'
 }
 
 async function selectedToOfficeFile(
@@ -210,9 +195,7 @@ export function createSheetsWebDesktopController(
   host: OfficeHostApi,
   bridge?: EditorIframeBridge,
 ): SheetsWebDesktopController {
-  let currentLanguage = normalizeLanguage(
-    document.documentElement.lang || navigator.language || 'en',
-  )
+  let currentLanguage = normalizeLang(document.documentElement.lang || navigator.language || 'en')
   let currentMode: OfficeEditorMode = 'edit'
   let currentTitle = 'Untitled.xlsx'
   let currentOfficeFile: OfficeFile | null = null
@@ -289,7 +272,7 @@ export function createSheetsWebDesktopController(
   window.addEventListener(SHEETS_WEB_FILE_ACTION_EVENT, handleWebFileAction)
 
   const setLanguage = (locale: string): void => {
-    const next = normalizeLanguage(locale)
+    const next = normalizeLang(locale)
     if (next === currentLanguage) return
     currentLanguage = next
     for (const handler of languageHandlers) handler(next)

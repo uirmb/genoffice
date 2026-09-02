@@ -1,0 +1,79 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  font-family:
+    'Segoe UI',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Microsoft YaHei',
+    sans-serif;
+  background: #f3f4f6;
+  color: #222;
+}
+
+.host-shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+}
+
+.host-toolbar {
+  display: flex;
+  flex: 0 0 46px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid #d8dbe0;
+  background: #fff;
+  font-size: 13px;
+}
+
+.host-open {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #c9ccd1;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  background: #fff;
+}
+
+.host-open:hover {
+  background: #f7f7f8;
+}
+
+.host-open input {
+  display: none;
+}
+
+#file-name {
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #555;
+}
+
+.spacer {
+  flex: 1;
+}
+
+#host-state {
+  color: #a33517;
+}
+
+#office-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: #fff;
+}

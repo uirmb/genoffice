@@ -9,7 +9,7 @@ on:
   push:
     branches: [main, 'dev_*', 'release_*']
   pull_request:
-    branches: [main]
+    branches: [main, web/stable]
   workflow_dispatch:
 
 concurrency:
@@ -126,6 +126,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install chromium
 
       - name: Build apps
         run: npm run build:all
