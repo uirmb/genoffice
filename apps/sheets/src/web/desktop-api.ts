@@ -196,9 +196,7 @@ export function createSheetsWebDesktopController(
   host: OfficeHostApi,
   bridge?: EditorIframeBridge,
 ): SheetsWebDesktopController {
-  let currentLanguage = normalizeLang(
-    document.documentElement.lang || navigator.language || 'en',
-  )
+  let currentLanguage = normalizeLang(document.documentElement.lang || navigator.language || 'en')
   let currentMode: OfficeEditorMode = 'edit'
   let currentTitle = 'Untitled.xlsx'
   let currentOfficeFile: OfficeFile | null = null
