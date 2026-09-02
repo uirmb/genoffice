@@ -6,6 +6,7 @@ import type {
   AiStreamChunk,
   GenSparkAccountStatus,
 } from '@genoffice/ai-provider'
+import type { Lang } from '@genoffice/i18n'
 import type { ProjectApi } from '@genoffice/project-store'
 import type {
   AttachmentAddResult,
@@ -41,7 +42,7 @@ const desktopApi: DesktopApi = {
   onLanguageChanged(handler) {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      lang: 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de' | 'es' | 'th' | 'id' | 'ru' | 'ar',
+      lang: Lang,
     ) => handler(lang)
     ipcRenderer.on('app:language-changed', listener)
     return () => ipcRenderer.removeListener('app:language-changed', listener)
