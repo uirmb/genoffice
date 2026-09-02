@@ -53,7 +53,6 @@ import {
 } from './file-actions'
 import { saveWorkbookRequestViaEngine } from './xlsx-save'
 
-type SheetsLanguage = Awaited<ReturnType<DesktopApi['getLanguage']>>
 type LanguageHandler = Parameters<DesktopApi['onLanguageChanged']>[0]
 type MenuHandler = Parameters<DesktopApi['onMenuAction']>[0]
 type MenuAction = Parameters<MenuHandler>[0]
