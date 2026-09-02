@@ -40,10 +40,7 @@ import { IPC_CHANNELS } from '../shared/ipc-channels'
 const desktopApi: DesktopApi = {
   getLanguage: () => ipcRenderer.invoke('app:get-language'),
   onLanguageChanged(handler) {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      lang: Lang,
-    ) => handler(lang)
+    const listener = (_event: Electron.IpcRendererEvent, lang: Lang) => handler(lang)
     ipcRenderer.on('app:language-changed', listener)
     return () => ipcRenderer.removeListener('app:language-changed', listener)
   },
