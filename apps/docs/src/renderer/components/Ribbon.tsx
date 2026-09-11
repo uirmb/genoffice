@@ -110,7 +110,7 @@ interface RibbonProps {
   formatState: RibbonFormatState
   hasDoc: boolean
   canSaveCurrentDocument?: boolean
-  saving: boolean
+  saving?: boolean
   blocks: Block[]
   /** Fallback when a new list can't reuse a numId (adopt a document definition / create one) */
   allocateNumId?: (kind: 'bullet' | 'ordered') => string | null
@@ -582,7 +582,7 @@ function RibbonInner({
   formatState: fs,
   hasDoc,
   canSaveCurrentDocument,
-  saving,
+  saving = false,
   blocks,
   allocateNumId,
   createListDef,
