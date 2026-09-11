@@ -42,11 +42,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Show exact Prettier diff for Sheets file menu
-        run: |
-          npx prettier apps/sheets/src/web/file-menu.ts > /tmp/file-menu.formatted.ts
-          diff -u apps/sheets/src/web/file-menu.ts /tmp/file-menu.formatted.ts || true
-
       - name: Check changed-file formatting
         env:
           FORMAT_BASE_REF: ${{ github.event.pull_request.base.sha }}
