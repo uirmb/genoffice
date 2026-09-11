@@ -4,7 +4,7 @@ import { useI18n } from '../i18n/locale'
 
 interface Props {
   disabled: boolean
-  saving: boolean
+  saving?: boolean
   canSave: boolean
   canSaveHistoryVersion: boolean
   canDownload: boolean
@@ -101,7 +101,7 @@ const ACTION_LABELS: Record<Lang, Pick<FileLabels, 'saveHistoryVersion' | 'downl
 
 export function FileMenu({
   disabled,
-  saving,
+  saving = false,
   canSave,
   canSaveHistoryVersion,
   canDownload,
