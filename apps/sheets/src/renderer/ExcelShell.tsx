@@ -150,7 +150,7 @@ interface ExcelShellProps {
   readonly zoomPercent: number
   /// True when the edit journal has unsaved changes (enables the QAT Save).
   readonly canSave: boolean
-  readonly saving: boolean
+  readonly saving?: boolean
   readonly onSave: () => void
   /// QAT redo (workbook history, same path as the app menu's ⇧⌘Z); undo
   /// shares the AI panel's onUndo above.
@@ -261,7 +261,7 @@ export function ExcelShell({
   statusMessage,
   zoomPercent,
   canSave,
-  saving,
+  saving = false,
   onSave,
   onRedo,
   autoSave,
