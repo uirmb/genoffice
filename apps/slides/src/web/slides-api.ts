@@ -205,6 +205,7 @@ export function createSlidesWebController(
 ): SlidesWebController {
   let session: WebSession | null = null
   let currentFile: OfficeFileDescriptor | null = null
+  let pendingNewFile: OfficeFileDescriptor | null = null
   let currentLang: Lang = normalizeLang(document.documentElement.lang || navigator.language || 'en')
   let mode: 'view' | 'edit' = 'edit'
   let dirty = false
@@ -519,8 +520,10 @@ export function createSlidesWebController(
       })
     },
     newBlank: async (fitWidthPx: number) => {
+      const file = pendingNewFile
+      pendingNewFile = null
       const bytes = await createBlankPptx()
-      const result = await replaceOpenedFromBytes(bytesToArrayBuffer(bytes), fitWidthPx, null)
+      const result = await replaceOpenedFromBytes(bytesToArrayBuffer(bytes), fitWidthPx, file)
       if (!session) return result
 
       // PowerPoint starts a new presentation with an editable Title Slide rather
@@ -1162,6 +1165,7 @@ export function createSlidesWebController(
         if (message.payload.kind !== 'pptx') return
         setMode(message.payload.mode)
         if (message.payload.locale) setLanguage(message.payload.locale)
+        pendingNewFile = null
         const file = message.payload.file
         void openOfficeFile(file, lastFitWidthPx).then((result) => {
           if (initialOpenResolve) {
@@ -1178,10 +1182,11 @@ export function createSlidesWebController(
         if (message.payload.kind !== 'pptx') return
         setMode(message.payload.mode)
         if (message.payload.locale) setLanguage(message.payload.locale)
-        currentFile = null
+        pendingNewFile = message.payload.file ?? null
+        currentFile = pendingNewFile
         session = null
         setDirtyState(false)
-        host.setTitle('Untitled Presentation')
+        host.setTitle(currentFile?.name ?? 'Untitled Presentation')
         if (initialOpenResolve) {
           const resolve = initialOpenResolve
           initialOpenResolve = null
@@ -1255,6 +1260,7 @@ export function createSlidesWebController(
       pendingSaveRequestIds.clear()
       session = null
       currentFile = null
+      pendingNewFile = null
       document.documentElement.classList.remove('office-view-mode')
     },
   }
