@@ -723,7 +723,7 @@ export function Ribbon({
   hasDoc,
   deckEmpty,
   dirty,
-  saving,
+  saving = false,
   editing,
   autoSave,
   onAutoSaveChange,
