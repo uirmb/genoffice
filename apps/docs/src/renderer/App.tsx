@@ -910,6 +910,23 @@ export function App() {
     [],
   )
 
+  // Manual Save owns an immediate single-flight lock. React disables the UI on
+  // the next render; this ref closes the same-frame double-click/shortcut race.
+  // Autosave and close-guard saves keep their existing serializer semantics.
+  const [saving, setSaving] = useState(false)
+  const manualSaveInFlightRef = useRef(false)
+  const manualSave = useCallback(async (): Promise<boolean> => {
+    if (manualSaveInFlightRef.current) return false
+    manualSaveInFlightRef.current = true
+    setSaving(true)
+    try {
+      return await save(false)
+    } finally {
+      manualSaveInFlightRef.current = false
+      setSaving(false)
+    }
+  }, [save])
+
   const [showExitConfirm, setShowExitConfirm] = useState(false)
   const [exitSaving, setExitSaving] = useState(false)
 
@@ -2512,7 +2529,7 @@ export function App() {
     createListDef: (levels: CustomNumberingLevel[]) => createCustomListDef(levels),
     onParagraphDialog: () => setShowParaDialog(true),
     onOpen: () => void openFile(),
-    onSave: () => void save(false),
+    onSave: () => void manualSave(),
     onSaveAs: () => void save(true),
     onToggleAi: () => setShowAi((v) => !v),
     onSection: (next: SectionSettings) => {
@@ -2619,10 +2636,11 @@ export function App() {
         <button
           className="qa-btn"
           title={t('appSaveShortcutTip')}
-          disabled={!canSaveCurrentDocument}
-          onClick={() => void save(false)}
+          disabled={saving || !canSaveCurrentDocument}
+          aria-busy={saving}
+          onClick={() => void manualSave()}
         >
-          <IconSave size={16} />
+          {saving ? <span className="save-loading-spinner" aria-hidden="true" /> : <IconSave size={16} />}
         </button>
         <button
           className="qa-btn"
@@ -2653,7 +2671,7 @@ export function App() {
       </>
     ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hasDoc, canSaveCurrentDocument, autoSave, editor, save, lang],
+    [hasDoc, canSaveCurrentDocument, autoSave, editor, manualSave, saving, lang],
   )
 
   if (!editor) return null
@@ -2712,6 +2730,7 @@ export function App() {
           formatState={formatState}
           hasDoc={hasDoc}
           canSaveCurrentDocument={canSaveCurrentDocument}
+          saving={saving}
           blocks={doc?.parsed.blocks ?? EMPTY_BLOCKS}
           styles={ribbonStyles}
           docDefaults={doc?.parsed.docDefaults}
