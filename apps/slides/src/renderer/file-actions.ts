@@ -8,6 +8,33 @@ import { renderSlidesToPngBase64 } from './export-render'
 import { t } from './i18n/locale'
 import { showToast } from './components/toast-bus'
 
+function showSaveToast(
+  text: string,
+  kind: 'success' | 'error',
+  saveAs: boolean,
+  error?: string,
+): void {
+  const conflict = kind === 'error' && Boolean(error?.includes('VERSION_CONFLICT'))
+  showToast(text, kind, {
+    level: conflict ? 'warning' : kind,
+    code: conflict
+      ? 'VERSION_CONFLICT'
+      : kind === 'success'
+        ? saveAs
+          ? 'DOCUMENT_SAVE_AS_SUCCEEDED'
+          : 'DOCUMENT_SAVE_SUCCEEDED'
+        : saveAs
+          ? 'DOCUMENT_SAVE_AS_FAILED'
+          : 'DOCUMENT_SAVE_FAILED',
+    operation: saveAs ? 'saveAs' : 'save',
+    dedupeKey: conflict
+      ? 'document-version-conflict'
+      : saveAs
+        ? 'document-save-as'
+        : 'document-save',
+  })
+}
+
 /**
  * If a text box/table is still being edited on ⌘S/close-save, blur first so the
  * overlay commits (blur→commitEdit), and save only after the commit lands —
@@ -48,11 +75,11 @@ export async function save(ctx: ActionCtx, quiet = false): Promise<boolean> {
     ctx.setDirty(false)
     const saved = t('appStatusSaved', { name: r.path?.split('/').pop() ?? '' })
     ctx.setStatus(saved)
-    if (!quiet) showToast(saved)
+    if (!quiet) showSaveToast(saved, 'success', false)
   } else {
     const failed = t('appStatusSaveFailed', { error: r.error ?? t('appErrorCanceled') })
     ctx.setStatus(failed)
-    if (!quiet) showToast(failed, 'error')
+    if (!quiet) showSaveToast(failed, 'error', false, r.error)
   }
   return r.ok
 }
@@ -68,13 +95,13 @@ export async function saveAs(ctx: ActionCtx): Promise<void> {
     ctx.setDirty(false)
     const saved = t('appStatusSavedAs', { name: r.path?.split('/').pop() ?? '' })
     ctx.setStatus(saved)
-    showToast(saved)
+    showSaveToast(saved, 'success', true)
   } else if (r.error) {
     // a canceled dialog returns ok:false without error — only real write
     // failures surface, matching the docs/sheets save-as feedback
     const failed = t('appStatusSaveFailed', { error: r.error })
     ctx.setStatus(failed)
-    showToast(failed, 'error')
+    showSaveToast(failed, 'error', true, r.error)
   }
 }
 

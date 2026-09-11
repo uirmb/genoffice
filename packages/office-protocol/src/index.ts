@@ -27,6 +27,51 @@ import type {
  */
 export const OFFICE_PROTOCOL_VERSION = 1 as const
 
+export type OfficeNotificationOwner = 'host' | 'editor'
+export type OfficeNotificationLevel = 'success' | 'info' | 'warning' | 'error'
+export type OfficeNotificationTransport = 'office:notification'
+export type OfficeNotificationOperation =
+  'open' | 'save' | 'saveAs' | 'saveVersion' | 'export' | 'download' | 'insertAsset' | 'connection'
+
+export type OfficeNotificationCode =
+  | 'DOCUMENT_SAVE_SUCCEEDED'
+  | 'DOCUMENT_SAVE_FAILED'
+  | 'DOCUMENT_SAVE_AS_SUCCEEDED'
+  | 'DOCUMENT_SAVE_AS_FAILED'
+  | 'HISTORY_VERSION_SAVED'
+  | 'HISTORY_VERSION_SAVE_FAILED'
+  | 'DOCUMENT_OPEN_FAILED'
+  | 'DOCUMENT_EXPORT_SUCCEEDED'
+  | 'DOCUMENT_EXPORT_FAILED'
+  | 'DOCUMENT_DOWNLOAD_FAILED'
+  | 'FILE_READ_FAILED'
+  | 'ASSET_INSERT_FAILED'
+  | 'VERSION_CONFLICT'
+  | 'PERMISSION_DENIED'
+  | 'SESSION_EXPIRED'
+  | 'READ_ONLY_MODE'
+  | 'CONNECTION_LOST'
+  | 'CONNECTION_RESTORED'
+  | 'FORMAT_COMPATIBILITY_WARNING'
+  | 'UNSUPPORTED_FILE'
+  | 'FILE_TOO_LARGE'
+
+export interface OfficeNotificationSettings {
+  owner: OfficeNotificationOwner
+  transport: OfficeNotificationTransport
+  levels?: OfficeNotificationLevel[] | undefined
+}
+
+export interface OfficeNotificationPayload {
+  id: string
+  level: OfficeNotificationLevel
+  code: OfficeNotificationCode
+  message: string
+  operation?: OfficeNotificationOperation | undefined
+  dedupeKey?: string | undefined
+  durationMs?: number | undefined
+}
+
 export interface OfficeInitPayload {
   kind: OfficeDocumentKind
   mode: OfficeEditorMode
@@ -34,6 +79,7 @@ export interface OfficeInitPayload {
   /** Initial content is already materialized; the editor must not read it again. */
   file: OfficeFile
   capabilities?: Partial<OfficeHostCapabilities> | undefined
+  notifications?: OfficeNotificationSettings | undefined
 }
 
 export interface OfficeNewPayload {
@@ -41,6 +87,7 @@ export interface OfficeNewPayload {
   mode: OfficeEditorMode
   locale?: string | undefined
   capabilities?: Partial<OfficeHostCapabilities> | undefined
+  notifications?: OfficeNotificationSettings | undefined
 }
 
 export interface OfficeEditorState {
@@ -174,6 +221,12 @@ export type EditorToHostMessage =
       protocol: typeof OFFICE_PROTOCOL_VERSION
       type: 'office:title-change'
       payload: { title: string }
+    }
+  | {
+      protocol: typeof OFFICE_PROTOCOL_VERSION
+      type: 'office:notification'
+      requestId?: string | undefined
+      payload: OfficeNotificationPayload
     }
   | {
       protocol: typeof OFFICE_PROTOCOL_VERSION

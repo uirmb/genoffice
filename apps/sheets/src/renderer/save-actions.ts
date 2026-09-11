@@ -41,11 +41,48 @@ export interface SaveContext {
 }
 
 export type WorkbookFileActionMode =
-  | 'save'
-  | 'save-as'
-  | 'save-history'
-  | 'export-xlsx'
-  | 'recovery'
+  'save' | 'save-as' | 'save-history' | 'export-xlsx' | 'recovery'
+
+function showSaveFeedback(
+  text: string,
+  kind: 'success' | 'error',
+  mode: Exclude<WorkbookFileActionMode, 'recovery'>,
+  rawError?: string,
+): void {
+  const conflict = kind === 'error' && Boolean(rawError?.includes('VERSION_CONFLICT'))
+  const operation =
+    mode === 'save-as'
+      ? 'saveAs'
+      : mode === 'save-history'
+        ? 'saveVersion'
+        : mode === 'export-xlsx'
+          ? 'export'
+          : 'save'
+  const code = conflict
+    ? 'VERSION_CONFLICT'
+    : kind === 'success'
+      ? mode === 'save-as'
+        ? 'DOCUMENT_SAVE_AS_SUCCEEDED'
+        : mode === 'save-history'
+          ? 'HISTORY_VERSION_SAVED'
+          : mode === 'export-xlsx'
+            ? 'DOCUMENT_EXPORT_SUCCEEDED'
+            : 'DOCUMENT_SAVE_SUCCEEDED'
+      : mode === 'save-as'
+        ? 'DOCUMENT_SAVE_AS_FAILED'
+        : mode === 'save-history'
+          ? 'HISTORY_VERSION_SAVE_FAILED'
+          : mode === 'export-xlsx'
+            ? 'DOCUMENT_EXPORT_FAILED'
+            : 'DOCUMENT_SAVE_FAILED'
+
+  showToast(text, kind, {
+    level: conflict ? 'warning' : kind,
+    code,
+    operation,
+    dedupeKey: conflict ? 'document-version-conflict' : `office-${operation}`,
+  })
+}
 
 /**
  * mode 'recovery': assemble the very same payload but hand it to the
@@ -82,7 +119,7 @@ export async function handleSave(
   } catch (error: unknown) {
     const failed = error instanceof Error ? error.message : t('appFilterSnapshotFailed')
     ctx.setMessage(failed)
-    if (mode !== 'recovery' && !quiet) showToast(failed, 'error')
+    if (mode !== 'recovery' && !quiet) showSaveFeedback(failed, 'error', mode)
     return
   }
   const cfStates = collectCfStates(ctx.univerRef.current, state)
@@ -135,7 +172,7 @@ export async function handleSave(
     if (strandedHeld) {
       if (mode !== 'recovery') {
         ctx.setMessage(t('appSaveHeldStranded'))
-        if (!quiet) showToast(t('appSaveHeldStranded'), 'error')
+        if (!quiet) showSaveFeedback(t('appSaveHeldStranded'), 'error', mode)
       }
       return
     }
@@ -178,7 +215,7 @@ export async function handleSave(
   if (sheetOps.length > 0 && sheetOrder.length === 0) {
     if (mode !== 'recovery') {
       ctx.setMessage(t('appSheetOrderReadFailed'))
-      if (!quiet) showToast(t('appSheetOrderReadFailed'), 'error')
+      if (!quiet) showSaveFeedback(t('appSheetOrderReadFailed'), 'error', mode)
     }
     return
   }
@@ -218,13 +255,11 @@ export async function handleSave(
     if (!snapshotHost) {
       const unavailable = t('appFileActionUnavailable')
       ctx.setMessage(unavailable)
-      if (!quiet) showToast(unavailable, 'error')
+      if (!quiet) showSaveFeedback(unavailable, 'error', mode)
       return
     }
     try {
-      ctx.setMessage(
-        mode === 'save-history' ? t('appSavingHistoryVersion') : t('appExportingXlsx'),
-      )
+      ctx.setMessage(mode === 'save-history' ? t('appSavingHistoryVersion') : t('appExportingXlsx'))
       const result =
         mode === 'save-history'
           ? await snapshotHost.saveHistoryVersion(payload)
@@ -233,15 +268,14 @@ export async function handleSave(
         ctx.setMessage(t('appSaveCanceled'))
         return
       }
-      const message =
-        mode === 'save-history' ? t('appHistoryVersionSaved') : t('appXlsxExported')
+      const message = mode === 'save-history' ? t('appHistoryVersionSaved') : t('appXlsxExported')
       ctx.setMessage(message)
-      if (!quiet) showToast(message)
+      if (!quiet) showSaveFeedback(message, 'success', mode)
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : ''
       const failed = localizeSaveError(message) ?? (message || t('appSaveFailed'))
       ctx.setMessage(failed)
-      if (!quiet) showToast(failed, 'error')
+      if (!quiet) showSaveFeedback(failed, 'error', mode, message)
     }
     return
   }
@@ -286,7 +320,7 @@ export async function handleSave(
         total: result.file.entryCount,
       })
       ctx.setMessage(saved)
-      if (!quiet) showToast(saved)
+      if (!quiet) showSaveFeedback(saved, 'success', mode)
       return
     }
     try {
@@ -325,7 +359,7 @@ export async function handleSave(
       ctx.openLazyWorkbook(second.file)
       const saved = t('appSavedTwoPhase', { name: second.file.name })
       ctx.setMessage(saved)
-      if (!quiet) showToast(saved)
+      if (!quiet) showSaveFeedback(saved, 'success', mode)
     } catch (error: unknown) {
       if (ctx.lazyWorkbookRef.current !== state) return
       ctx.openLazyWorkbook(result.file)
@@ -333,13 +367,20 @@ export async function handleSave(
         reason: error instanceof Error ? error.message : String(error),
       })
       ctx.setMessage(failed)
-      if (!quiet) showToast(failed, 'error')
+      if (!quiet) {
+        showSaveFeedback(
+          failed,
+          'error',
+          mode,
+          error instanceof Error ? error.message : String(error),
+        )
+      }
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : ''
     const failed = localizeSaveError(message) ?? (message || t('appSaveFailed'))
     ctx.setMessage(failed)
-    if (!quiet) showToast(failed, 'error')
+    if (!quiet) showSaveFeedback(failed, 'error', mode, message)
   }
 }
 

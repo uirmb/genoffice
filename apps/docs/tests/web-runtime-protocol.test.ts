@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { EditorIframeBridge } from '@genoffice/web-runtime'
-import { EmbeddedOfficeHost } from '@genoffice/web-runtime'
+import { EmbeddedOfficeHost, OfficeNotificationAdapter } from '@genoffice/web-runtime'
 import type { EditorToHostMessage, HostToEditorMessage } from '@genoffice/office-protocol'
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -218,5 +218,101 @@ describe('EmbeddedOfficeHost stable wire protocol compatibility', () => {
       expect(sends[0].payload.reason).toBe('file-menu')
       expect(sends[0].requestId).toBeTruthy()
     }
+  })
+})
+
+describe('OfficeNotificationAdapter ownership negotiation', () => {
+  it('keeps notifications editor-owned until the Host explicitly opts in', () => {
+    const { bridge, sends } = createBridge()
+    const notifications = new OfficeNotificationAdapter(bridge)
+
+    const delegated = notifications.notify({
+      level: 'error',
+      code: 'DOCUMENT_SAVE_FAILED',
+      message: 'Save failed.',
+      operation: 'save',
+    })
+
+    expect(delegated).toBe(false)
+    expect(sends).toHaveLength(0)
+  })
+
+  it('delegates negotiated levels to office:notification with stable metadata', () => {
+    const { bridge, sends } = createBridge()
+    const notifications = new OfficeNotificationAdapter(bridge)
+    notifications.configure({
+      owner: 'host',
+      transport: 'office:notification',
+      levels: ['error', 'warning'],
+    })
+
+    const delegated = notifications.notify({
+      requestId: 'save-request-1',
+      level: 'error',
+      code: 'DOCUMENT_SAVE_FAILED',
+      message: 'Word save failed: Failed to fetch',
+      operation: 'save',
+      dedupeKey: 'document-save-failed',
+      durationMs: 5000,
+    })
+
+    expect(delegated).toBe(true)
+    expect(sends).toHaveLength(1)
+    expect(sends[0]).toMatchObject({
+      protocol: 1,
+      type: 'office:notification',
+      requestId: 'save-request-1',
+      payload: {
+        level: 'error',
+        code: 'DOCUMENT_SAVE_FAILED',
+        message: 'Word save failed: Failed to fetch',
+        operation: 'save',
+        dedupeKey: 'document-save-failed',
+        durationMs: 5000,
+      },
+    })
+    if (sends[0]?.type === 'office:notification') {
+      expect(sends[0].payload.id).toBeTruthy()
+    }
+  })
+
+  it('falls back to editor display for levels the Host did not negotiate', () => {
+    const { bridge, sends } = createBridge()
+    const notifications = new OfficeNotificationAdapter(bridge)
+    notifications.configure({
+      owner: 'host',
+      transport: 'office:notification',
+      levels: ['error'],
+    })
+
+    const delegated = notifications.notify({
+      level: 'success',
+      code: 'DOCUMENT_SAVE_SUCCEEDED',
+      message: 'Saved.',
+      operation: 'save',
+    })
+
+    expect(delegated).toBe(false)
+    expect(sends).toHaveLength(0)
+  })
+
+  it('returns ownership to the editor when a later init does not opt in', () => {
+    const { bridge, sends } = createBridge()
+    const notifications = new OfficeNotificationAdapter(bridge)
+    notifications.configure({
+      owner: 'host',
+      transport: 'office:notification',
+      levels: ['error'],
+    })
+    notifications.configure(undefined)
+
+    expect(
+      notifications.notify({
+        level: 'error',
+        code: 'DOCUMENT_SAVE_FAILED',
+        message: 'Save failed.',
+      }),
+    ).toBe(false)
+    expect(sends).toHaveLength(0)
   })
 })
