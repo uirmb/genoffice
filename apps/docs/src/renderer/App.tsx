@@ -2640,7 +2640,11 @@ export function App() {
           aria-busy={saving}
           onClick={() => void manualSave()}
         >
-          {saving ? <span className="save-loading-spinner" aria-hidden="true" /> : <IconSave size={16} />}
+          {saving ? (
+            <span className="save-loading-spinner" aria-hidden="true" />
+          ) : (
+            <IconSave size={16} />
+          )}
         </button>
         <button
           className="qa-btn"
