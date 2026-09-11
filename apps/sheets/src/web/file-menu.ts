@@ -149,7 +149,7 @@ export function installSheetsWebFileMenu(): () => void {
     elements.trigger.setAttribute('aria-expanded', 'false')
   }
 
-  const openMenu = (): void => {
+  const syncMenuState = (): void => {
     const readOnly = document.documentElement.dataset.officeMode === 'view'
     const saving = currentWorkbookSaving()
     updateLabels()
@@ -158,6 +158,10 @@ export function installSheetsWebFileMenu(): () => void {
     elements.save.setAttribute('aria-busy', saving ? 'true' : 'false')
     elements.saveAs.disabled = readOnly || saving
     elements.saveHistory.disabled = readOnly || saving
+  }
+
+  const openMenu = (): void => {
+    syncMenuState()
     elements.menu.hidden = false
     elements.trigger.classList.add('open')
     elements.trigger.setAttribute('aria-expanded', 'true')
@@ -247,14 +251,37 @@ export function installSheetsWebFileMenu(): () => void {
   document.addEventListener('mousedown', onDocumentPointerDown)
   document.addEventListener('keydown', onDocumentKeyDown)
 
+  // The File menu lives outside React. Keep an already-open menu synchronized
+  // with the quick Save button's React-owned dirty/saving attributes so a save
+  // started by Ctrl/Cmd+S or the QAT immediately disables all competing file
+  // actions and shows the same spinner.
+  const saveStateObserver = new MutationObserver((records) => {
+    if (elements.menu.hidden) return
+    const saveStateChanged = records.some(
+      (record) =>
+        record.target instanceof HTMLButtonElement &&
+        record.target.dataset.workbookSaveButton === 'true',
+    )
+    if (saveStateChanged) syncMenuState()
+  })
+  saveStateObserver.observe(document.body, {
+    attributes: true,
+    subtree: true,
+    attributeFilter: ['data-dirty', 'data-saving'],
+  })
+
   updateLabels()
-  const unsubscribeLanguage = window.desktopApi.onLanguageChanged(() => updateLabels())
+  const unsubscribeLanguage = window.desktopApi.onLanguageChanged(() => {
+    if (elements.menu.hidden) updateLabels()
+    else syncMenuState()
+  })
 
   return () => {
     unsubscribeLanguage()
     window.removeEventListener(SHEETS_WEB_HOST_CLOSE_REQUEST_EVENT, handleHostCloseRequest)
     document.removeEventListener('mousedown', onDocumentPointerDown)
     document.removeEventListener('keydown', onDocumentKeyDown)
+    saveStateObserver.disconnect()
     if (saveExitTimer !== null) clearTimeout(saveExitTimer)
     closeExitDialog()
     elements.root.remove()
