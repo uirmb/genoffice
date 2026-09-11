@@ -205,7 +205,7 @@ describe('Docs web desktop adapter', () => {
     expect(await pendingOpen).toBeNull()
     expect(host.setTitle).toHaveBeenLastCalledWith('桌面新建文档.docx')
 
-    await controller.desktopApi.saveDocxNew('桌面新建文档.docx', bytesOf('draft'))
+    await controller.desktopApi.saveDocxNew('Untitled.docx', bytesOf('draft'))
 
     expect(saveDocument).toHaveBeenCalledWith(
       expect.objectContaining({
