@@ -172,7 +172,7 @@ export async function handleSave(
     if (strandedHeld) {
       if (mode !== 'recovery') {
         ctx.setMessage(t('appSaveHeldStranded'))
-        if (!quiet && mode !== 'recovery') showSaveFeedback(t('appSaveHeldStranded'), 'error', mode)
+        if (!quiet) showSaveFeedback(t('appSaveHeldStranded'), 'error', mode)
       }
       return
     }
@@ -215,8 +215,7 @@ export async function handleSave(
   if (sheetOps.length > 0 && sheetOrder.length === 0) {
     if (mode !== 'recovery') {
       ctx.setMessage(t('appSheetOrderReadFailed'))
-      if (!quiet && mode !== 'recovery')
-        showSaveFeedback(t('appSheetOrderReadFailed'), 'error', mode)
+      if (!quiet) showSaveFeedback(t('appSheetOrderReadFailed'), 'error', mode)
     }
     return
   }
