@@ -4,6 +4,7 @@ import { useI18n } from '../i18n/locale'
 
 interface Props {
   disabled: boolean
+  saving?: boolean
   canSave: boolean
   canSaveHistoryVersion: boolean
   canDownload: boolean
@@ -100,6 +101,7 @@ const ACTION_LABELS: Record<Lang, Pick<FileLabels, 'saveHistoryVersion' | 'downl
 
 export function FileMenu({
   disabled,
+  saving = false,
   canSave,
   canSaveHistoryVersion,
   canDownload,
@@ -151,15 +153,24 @@ export function FileMenu({
       </button>
       {open && (
         <div className="markdown-file-menu" role="menu">
-          <button type="button" role="menuitem" onClick={() => run(onOpen)}>
+          <button type="button" role="menuitem" disabled={saving} onClick={() => run(onOpen)}>
             <span>{labels.open}</span>
             <span className="markdown-file-menu-key">Ctrl+O</span>
           </button>
-          <button type="button" role="menuitem" disabled={!canSave} onClick={() => run(onSave)}>
-            <span>{labels.save}</span>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canSave || saving}
+            aria-busy={saving}
+            onClick={() => run(onSave)}
+          >
+            <span className="save-menu-label">
+              {saving && <span className="save-loading-spinner" aria-hidden="true" />}
+              {labels.save}
+            </span>
             <span className="markdown-file-menu-key">Ctrl+S</span>
           </button>
-          <button type="button" role="menuitem" onClick={() => run(onSaveAs)}>
+          <button type="button" role="menuitem" disabled={saving} onClick={() => run(onSaveAs)}>
             <span>{labels.saveAs}</span>
             <span className="markdown-file-menu-key">Ctrl+Shift+S</span>
           </button>

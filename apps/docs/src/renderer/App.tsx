@@ -910,6 +910,26 @@ export function App() {
     [],
   )
 
+  // Manual Save owns an immediate single-flight lock. React disables the UI on
+  // the next render; this ref closes the same-frame double-click/shortcut race.
+  // Autosave and close-guard saves keep their existing serializer semantics.
+  const [saving, setSaving] = useState(false)
+  const manualSaveInFlightRef = useRef(false)
+  const manualSave = useCallback(
+    async (saveAs = false): Promise<boolean> => {
+      if (manualSaveInFlightRef.current) return false
+      manualSaveInFlightRef.current = true
+      setSaving(true)
+      try {
+        return await save(saveAs)
+      } finally {
+        manualSaveInFlightRef.current = false
+        setSaving(false)
+      }
+    },
+    [save],
+  )
+
   const [showExitConfirm, setShowExitConfirm] = useState(false)
   const [exitSaving, setExitSaving] = useState(false)
 
@@ -2242,7 +2262,7 @@ export function App() {
       const canEdit = !!editor?.isEditable && focusInEditor()
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault()
-        void save(e.shiftKey)
+        void manualSave(e.shiftKey)
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
         e.preventDefault()
@@ -2292,7 +2312,7 @@ export function App() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [save, openFile, editor, doc, updateFields])
+  }, [manualSave, openFile, editor, doc, updateFields])
 
   // double-click an inline equation / click an equation block's edit button (ones with LaTeX source) → reopen the equation dialog for editing
   useEffect(() => {
@@ -2321,10 +2341,10 @@ export function App() {
           if (payload) void openRecent(payload)
           break
         case 'save':
-          void save(false)
+          void manualSave()
           break
         case 'save-as':
-          void save(true)
+          void manualSave(true)
           break
         case 'undo':
           editor?.chain().focus().undo().run()
@@ -2422,7 +2442,7 @@ export function App() {
     newFile,
     openFile,
     openRecent,
-    save,
+    manualSave,
     exportPdf,
     zoomFit,
     openStats,
@@ -2512,8 +2532,8 @@ export function App() {
     createListDef: (levels: CustomNumberingLevel[]) => createCustomListDef(levels),
     onParagraphDialog: () => setShowParaDialog(true),
     onOpen: () => void openFile(),
-    onSave: () => void save(false),
-    onSaveAs: () => void save(true),
+    onSave: () => void manualSave(),
+    onSaveAs: () => void manualSave(true),
     onToggleAi: () => setShowAi((v) => !v),
     onSection: (next: SectionSettings) => {
       // layout applies to the cursor's section; the final section's sectPr goes through SaveOptions.section (also drives canvas geometry)
@@ -2619,10 +2639,15 @@ export function App() {
         <button
           className="qa-btn"
           title={t('appSaveShortcutTip')}
-          disabled={!canSaveCurrentDocument}
-          onClick={() => void save(false)}
+          disabled={saving || !canSaveCurrentDocument}
+          aria-busy={saving}
+          onClick={() => void manualSave()}
         >
-          <IconSave size={16} />
+          {saving ? (
+            <span className="save-loading-spinner" aria-hidden="true" />
+          ) : (
+            <IconSave size={16} />
+          )}
         </button>
         <button
           className="qa-btn"
@@ -2653,7 +2678,7 @@ export function App() {
       </>
     ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hasDoc, canSaveCurrentDocument, autoSave, editor, save, lang],
+    [hasDoc, canSaveCurrentDocument, autoSave, editor, manualSave, saving, lang],
   )
 
   if (!editor) return null
@@ -2712,6 +2737,7 @@ export function App() {
           formatState={formatState}
           hasDoc={hasDoc}
           canSaveCurrentDocument={canSaveCurrentDocument}
+          saving={saving}
           blocks={doc?.parsed.blocks ?? EMPTY_BLOCKS}
           styles={ribbonStyles}
           docDefaults={doc?.parsed.docDefaults}

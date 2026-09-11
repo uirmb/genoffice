@@ -667,6 +667,33 @@ export function App() {
     [],
   )
 
+  // Manual Save is single-flight. The ref blocks a second click/shortcut in the
+  // same frame before React has painted the disabled/loading state.
+  const [saving, setSaving] = useState(false)
+  const manualSaveInFlightRef = useRef(false)
+  const manualSave = useCallback(async (): Promise<boolean> => {
+    if (manualSaveInFlightRef.current) return false
+    manualSaveInFlightRef.current = true
+    setSaving(true)
+    try {
+      return await save()
+    } finally {
+      manualSaveInFlightRef.current = false
+      setSaving(false)
+    }
+  }, [save])
+  const manualSaveAs = useCallback(async (): Promise<void> => {
+    if (manualSaveInFlightRef.current) return
+    manualSaveInFlightRef.current = true
+    setSaving(true)
+    try {
+      await fileActions.saveAs(ctxRef.current)
+    } finally {
+      manualSaveInFlightRef.current = false
+      setSaving(false)
+    }
+  }, [])
+
   // Close guard (closing tab/window) chose "Save": run the full save flow and report the result
   useEffect(() => {
     return window.slidesApi.onCloseSaveRequest?.(() => {
@@ -715,7 +742,6 @@ export function App() {
     }
   }, [autoSave, path, editing, editingCell, save])
 
-  const saveAs = useCallback(() => fileActions.saveAs(ctxRef.current), [])
   const exportImages = useCallback(() => fileActions.exportImages(ctxRef.current), [])
   const exportPdf = useCallback(() => fileActions.exportPdf(ctxRef.current), [])
   const saveHistoryVersion = useCallback(async () => {
@@ -1677,12 +1703,12 @@ export function App() {
     return window.slidesApi.onMenuCommand((cmd) => {
       // Master view: only allow save (undo/clipboard etc. target normal pages, not applicable inside the master)
       if (masterItems) {
-        if (cmd === 'save') void save()
+        if (cmd === 'save') void manualSave()
         return
       }
       if (cmd === 'open') void openDialog()
-      else if (cmd === 'save') void save()
-      else if (cmd === 'save-as') void saveAs()
+      else if (cmd === 'save') void manualSave()
+      else if (cmd === 'save-as') void manualSaveAs()
       // macOS has no File ribbon tab, so these only exist in the menu
       else if (cmd === 'export-pdf') void exportPdf()
       else if (cmd === 'export-images') void exportImages()
@@ -1708,8 +1734,8 @@ export function App() {
     })
   }, [
     openDialog,
-    save,
-    saveAs,
+    manualSave,
+    manualSaveAs,
     exportPdf,
     exportImages,
     undo,
@@ -2370,14 +2396,15 @@ export function App() {
         hasDoc={!!slide}
         deckEmpty={deckEmpty}
         dirty={dirty}
+        saving={saving}
         editing={!!editing || !!editingCell}
         autoSave={autoSave}
         onAutoSaveChange={setAutoSave}
         onOpen={() => void openDialog()}
-        onSave={() => void save()}
+        onSave={() => void manualSave()}
         onUndo={() => void undo()}
         onRedo={() => void redo()}
-        onSaveAs={() => void saveAs()}
+        onSaveAs={() => void manualSaveAs()}
         onSaveHistoryVersion={
           window.slidesApi.saveHistoryVersion ? () => void saveHistoryVersion() : undefined
         }

@@ -748,7 +748,8 @@ export default function App() {
           window.markdownApi.openDocument ? (
             <>
               <FileMenu
-                disabled={status !== 'ready' || saveState === 'saving'}
+                disabled={status !== 'ready'}
+                saving={saveState === 'saving'}
                 canSave={status === 'ready' && dirty && saveState !== 'saving'}
                 canSaveHistoryVersion={
                   status === 'ready' && Boolean(filePath) && saveState !== 'saving'
@@ -774,10 +775,15 @@ export default function App() {
                   document.documentElement.lang.toLowerCase().startsWith('zh') ? '保存' : 'Save'
                 }
                 disabled={status !== 'ready' || !dirty || saveState === 'saving'}
+                aria-busy={saveState === 'saving'}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => void doSave('save')}
               >
-                <IconSave size={16} />
+                {saveState === 'saving' ? (
+                  <span className="save-loading-spinner" aria-hidden="true" />
+                ) : (
+                  <IconSave size={16} />
+                )}
               </button>
             </>
           ) : undefined

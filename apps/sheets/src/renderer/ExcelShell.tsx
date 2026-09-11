@@ -150,6 +150,7 @@ interface ExcelShellProps {
   readonly zoomPercent: number
   /// True when the edit journal has unsaved changes (enables the QAT Save).
   readonly canSave: boolean
+  readonly saving?: boolean
   readonly onSave: () => void
   /// QAT redo (workbook history, same path as the app menu's ⇧⌘Z); undo
   /// shares the AI panel's onUndo above.
@@ -260,6 +261,7 @@ export function ExcelShell({
   statusMessage,
   zoomPercent,
   canSave,
+  saving = false,
   onSave,
   onRedo,
   autoSave,
@@ -326,10 +328,14 @@ export function ExcelShell({
             className="qa-btn"
             title={t('appSaveTitle')}
             aria-label={t('appSaveTitle')}
-            disabled={!canSave}
+            aria-busy={saving}
+            data-workbook-save-button="true"
+            data-dirty={canSave ? 'true' : 'false'}
+            data-saving={saving ? 'true' : 'false'}
+            disabled={!canSave || saving}
             onClick={onSave}
           >
-            <SaveIcon />
+            {saving ? <span className="save-loading-spinner" aria-hidden="true" /> : <SaveIcon />}
           </button>
           <button
             type="button"

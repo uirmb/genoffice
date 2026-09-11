@@ -723,6 +723,7 @@ export function Ribbon({
   hasDoc,
   deckEmpty,
   dirty,
+  saving = false,
   editing,
   autoSave,
   onAutoSaveChange,
@@ -1340,17 +1341,22 @@ export function Ribbon({
                 </button>
                 <button
                   className="file-menu-save"
-                  disabled={!dirty}
+                  disabled={!dirty || saving}
+                  aria-busy={saving}
                   onClick={() => {
                     setFileOpen(false)
                     onSave()
                   }}
                 >
-                  {t('ribbonFileSave')} <span className="file-menu-key">Ctrl+S</span>
+                  <span className="save-menu-label">
+                    {saving && <span className="save-loading-spinner" aria-hidden="true" />}
+                    {t('ribbonFileSave')}
+                  </span>
+                  <span className="file-menu-key">Ctrl+S</span>
                 </button>
                 <button
                   className="file-menu-save-as"
-                  disabled={!hasDoc}
+                  disabled={!hasDoc || saving}
                   onClick={() => {
                     setFileOpen(false)
                     onSaveAs()
@@ -1427,8 +1433,18 @@ export function Ribbon({
             )}
           </div>
         )}
-        <button className="qa-btn" title={t('ribbonSaveTip')} disabled={!dirty} onClick={onSave}>
-          <IconSave size={16} />
+        <button
+          className="qa-btn"
+          title={t('ribbonSaveTip')}
+          disabled={!dirty || saving}
+          aria-busy={saving}
+          onClick={onSave}
+        >
+          {saving ? (
+            <span className="save-loading-spinner" aria-hidden="true" />
+          ) : (
+            <IconSave size={16} />
+          )}
         </button>
         {/* onMouseDown+preventDefault like the format buttons: keep contentEditable focus so undo/redo reaches
             the active text edit. onClick with detail===0 covers keyboard activation (Enter/Space emit only click). */}
