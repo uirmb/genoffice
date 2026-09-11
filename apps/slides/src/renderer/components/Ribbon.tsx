@@ -1440,7 +1440,11 @@ export function Ribbon({
           aria-busy={saving}
           onClick={onSave}
         >
-          {saving ? <span className="save-loading-spinner" aria-hidden="true" /> : <IconSave size={16} />}
+          {saving ? (
+            <span className="save-loading-spinner" aria-hidden="true" />
+          ) : (
+            <IconSave size={16} />
+          )}
         </button>
         {/* onMouseDown+preventDefault like the format buttons: keep contentEditable focus so undo/redo reaches
             the active text edit. onClick with detail===0 covers keyboard activation (Enter/Space emit only click). */}
