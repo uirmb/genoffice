@@ -338,7 +338,9 @@ describe('Sheets Web transactional document open', () => {
     try {
       const host = createHost()
       const bridge = createBridge()
-      engine.createBlankXlsxWorkbook.mockResolvedValueOnce(workbook('blank-session', 'Untitled.xlsx'))
+      engine.createBlankXlsxWorkbook.mockResolvedValueOnce(
+        workbook('blank-session', 'Untitled.xlsx'),
+      )
       xlsxSave.saveWorkbookRequestViaEngine.mockResolvedValueOnce({
         file: workbook('saved-session', 'Untitled.xlsx'),
         bytes: buffer(1),
@@ -379,5 +381,4 @@ describe('Sheets Web transactional document open', () => {
       vi.unstubAllGlobals()
     }
   })
-
 })
