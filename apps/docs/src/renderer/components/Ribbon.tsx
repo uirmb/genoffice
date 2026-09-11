@@ -110,6 +110,7 @@ interface RibbonProps {
   formatState: RibbonFormatState
   hasDoc: boolean
   canSaveCurrentDocument?: boolean
+  saving: boolean
   blocks: Block[]
   /** Fallback when a new list can't reuse a numId (adopt a document definition / create one) */
   allocateNumId?: (kind: 'bullet' | 'ordered') => string | null
@@ -581,6 +582,7 @@ function RibbonInner({
   formatState: fs,
   hasDoc,
   canSaveCurrentDocument,
+  saving,
   blocks,
   allocateNumId,
   createListDef,
@@ -1387,17 +1389,22 @@ function RibbonInner({
                 </button>
                 <button
                   className="file-menu-save"
-                  disabled={!(canSaveCurrentDocument ?? hasDoc)}
+                  disabled={saving || !(canSaveCurrentDocument ?? hasDoc)}
+                  aria-busy={saving}
                   onClick={() => {
                     setDropdown(null)
                     onSave()
                   }}
                 >
-                  {t('ribbonSave')} <span className="file-menu-key">Ctrl+S</span>
+                  <span className="save-menu-label">
+                    {saving && <span className="save-loading-spinner" aria-hidden="true" />}
+                    {t('ribbonSave')}
+                  </span>
+                  <span className="file-menu-key">Ctrl+S</span>
                 </button>
                 <button
                   className="file-menu-save-as"
-                  disabled={!hasDoc}
+                  disabled={!hasDoc || saving}
                   onClick={() => {
                     setDropdown(null)
                     onSaveAs()
