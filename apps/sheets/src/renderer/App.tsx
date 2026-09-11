@@ -2891,12 +2891,12 @@ export function App(): React.JSX.Element {
     return handleSaveImpl(saveContext(), mode, quiet)
   }
 
-  async function handleManualSave(): Promise<void> {
+  async function handleManualSave(mode: 'save' | 'save-as' = 'save'): Promise<void> {
     if (manualSaveInFlightRef.current) return
     manualSaveInFlightRef.current = true
     setSaving(true)
     try {
-      await handleSave('save')
+      await handleSave(mode)
     } finally {
       manualSaveInFlightRef.current = false
       setSaving(false)
@@ -2944,8 +2944,8 @@ export function App(): React.JSX.Element {
       } else {
         void univerRef.current?.univerAPI.redo()
       }
-    } else if (action === 'save') {
-      void handleManualSave()
+    } else if (action === 'save' || action === 'save-as') {
+      void handleManualSave(action)
     } else {
       void handleSave(action)
     }
