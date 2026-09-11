@@ -41,9 +41,28 @@ function setMenuLabel(
   }
 }
 
+function setSaveMenuLabel(
+  element: HTMLButtonElement,
+  label: string,
+  shortcut: string,
+  saving: boolean,
+): void {
+  setMenuLabel(element, label, shortcut)
+  if (!saving) return
+  const spinner = document.createElement('span')
+  spinner.className = 'save-loading-spinner'
+  spinner.setAttribute('aria-hidden', 'true')
+  element.insertBefore(spinner, element.firstChild)
+}
+
 function currentWorkbookDirty(): boolean {
-  const saveButton = document.querySelector<HTMLButtonElement>('.ribbon-tabs .qa-btn')
-  return saveButton ? !saveButton.disabled : false
+  const saveButton = document.querySelector<HTMLButtonElement>('[data-workbook-save-button="true"]')
+  return saveButton?.dataset.dirty === 'true'
+}
+
+function currentWorkbookSaving(): boolean {
+  const saveButton = document.querySelector<HTMLButtonElement>('[data-workbook-save-button="true"]')
+  return saveButton?.dataset.saving === 'true'
 }
 
 function createExitDialog(
@@ -121,7 +140,7 @@ export function installSheetsWebFileMenu(): () => void {
   const updateLabels = (): void => {
     elements.trigger.textContent = t('appFileTab')
     setMenuLabel(elements.open, t('appFileOpen'), 'Ctrl+O')
-    setMenuLabel(elements.save, t('appFileSave'), 'Ctrl+S')
+    setSaveMenuLabel(elements.save, t('appFileSave'), 'Ctrl+S', currentWorkbookSaving())
     setMenuLabel(elements.saveAs, t('appFileSaveAs'), 'Ctrl+Shift+S')
     setMenuLabel(elements.saveHistory, t('appFileSaveHistory'))
     setMenuLabel(elements.exportXlsx, t('appFileExportXlsx'))
@@ -136,9 +155,13 @@ export function installSheetsWebFileMenu(): () => void {
 
   const openMenu = (): void => {
     const readOnly = document.documentElement.dataset.officeMode === 'view'
-    elements.save.disabled = readOnly || !currentWorkbookDirty()
-    elements.saveAs.disabled = readOnly
-    elements.saveHistory.disabled = readOnly
+    const saving = currentWorkbookSaving()
+    updateLabels()
+    elements.open.disabled = saving
+    elements.save.disabled = readOnly || saving || !currentWorkbookDirty()
+    elements.save.setAttribute('aria-busy', saving ? 'true' : 'false')
+    elements.saveAs.disabled = readOnly || saving
+    elements.saveHistory.disabled = readOnly || saving
     elements.menu.hidden = false
     elements.trigger.classList.add('open')
     elements.trigger.setAttribute('aria-expanded', 'true')
