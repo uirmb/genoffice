@@ -606,7 +606,16 @@ export function createDocsWebDesktopController(
         if (message.payload.kind !== 'docx') return
         setMode(message.payload.mode)
         if (message.payload.locale) setLanguage(message.payload.locale)
-        current = null
+        const file = message.payload.file
+        current = file
+          ? {
+              file,
+              path: virtualPath(file),
+              hash: '',
+              bytes: new ArrayBuffer(0),
+            }
+          : null
+        if (file) host.setTitle(file.name)
         pendingOpen = null
         if (initialOpenResolve) {
           const resolve = initialOpenResolve
