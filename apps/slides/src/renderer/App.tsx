@@ -667,6 +667,22 @@ export function App() {
     [],
   )
 
+  // Manual Save is single-flight. The ref blocks a second click/shortcut in the
+  // same frame before React has painted the disabled/loading state.
+  const [saving, setSaving] = useState(false)
+  const manualSaveInFlightRef = useRef(false)
+  const manualSave = useCallback(async (): Promise<boolean> => {
+    if (manualSaveInFlightRef.current) return false
+    manualSaveInFlightRef.current = true
+    setSaving(true)
+    try {
+      return await save()
+    } finally {
+      manualSaveInFlightRef.current = false
+      setSaving(false)
+    }
+  }, [save])
+
   // Close guard (closing tab/window) chose "Save": run the full save flow and report the result
   useEffect(() => {
     return window.slidesApi.onCloseSaveRequest?.(() => {
@@ -1677,11 +1693,11 @@ export function App() {
     return window.slidesApi.onMenuCommand((cmd) => {
       // Master view: only allow save (undo/clipboard etc. target normal pages, not applicable inside the master)
       if (masterItems) {
-        if (cmd === 'save') void save()
+        if (cmd === 'save') void manualSave()
         return
       }
       if (cmd === 'open') void openDialog()
-      else if (cmd === 'save') void save()
+      else if (cmd === 'save') void manualSave()
       else if (cmd === 'save-as') void saveAs()
       // macOS has no File ribbon tab, so these only exist in the menu
       else if (cmd === 'export-pdf') void exportPdf()
@@ -1708,7 +1724,7 @@ export function App() {
     })
   }, [
     openDialog,
-    save,
+    manualSave,
     saveAs,
     exportPdf,
     exportImages,
@@ -2370,11 +2386,12 @@ export function App() {
         hasDoc={!!slide}
         deckEmpty={deckEmpty}
         dirty={dirty}
+        saving={saving}
         editing={!!editing || !!editingCell}
         autoSave={autoSave}
         onAutoSaveChange={setAutoSave}
         onOpen={() => void openDialog()}
-        onSave={() => void save()}
+        onSave={() => void manualSave()}
         onUndo={() => void undo()}
         onRedo={() => void redo()}
         onSaveAs={() => void saveAs()}
