@@ -275,6 +275,7 @@ export interface Props {
   deckEmpty: boolean
   /** Open file name (shown on the right of the tab row; the title bar row was removed) */
   dirty: boolean
+  saving: boolean
   editing: boolean
   autoSave: boolean
   onAutoSaveChange: (on: boolean) => void
