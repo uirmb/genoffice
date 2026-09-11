@@ -427,6 +427,8 @@ export function App(): React.JSX.Element {
     return () => window.clearInterval(id)
   }, [])
   const [message, setMessage] = useState(t('appReadyInitial'))
+  const [saving, setSaving] = useState(false)
+  const manualSaveInFlightRef = useRef(false)
   /// Zoom of the active sheet in percent, echoed by the status-bar slider.
   const [zoomPercent, setZoomPercent] = useState(100)
   const [selectionFormat, setSelectionFormat] = useState<SelectionFormat | null>(null)
@@ -2888,6 +2890,19 @@ export function App(): React.JSX.Element {
   async function handleSave(mode: 'save' | 'save-as' | 'recovery', quiet = false): Promise<void> {
     return handleSaveImpl(saveContext(), mode, quiet)
   }
+
+  async function handleManualSave(): Promise<void> {
+    if (manualSaveInFlightRef.current) return
+    manualSaveInFlightRef.current = true
+    setSaving(true)
+    try {
+      await handleSave('save')
+    } finally {
+      manualSaveInFlightRef.current = false
+      setSaving(false)
+    }
+  }
+
   closeSaveRef.current = async () => {
     const state = lazyWorkbookRef.current
     if (!state || journalSize(state.editJournal) === 0) {
@@ -2929,6 +2944,8 @@ export function App(): React.JSX.Element {
       } else {
         void univerRef.current?.univerAPI.redo()
       }
+    } else if (action === 'save') {
+      void handleManualSave()
     } else {
       void handleSave(action)
     }
@@ -3096,7 +3113,8 @@ export function App(): React.JSX.Element {
         onCommand={handleRibbonCommand}
         zoomPercent={zoomPercent}
         canSave={pendingEdits > 0}
-        onSave={() => void handleSave('save')}
+        saving={saving}
+        onSave={() => void handleManualSave()}
         onRedo={handleRedo}
         autoSave={autoSave}
         onAutoSaveChange={setAutoSave}
