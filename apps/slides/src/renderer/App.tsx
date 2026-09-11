@@ -682,6 +682,17 @@ export function App() {
       setSaving(false)
     }
   }, [save])
+  const manualSaveAs = useCallback(async (): Promise<void> => {
+    if (manualSaveInFlightRef.current) return
+    manualSaveInFlightRef.current = true
+    setSaving(true)
+    try {
+      await fileActions.saveAs(ctxRef.current)
+    } finally {
+      manualSaveInFlightRef.current = false
+      setSaving(false)
+    }
+  }, [])
 
   // Close guard (closing tab/window) chose "Save": run the full save flow and report the result
   useEffect(() => {
@@ -1698,7 +1709,7 @@ export function App() {
       }
       if (cmd === 'open') void openDialog()
       else if (cmd === 'save') void manualSave()
-      else if (cmd === 'save-as') void saveAs()
+      else if (cmd === 'save-as') void manualSaveAs()
       // macOS has no File ribbon tab, so these only exist in the menu
       else if (cmd === 'export-pdf') void exportPdf()
       else if (cmd === 'export-images') void exportImages()
@@ -1725,7 +1736,7 @@ export function App() {
   }, [
     openDialog,
     manualSave,
-    saveAs,
+    manualSaveAs,
     exportPdf,
     exportImages,
     undo,
@@ -2394,7 +2405,7 @@ export function App() {
         onSave={() => void manualSave()}
         onUndo={() => void undo()}
         onRedo={() => void redo()}
-        onSaveAs={() => void saveAs()}
+        onSaveAs={() => void manualSaveAs()}
         onSaveHistoryVersion={
           window.slidesApi.saveHistoryVersion ? () => void saveHistoryVersion() : undefined
         }
