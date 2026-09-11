@@ -178,6 +178,51 @@ describe('Docs web desktop adapter', () => {
     destroy()
   })
 
+  it('keeps a Host-prebound desktop file bound on the first save of a blank document', async () => {
+    const { controller, emit, saveDocument, host, destroy } = createHarness()
+    const pendingOpen = controller.desktopApi.consumePendingOpenDocx()
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:new',
+      requestId: 'new-prebound-docx',
+      payload: {
+        kind: 'docx',
+        mode: 'edit',
+        file: {
+          id: 'desktop-docx-1',
+          nodeId: 'desktop-docx-1',
+          parentId: 'desktop-folder',
+          name: '桌面新建文档.docx',
+          mimeType: DOCX_MIME,
+          size: 0,
+          version: null,
+          transport: 'buffer',
+        },
+      },
+    })
+
+    expect(await pendingOpen).toBeNull()
+    expect(host.setTitle).toHaveBeenLastCalledWith('桌面新建文档.docx')
+
+    await controller.desktopApi.saveDocxNew('Untitled.docx', bytesOf('draft'))
+
+    expect(saveDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'save',
+        newDocument: false,
+        baseVersion: null,
+        file: expect.objectContaining({
+          id: 'desktop-docx-1',
+          nodeId: 'desktop-docx-1',
+          name: '桌面新建文档.docx',
+        }),
+      }),
+    )
+
+    destroy()
+  })
+
   it('routes parent save through the host and acknowledges the original request', async () => {
     const { controller, saveDocument, send, emit, initialFile, destroy } = createHarness()
     const pendingOpen = controller.desktopApi.consumePendingOpenDocx()

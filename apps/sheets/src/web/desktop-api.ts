@@ -132,6 +132,14 @@ async function selectedToOfficeFile(
   return host.readFile(selected.id)
 }
 
+function createTransientId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID()
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 function officeDescriptor(
   file: OfficeFile | null,
   workbook: WorkbookFile,
@@ -148,7 +156,7 @@ function officeDescriptor(
     }
   }
   return {
-    id: `new:${crypto.randomUUID()}`,
+    id: `new:${createTransientId()}`,
     name: workbook.name,
     mimeType: XLSX_MIME,
     size: sizeOverride ?? 0,
@@ -385,11 +393,17 @@ export function createSheetsWebDesktopController(
     return candidate
   }
 
-  const createNewWorkbook = async (): Promise<void> => {
+  const createNewWorkbook = async (file?: OfficeFileDescriptor): Promise<void> => {
     const previous = activeWorkbook
-    const workbook = await createBlankXlsxWorkbook('Untitled.xlsx')
-    currentOfficeFile = null
-    currentIsNewDocument = true
+    const workbook = await createBlankXlsxWorkbook(file?.name ?? 'Untitled.xlsx')
+    currentOfficeFile = file
+      ? {
+          ...file,
+          bytes: new ArrayBuffer(0),
+          transport: 'buffer',
+        }
+      : null
+    currentIsNewDocument = !file
     setActiveWorkbook(workbook)
     if (previous && previous.sessionId !== workbook.sessionId) {
       await deleteXlsxSession(previous.sessionId).catch(() => undefined)
@@ -545,7 +559,7 @@ export function createSheetsWebDesktopController(
       currentMode = message.payload.mode
       document.documentElement.dataset.officeMode = currentMode
       if (message.payload.locale) setLanguage(message.payload.locale)
-      await createNewWorkbook()
+      await createNewWorkbook(message.payload.file)
       return
     }
 

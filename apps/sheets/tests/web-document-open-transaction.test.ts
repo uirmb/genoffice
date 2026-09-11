@@ -15,9 +15,11 @@ const engine = vi.hoisted(() => ({
 }))
 
 vi.mock('../src/web/engine-client', () => engine)
-vi.mock('../src/web/xlsx-save', () => ({
+const xlsxSave = vi.hoisted(() => ({
   saveWorkbookRequestViaEngine: vi.fn(),
 }))
+
+vi.mock('../src/web/xlsx-save', () => xlsxSave)
 
 import { createSheetsWebDesktopController } from '../src/web/desktop-api'
 
@@ -258,5 +260,127 @@ describe('Sheets Web transactional document open', () => {
     expect(host.setTitle).toHaveBeenLastCalledWith('candidate.xlsx')
 
     controller.destroy()
+  })
+
+  it('keeps a Host-prebound desktop file identity when creating and saving a blank workbook', async () => {
+    const host = createHost()
+    const bridge = createBridge()
+    engine.createBlankXlsxWorkbook.mockResolvedValueOnce(
+      workbook('blank-session', '桌面新建表格.xlsx'),
+    )
+    xlsxSave.saveWorkbookRequestViaEngine.mockResolvedValueOnce({
+      file: workbook('saved-session', '桌面新建表格.xlsx'),
+      bytes: buffer(7, 8),
+      touchedEntries: [],
+    })
+    vi.mocked(host.saveDocument).mockResolvedValueOnce({
+      ok: true,
+      file: {
+        id: 'desktop-xlsx-1',
+        nodeId: 'desktop-xlsx-1',
+        parentId: 'desktop-folder',
+        name: '桌面新建表格.xlsx',
+        mimeType: XLSX_MIME,
+        size: 2,
+        version: 1,
+        transport: 'buffer',
+      },
+    })
+
+    const controller = createSheetsWebDesktopController(host, bridge.bridge)
+    bridge.emit({
+      protocol: 1,
+      type: 'office:new',
+      requestId: 'new-prebound-xlsx',
+      payload: {
+        kind: 'xlsx',
+        mode: 'edit',
+        file: {
+          id: 'desktop-xlsx-1',
+          nodeId: 'desktop-xlsx-1',
+          parentId: 'desktop-folder',
+          name: '桌面新建表格.xlsx',
+          mimeType: XLSX_MIME,
+          size: 0,
+          version: null,
+          transport: 'buffer',
+        },
+      },
+    })
+
+    await vi.waitFor(() =>
+      expect(engine.createBlankXlsxWorkbook).toHaveBeenCalledWith('桌面新建表格.xlsx'),
+    )
+    expect((await controller.desktopApi.selectWorkbook())?.name).toBe('桌面新建表格.xlsx')
+
+    await controller.desktopApi.saveWorkbookEdits({
+      sessionId: 'blank-session',
+      mode: 'save',
+    } as never)
+
+    expect(host.saveDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'save',
+        newDocument: false,
+        baseVersion: null,
+        file: expect.objectContaining({
+          id: 'desktop-xlsx-1',
+          nodeId: 'desktop-xlsx-1',
+          name: '桌面新建表格.xlsx',
+        }),
+      }),
+    )
+
+    controller.destroy()
+  })
+
+  it('falls back to a transient id when crypto.randomUUID is unavailable for an unbound workbook', async () => {
+    vi.stubGlobal('crypto', {})
+
+    try {
+      const host = createHost()
+      const bridge = createBridge()
+      engine.createBlankXlsxWorkbook.mockResolvedValueOnce(
+        workbook('blank-session', 'Untitled.xlsx'),
+      )
+      xlsxSave.saveWorkbookRequestViaEngine.mockResolvedValueOnce({
+        file: workbook('saved-session', 'Untitled.xlsx'),
+        bytes: buffer(1),
+        touchedEntries: [],
+      })
+      vi.mocked(host.saveDocument).mockImplementationOnce(async (input) => ({
+        ok: true,
+        file: {
+          ...input.file,
+          id: 'created-xlsx',
+          version: 1,
+        },
+      }))
+
+      const controller = createSheetsWebDesktopController(host, bridge.bridge)
+      bridge.emit({
+        protocol: 1,
+        type: 'office:new',
+        requestId: 'new-unbound-xlsx',
+        payload: { kind: 'xlsx', mode: 'edit' },
+      })
+
+      await vi.waitFor(() => expect(engine.createBlankXlsxWorkbook).toHaveBeenCalled())
+      await controller.desktopApi.saveWorkbookEdits({
+        sessionId: 'blank-session',
+        mode: 'save',
+      } as never)
+
+      expect(host.saveDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          newDocument: true,
+          file: expect.objectContaining({ id: expect.stringMatching(/^new:/) }),
+        }),
+      )
+
+      controller.destroy()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

@@ -163,6 +163,54 @@ describe('Slides Web host adapter', () => {
     controller.destroy()
   })
 
+  it('keeps a Host-prebound desktop file bound through blank deck creation and save', async () => {
+    const { controller, host, saveDocument, emit } = createHarness()
+    const pendingOpen = controller.slidesApi.consumePendingOpen(960)
+
+    emit({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:new',
+      requestId: 'new-prebound-pptx',
+      payload: {
+        kind: 'pptx',
+        mode: 'edit',
+        file: {
+          id: 'desktop-pptx-1',
+          nodeId: 'desktop-pptx-1',
+          parentId: 'desktop-folder',
+          name: '桌面新建演示文稿.pptx',
+          mimeType: PPTX_MIME,
+          size: 0,
+          version: null,
+          transport: 'buffer',
+        },
+      },
+    })
+
+    expect(await pendingOpen).toBeNull()
+    expect(host.setTitle).toHaveBeenLastCalledWith('桌面新建演示文稿.pptx')
+
+    const blank = await controller.slidesApi.newBlank(960)
+    expect(blank.slides).toHaveLength(1)
+    expect(host.setTitle).toHaveBeenLastCalledWith('桌面新建演示文稿.pptx')
+
+    expect((await controller.slidesApi.save()).ok).toBe(true)
+    const firstSave = saveDocument.mock.calls[0]?.[0]
+    expect(firstSave).toEqual(
+      expect.objectContaining({
+        mode: 'save',
+        file: expect.objectContaining({
+          id: 'desktop-pptx-1',
+          nodeId: 'desktop-pptx-1',
+          name: '桌面新建演示文稿.pptx',
+        }),
+      }),
+    )
+    expect(firstSave?.newDocument).not.toBe(true)
+
+    controller.destroy()
+  })
+
   it('preserves the complete Host descriptor during initial PPTX open', async () => {
     const { controller, saveHistoryVersion, emit } = createHarness()
     const source = await createBlankPptx()

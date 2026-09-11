@@ -99,7 +99,10 @@ export interface SaveDocumentInput {
   bytes: ArrayBuffer
   baseVersion?: OfficeFileVersion | undefined
   mode?: OfficeSaveMode | undefined
-  /** First persistence of a blank editor document; the Host should choose/create its destination. */
+  /**
+   * True only for first persistence of an unbound blank editor document.
+   * A Host-preallocated zero-byte file node is already bound and uses false/undefined.
+   */
   newDocument?: boolean | undefined
 }
 
