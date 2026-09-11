@@ -915,17 +915,20 @@ export function App() {
   // Autosave and close-guard saves keep their existing serializer semantics.
   const [saving, setSaving] = useState(false)
   const manualSaveInFlightRef = useRef(false)
-  const manualSave = useCallback(async (): Promise<boolean> => {
-    if (manualSaveInFlightRef.current) return false
-    manualSaveInFlightRef.current = true
-    setSaving(true)
-    try {
-      return await save(false)
-    } finally {
-      manualSaveInFlightRef.current = false
-      setSaving(false)
-    }
-  }, [save])
+  const manualSave = useCallback(
+    async (saveAs = false): Promise<boolean> => {
+      if (manualSaveInFlightRef.current) return false
+      manualSaveInFlightRef.current = true
+      setSaving(true)
+      try {
+        return await save(saveAs)
+      } finally {
+        manualSaveInFlightRef.current = false
+        setSaving(false)
+      }
+    },
+    [save],
+  )
 
   const [showExitConfirm, setShowExitConfirm] = useState(false)
   const [exitSaving, setExitSaving] = useState(false)
@@ -2259,7 +2262,7 @@ export function App() {
       const canEdit = !!editor?.isEditable && focusInEditor()
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault()
-        void save(e.shiftKey)
+        void manualSave(e.shiftKey)
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
         e.preventDefault()
@@ -2309,7 +2312,7 @@ export function App() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [save, openFile, editor, doc, updateFields])
+  }, [manualSave, openFile, editor, doc, updateFields])
 
   // double-click an inline equation / click an equation block's edit button (ones with LaTeX source) → reopen the equation dialog for editing
   useEffect(() => {
@@ -2338,10 +2341,10 @@ export function App() {
           if (payload) void openRecent(payload)
           break
         case 'save':
-          void save(false)
+          void manualSave()
           break
         case 'save-as':
-          void save(true)
+          void manualSave(true)
           break
         case 'undo':
           editor?.chain().focus().undo().run()
@@ -2439,7 +2442,7 @@ export function App() {
     newFile,
     openFile,
     openRecent,
-    save,
+    manualSave,
     exportPdf,
     zoomFit,
     openStats,
@@ -2530,7 +2533,7 @@ export function App() {
     onParagraphDialog: () => setShowParaDialog(true),
     onOpen: () => void openFile(),
     onSave: () => void manualSave(),
-    onSaveAs: () => void save(true),
+    onSaveAs: () => void manualSave(true),
     onToggleAi: () => setShowAi((v) => !v),
     onSection: (next: SectionSettings) => {
       // layout applies to the cursor's section; the final section's sectPr goes through SaveOptions.section (also drives canvas geometry)
