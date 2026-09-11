@@ -265,7 +265,9 @@ describe('Sheets Web transactional document open', () => {
   it('keeps a Host-prebound desktop file identity when creating and saving a blank workbook', async () => {
     const host = createHost()
     const bridge = createBridge()
-    engine.createBlankXlsxWorkbook.mockResolvedValueOnce(workbook('blank-session', '桌面新建表格.xlsx'))
+    engine.createBlankXlsxWorkbook.mockResolvedValueOnce(
+      workbook('blank-session', '桌面新建表格.xlsx'),
+    )
     xlsxSave.saveWorkbookRequestViaEngine.mockResolvedValueOnce({
       file: workbook('saved-session', '桌面新建表格.xlsx'),
       bytes: buffer(7, 8),
