@@ -403,7 +403,8 @@ export function createDocsWebDesktopController(
       return () => teardownHandlers.delete(handler)
     },
     saveDocxAs: async (defaultName, data) => saveWithName(defaultName, data, 'saveAs'),
-    saveDocxNew: async (defaultName, data) => saveWithName(defaultName, data, 'save'),
+    saveDocxNew: async (defaultName, data) =>
+      saveWithName(current?.file.name ?? defaultName, data, 'save'),
     saveHistoryVersion: async (_defaultName, data) => {
       if (!current) return { ok: false, error: 'Save the new document before creating history.' }
       if (!host.saveHistoryVersion) {
