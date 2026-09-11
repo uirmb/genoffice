@@ -1,6 +1,10 @@
 import { Image } from '@tiptap/extension-image'
 import { mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
+import {
+  createDeferredInlineImagePlugin,
+  deferredInlineImageAttributes,
+} from './deferredInlineImages'
 
 /** Directory of the open .md file; relative image paths resolve against it for display */
 let imageBaseDir: string | null = null
@@ -69,21 +73,34 @@ async function persistAndInsert(
 /**
  * Image node whose DOM src is display-resolved while the stored attribute (and
  * therefore the serialized markdown) keeps the authored path untouched.
+ * Large inline Base64 images keep their real src in editor state but render a
+ * small placeholder first; the deferred-image plugin swaps them in after the
+ * first paint, one at a time, so text can appear before expensive image decode.
  * Pasted / dropped image files are persisted into `assets/` beside the file.
  */
 export const LocalImage = Image.extend({
   renderHTML({ node, HTMLAttributes }) {
+    const authoredSrc = String(node.attrs.src ?? '')
+    const deferred = deferredInlineImageAttributes(authoredSrc)
+
     return [
       'img',
-      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
-        src: resolveImageSrc(String(node.attrs.src ?? '')),
-      }),
+      mergeAttributes(
+        this.options.HTMLAttributes,
+        HTMLAttributes,
+        deferred ?? {
+          src: resolveImageSrc(authoredSrc),
+          decoding: 'async',
+          loading: 'lazy',
+        },
+      ),
     ]
   },
 
   addProseMirrorPlugins() {
     const editor = this.editor
     return [
+      createDeferredInlineImagePlugin(),
       new Plugin({
         key: new PluginKey('localImageUpload'),
         props: {

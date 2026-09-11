@@ -6764,3 +6764,34 @@ body.vib .slide-list {
   flex: 1;
   min-width: 0;
 }
+
+/* Save feedback shared by the quick-access and File > Save buttons. */
+.save-loading-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: save-loading-spin 0.7s linear infinite;
+}
+
+.file-menu-save .save-menu-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@keyframes save-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .save-loading-spinner {
+    animation-duration: 1.4s;
+  }
+}

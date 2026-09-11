@@ -1,3 +1,5 @@
+import { materializeDeferredInlineImages } from '../editor/deferredInlineImages'
+
 /** Print-theme CSS: mirrors the editor typography so the PDF matches the canvas */
 const PRINT_CSS = `
 * { box-sizing: border-box; }
@@ -47,6 +49,7 @@ ul[data-type='taskList'] li[data-checked='true'] > div { color: #8b929b; text-de
  */
 export function buildPrintHtml(editorRoot: HTMLElement, title: string): string {
   const clone = editorRoot.cloneNode(true) as HTMLElement
+  materializeDeferredInlineImages(clone)
   clone.removeAttribute('contenteditable')
   for (const el of clone.querySelectorAll('[contenteditable]'))
     el.removeAttribute('contenteditable')

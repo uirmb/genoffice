@@ -18,6 +18,7 @@ import type {
   TableModel,
   TableParagraph,
 } from '@genoffice/docx-engine'
+import { restoreInlineDataImage } from '../markdown/inlineDataImages'
 
 /** Resolve an authored image src to embeddable bytes; null → fall back to alt text */
 export type ImageLoader = (src: string) => Promise<NewImage | null>
@@ -217,7 +218,7 @@ function walkBlock(ctx: WalkContext, node: JSONContent, base?: ParaFormat): void
       })
       break
     case 'image': {
-      const src = String(node.attrs?.src ?? '')
+      const src = restoreInlineDataImage(String(node.attrs?.src ?? ''))
       const alt = String(node.attrs?.alt ?? '')
       // placeholder now, replaced by the loaded image (or alt text) after the async pass
       ctx.pendingImages.push({ index: ctx.blocks.length, src, alt })

@@ -4,6 +4,7 @@ import type {
   AiStreamChunk,
   GenSparkAccountStatus,
 } from '@genoffice/ai-provider'
+import { normalizeLang } from '@genoffice/i18n'
 import type {
   OfficeEditorMode,
   OfficeFile,
@@ -52,7 +53,6 @@ import {
 } from './file-actions'
 import { saveWorkbookRequestViaEngine } from './xlsx-save'
 
-type SheetsLanguage = Awaited<ReturnType<DesktopApi['getLanguage']>>
 type LanguageHandler = Parameters<DesktopApi['onLanguageChanged']>[0]
 type MenuHandler = Parameters<DesktopApi['onMenuAction']>[0]
 type MenuAction = Parameters<MenuHandler>[0]
@@ -112,21 +112,6 @@ function hasWorkbookMutations(request: WorkbookSaveRequest): boolean {
   )
 }
 
-function normalizeLanguage(locale: string): SheetsLanguage {
-  const value = locale.toLowerCase()
-  if (value.startsWith('zh')) return 'zh'
-  if (value.startsWith('ja')) return 'ja'
-  if (value.startsWith('ko')) return 'ko'
-  if (value.startsWith('fr')) return 'fr'
-  if (value.startsWith('de')) return 'de'
-  if (value.startsWith('es')) return 'es'
-  if (value.startsWith('th')) return 'th'
-  if (value.startsWith('id')) return 'id'
-  if (value.startsWith('ru')) return 'ru'
-  if (value.startsWith('ar')) return 'ar'
-  return 'en'
-}
-
 async function selectedToOfficeFile(
   host: OfficeHostApi,
   selected: SelectedOfficeFile,
@@ -147,6 +132,14 @@ async function selectedToOfficeFile(
   return host.readFile(selected.id)
 }
 
+function createTransientId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID()
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 function officeDescriptor(
   file: OfficeFile | null,
   workbook: WorkbookFile,
@@ -163,7 +156,7 @@ function officeDescriptor(
     }
   }
   return {
-    id: `new:${crypto.randomUUID()}`,
+    id: `new:${createTransientId()}`,
     name: workbook.name,
     mimeType: XLSX_MIME,
     size: sizeOverride ?? 0,
@@ -210,9 +203,7 @@ export function createSheetsWebDesktopController(
   host: OfficeHostApi,
   bridge?: EditorIframeBridge,
 ): SheetsWebDesktopController {
-  let currentLanguage = normalizeLanguage(
-    document.documentElement.lang || navigator.language || 'en',
-  )
+  let currentLanguage = normalizeLang(document.documentElement.lang || navigator.language || 'en')
   let currentMode: OfficeEditorMode = 'edit'
   let currentTitle = 'Untitled.xlsx'
   let currentOfficeFile: OfficeFile | null = null
@@ -289,7 +280,7 @@ export function createSheetsWebDesktopController(
   window.addEventListener(SHEETS_WEB_FILE_ACTION_EVENT, handleWebFileAction)
 
   const setLanguage = (locale: string): void => {
-    const next = normalizeLanguage(locale)
+    const next = normalizeLang(locale)
     if (next === currentLanguage) return
     currentLanguage = next
     for (const handler of languageHandlers) handler(next)
@@ -402,11 +393,17 @@ export function createSheetsWebDesktopController(
     return candidate
   }
 
-  const createNewWorkbook = async (): Promise<void> => {
+  const createNewWorkbook = async (file?: OfficeFileDescriptor): Promise<void> => {
     const previous = activeWorkbook
-    const workbook = await createBlankXlsxWorkbook('Untitled.xlsx')
-    currentOfficeFile = null
-    currentIsNewDocument = true
+    const workbook = await createBlankXlsxWorkbook(file?.name ?? 'Untitled.xlsx')
+    currentOfficeFile = file
+      ? {
+          ...file,
+          bytes: new ArrayBuffer(0),
+          transport: 'buffer',
+        }
+      : null
+    currentIsNewDocument = !file
     setActiveWorkbook(workbook)
     if (previous && previous.sessionId !== workbook.sessionId) {
       await deleteXlsxSession(previous.sessionId).catch(() => undefined)
@@ -562,7 +559,7 @@ export function createSheetsWebDesktopController(
       currentMode = message.payload.mode
       document.documentElement.dataset.officeMode = currentMode
       if (message.payload.locale) setLanguage(message.payload.locale)
-      await createNewWorkbook()
+      await createNewWorkbook(message.payload.file)
       return
     }
 

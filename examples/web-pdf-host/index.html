@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GenOffice PDF Web Host</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="host-shell">
+      <header class="host-toolbar">
+        <strong>PDF Web Host</strong>
+        <label class="host-open">
+          选择 PDF
+          <input id="pdf-picker" type="file" accept="application/pdf,.pdf" />
+        </label>
+        <span id="file-name">未选择 PDF</span>
+        <span class="spacer"></span>
+        <span>状态：</span><strong id="host-state">waiting</strong>
+      </header>
+      <iframe id="office-frame" title="GenOffice PDF Web"></iframe>
+      <input id="requested-picker" type="file" accept="application/pdf,.pdf" hidden />
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

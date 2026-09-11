@@ -1,7 +1,7 @@
-export type OfficeDocumentKind = 'docx' | 'pptx' | 'xlsx'
+export type OfficeDocumentKind = 'docx' | 'pptx' | 'xlsx' | 'pdf' | 'markdown'
 export type OfficeEditorMode = 'view' | 'edit'
 export type OfficeSaveMode = 'save' | 'saveAs'
-export type OfficeExportFormat = 'docx' | 'pptx' | 'xlsx'
+export type OfficeExportFormat = 'docx' | 'pptx' | 'xlsx' | 'markdown'
 export type OfficeAutoSavePolicy = 'disabled' | 'host' | 'editor'
 
 /**
@@ -99,7 +99,10 @@ export interface SaveDocumentInput {
   bytes: ArrayBuffer
   baseVersion?: OfficeFileVersion | undefined
   mode?: OfficeSaveMode | undefined
-  /** First persistence of a blank editor document; the Host should choose/create its destination. */
+  /**
+   * True only for first persistence of an unbound blank editor document.
+   * A Host-preallocated zero-byte file node is already bound and uses false/undefined.
+   */
   newDocument?: boolean | undefined
 }
 

@@ -18,6 +18,7 @@ export {
   IconHighlight,
   IconUndo,
   IconRedo,
+  IconSave,
   IconCopy,
   IconRowInsertAbove,
   IconRowInsertBelow,

@@ -53,10 +53,7 @@ function __genofficeDecodeBase64(input) {
         `${source} is Electron-only XLSX file I/O and must not execute in Sheets Web.`,
       )
       return exports
-        .map(
-          (name) =>
-            `export function ${name}(..._args) { throw new Error(${message}) }`,
-        )
+        .map((name) => `export function ${name}(..._args) { throw new Error(${message}) }`)
         .join('\n')
     },
     transform(code, id) {
@@ -76,6 +73,7 @@ function __genofficeDecodeBase64(input) {
 
 export default defineConfig({
   root: 'src/web',
+  base: process.env.GENOFFICE_WEB_BASE || '/',
   plugins: [xlsxGatewayBrowserBoundary(), react()],
   server: {
     host: '0.0.0.0',

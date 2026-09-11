@@ -67,7 +67,14 @@ Every HTTP response carries `X-Request-Id`.
 Each completed request writes one JSON line to stdout with only operational fields:
 
 ```json
-{"event":"http_request","requestId":"req_...","method":"POST","path":"/v1/workbooks","status":201,"durationMs":42}
+{
+  "event": "http_request",
+  "requestId": "req_...",
+  "method": "POST",
+  "path": "/v1/workbooks",
+  "status": 201,
+  "durationMs": 42
+}
 ```
 
 The log intentionally records the URL **path only**. It does not log query strings, workbook names, request bodies, file bytes, UC users, tenants, FsNode IDs, JWTs, or plugin permissions.
@@ -88,7 +95,7 @@ The endpoint intentionally has no user-, tenant-, workbook-name-, or file-level 
 
 ## Session expiry
 
-Workbook sessions are intentionally in-memory for the first single-node milestone, but abandoned browser sessions are no longer allowed to live forever.
+Workbook sessions are intentionally in-memory in the current deployment phase, but abandoned browser sessions are no longer allowed to live forever.
 
 - `XLSX_ENGINE_SESSION_TTL_SECS` — idle workbook/session lifetime, default `3600` seconds.
 - `XLSX_ENGINE_CLEANUP_INTERVAL_SECS` — expired-session sweep interval, default `60` seconds.
@@ -113,18 +120,23 @@ The service binds its TCP listener before touching this directory. Only after th
 
 ## Production deployment
 
-The first production topology is intentionally single-node:
+The production deployment is split into two independent Docker units:
 
 ```text
-Nginx
-├─ /                -> Sheets Web static files
-└─ /xlsx-engine/*   -> 127.0.0.1:7301
+genoffice-web
+├─ NGINX + five Web apps
+└─ /xlsx-engine/* -> one or more XLSX Engine endpoints
+
+one or more independent genoffice-xlsx-engine containers
+└─ :7301
 ```
 
-No Redis, database, object storage, or message queue is required for the first milestone.
+The Web NGINX layer owns browser session affinity because workbook state remains local to each Engine process. Multiple Engine instances may live on separate servers; the Web container receives their `host:port` endpoints at runtime and applies sticky-cookie routing without changing Sheets Web or the UC iframe protocol.
 
-The service boundary is intentionally prepared for later horizontal expansion without changing Sheets Web, UC Excel Host, or the `office:*` iframe protocol. Session placement and routing can be introduced behind the same API when multiple Rust instances are needed.
+No Redis, database, object storage, or message queue is required for the current Engine session model. A future session-aware router may use the existing opaque `X-Xlsx-Session` header without changing the browser API surface.
 
-The Rust service must remain independent of UC Web OS authentication and storage concepts: it does not receive tenant IDs, JWTs, CSRF tokens, FsNode IDs, or plugin permissions. UC owns files and authorization; the engine owns spreadsheet processing.
+The Rust service remains independent of UC Web OS authentication and storage concepts: it does not receive tenant IDs, JWTs, CSRF tokens, FsNode IDs, or plugin permissions. UC owns files and authorization; the Engine owns spreadsheet processing.
 
-The remaining single-node hardening work is primarily deployment tuning and, if required by real workloads, a cooperative/worker-process execution deadline. Those concerns stay inside the engine service and do not change the browser or UC Host contracts.
+Restarting an Engine loses the active sessions owned by that process. Planned Engine removal therefore requires draining active workbook work first; sticky routing cannot recreate an in-memory workbook session on another Engine.
+
+See [`../../deploy/README.md`](../../deploy/README.md) for image builds, the two standalone Compose files, separate-server examples, runtime Engine routing, health checks and rollback procedures.
