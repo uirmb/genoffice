@@ -88,6 +88,8 @@ export interface OfficeNewPayload {
   locale?: string | undefined
   capabilities?: Partial<OfficeHostCapabilities> | undefined
   notifications?: OfficeNotificationSettings | undefined
+  /** Host-preallocated zero-byte file node for a blank document that is already bound. */
+  file?: OfficeFileDescriptor | undefined
 }
 
 export interface OfficeEditorState {
