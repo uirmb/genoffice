@@ -238,7 +238,7 @@ export class MarkdownWebApi implements MarkdownApi {
       ) {
         const picked = await this.host.pickDocument({ accept: MARKDOWN_ACCEPT })
         if (picked.status === 'cancelled') return { status: 'cancelled' }
-        if (picked.status === 'failed') return { status: 'failed', error: picked.error }
+        if (picked.status === 'failed') return { status: 'failed', error: picked.error, code: picked.code }
 
         const file = retainFile(picked.file)
         this.pendingDocumentSelections.set(picked.selectionId, file)
@@ -271,9 +271,14 @@ export class MarkdownWebApi implements MarkdownApi {
         text: decodeMarkdownBytes(this.currentFile.bytes, 'open-document-utf8-decode'),
       }
     } catch (error) {
+      const code =
+        typeof error === 'object' && error && 'code' in error && typeof error.code === 'string'
+          ? error.code
+          : undefined
       return {
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
+        ...(code ? { code } : {}),
       }
     }
   }
@@ -285,7 +290,13 @@ export class MarkdownWebApi implements MarkdownApi {
     }
 
     const result = await this.host.confirmDocumentOpened(selectionId)
-    if (!result.ok) return { ok: false, error: result.error || 'Unable to bind selected Markdown.' }
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: result.error || 'Unable to bind selected Markdown.',
+        ...(result.code ? { code: result.code } : {}),
+      }
+    }
 
     const descriptor = result.file
       ? { ...descriptorOf(candidate), ...result.file, transport: 'buffer' as const }
@@ -334,7 +345,11 @@ export class MarkdownWebApi implements MarkdownApi {
 
     if (!result.ok) {
       if (result.code === 'CANCELLED') return { ok: true, canceled: true }
-      return { ok: false, error: result.error || 'Markdown save failed.' }
+      return {
+        ok: false,
+        error: result.error || 'Markdown save failed.',
+        ...(result.code ? { code: result.code } : {}),
+      }
     }
 
     const saved = result.file ?? { ...file, size: bytes.byteLength }
@@ -364,7 +379,11 @@ export class MarkdownWebApi implements MarkdownApi {
       baseVersion: existing.version,
     })
     if (!result.ok) {
-      return { ok: false, error: result.error || 'Creating a Markdown history version failed.' }
+      return {
+        ok: false,
+        error: result.error || 'Creating a Markdown history version failed.',
+        ...(result.code ? { code: result.code } : {}),
+      }
     }
 
     const saved = result.file ?? { ...descriptorOf(existing), size: bytes.byteLength }
@@ -403,7 +422,11 @@ export class MarkdownWebApi implements MarkdownApi {
     })
     return result.ok
       ? { ok: true }
-      : { ok: false, error: result.error || 'Downloading Markdown failed.' }
+      : {
+          ok: false,
+          error: result.error || 'Downloading Markdown failed.',
+          ...(result.code ? { code: result.code } : {}),
+        }
   }
 
   async exit(): Promise<void> {
@@ -456,7 +479,12 @@ export class MarkdownWebApi implements MarkdownApi {
 
   async pickImage(): Promise<string | null> {
     const result = await this.pickImages()
-    if (result.status !== 'selected') return null
+    if (result.status === 'cancelled') return null
+    if (result.status === 'failed') {
+      const error = new Error(result.error) as Error & { code?: string }
+      error.code = result.code
+      throw error
+    }
     return result.files[0] ? imageDataUrl(result.files[0]) : null
   }
 

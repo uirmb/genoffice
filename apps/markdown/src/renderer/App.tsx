@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import type { Editor } from '@tiptap/core'
+import type { OfficeNotificationCode, OfficeNotificationOperation } from '@genoffice/office-protocol'
+import { showWebOfficeNotification } from '@genoffice/web-runtime'
 import { useI18n } from './i18n/locale'
 import {
   buildFrontmatterRaw,
@@ -65,6 +67,51 @@ function measureImage(displaySrc: string): Promise<{ width: number; height: numb
 /** widest image that fits the A4 text column */
 const DOCX_MAX_IMAGE_PX = 620
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : undefined
+}
+
+function notificationFailureCode(
+  hostCode: string | undefined,
+  fallback: OfficeNotificationCode,
+): OfficeNotificationCode {
+  switch (hostCode) {
+    case 'VERSION_CONFLICT':
+    case 'PERMISSION_DENIED':
+    case 'SESSION_EXPIRED':
+    case 'READ_ONLY_MODE':
+    case 'CONNECTION_LOST':
+    case 'UNSUPPORTED_FILE':
+    case 'FILE_TOO_LARGE':
+      return hostCode
+    default:
+      return fallback
+  }
+}
+
+function notifyFailure(
+  fallbackCode: OfficeNotificationCode,
+  operation: OfficeNotificationOperation,
+  message: string,
+  hostCode?: string,
+  dedupeKey?: string,
+): void {
+  const code = notificationFailureCode(hostCode, fallbackCode)
+  showWebOfficeNotification({
+    level: code === 'VERSION_CONFLICT' ? 'warning' : 'error',
+    code,
+    message,
+    operation,
+    dedupeKey: dedupeKey || code.toLowerCase().replaceAll('_', '-'),
+  })
+}
+
 /** File name for an AI-generated untitled document: first heading, else first words */
 export function deriveAutoFileName(editor: Editor): string {
   const doc = editor.state.doc
@@ -111,11 +158,23 @@ export default function App() {
 
   const insertImage = useCallback(() => {
     void (async () => {
-      const relPath = await window.markdownApi.pickImage()
-      const current = editorRef.current
-      if (relPath && current) current.chain().focus().setImage({ src: relPath }).run()
+      try {
+        const relPath = await window.markdownApi.pickImage()
+        const current = editorRef.current
+        if (relPath && current) current.chain().focus().setImage({ src: relPath }).run()
+      } catch (error) {
+        const message = errorMessage(error)
+        console.error('[markdown] insert image failed:', error)
+        notifyFailure(
+          'ASSET_INSERT_FAILED',
+          'insertAsset',
+          `${t('insertImage')}: ${message}`,
+          errorCode(error),
+          'asset-insert-failed',
+        )
+      }
     })()
-  }, [])
+  }, [t])
 
   const extensions = useMemo(() => {
     const controller: SlashController = {
@@ -180,6 +239,13 @@ export default function App() {
       } catch (err) {
         console.error('[markdown] load failed:', err)
         if (!cancelled) {
+          notifyFailure(
+            'DOCUMENT_OPEN_FAILED',
+            'open',
+            errorMessage(err),
+            errorCode(err),
+            'document-open-failed',
+          )
           statusRef.current = 'error'
           setStatus('error')
         }
@@ -200,47 +266,88 @@ export default function App() {
   )
 
   /** Serialize and write to disk; false when canceled/failed (caller keeps the tab open) */
-  const doSave = useCallback(async (mode: SaveMode, suggestedName?: string): Promise<boolean> => {
-    const current = editorRef.current
-    if (!current || statusRef.current !== 'ready' || savingRef.current) return false
-    savingRef.current = true
-    setSaveState('saving')
-    try {
-      // edits landing while the write is in flight (AI streaming, fast typing)
-      // must keep the document dirty — compare doc identity after the await
-      const docAtSave = current.state.doc
-      const fmAtSave = envelopeRef.current.frontmatter
-      const body = current.getMarkdown()
-      const text = serializeDocText(envelopeRef.current, body)
-      const result = await window.markdownApi.save({ text, mode, suggestedName })
-      if (result.ok && 'path' in result) {
-        setFilePath(result.path)
-        const unchanged =
-          editorRef.current?.state.doc === docAtSave && envelopeRef.current.frontmatter === fmAtSave
-        if (unchanged) {
-          dirtyRef.current = false
-          setDirty(false)
-          window.markdownApi.setDirty(false)
-          setSaveState('saved')
-        } else {
-          // the main process cleared its dirty flag on write — re-assert it
-          dirtyRef.current = true
-          setDirty(true)
-          window.markdownApi.setDirty(true)
-          setSaveState('idle')
+  const doSave = useCallback(
+    async (
+      mode: SaveMode,
+      suggestedName?: string,
+      silentSuccess = false,
+    ): Promise<boolean> => {
+      const current = editorRef.current
+      if (!current || statusRef.current !== 'ready' || savingRef.current) return false
+      savingRef.current = true
+      setSaveState('saving')
+      const operation = mode === 'saveAs' ? 'saveAs' : 'save'
+      const failedCode =
+        mode === 'saveAs' ? 'DOCUMENT_SAVE_AS_FAILED' : 'DOCUMENT_SAVE_FAILED'
+      const successCode =
+        mode === 'saveAs' ? 'DOCUMENT_SAVE_AS_SUCCEEDED' : 'DOCUMENT_SAVE_SUCCEEDED'
+      const dedupeKey = mode === 'saveAs' ? 'document-save-as' : 'document-save'
+      try {
+        const docAtSave = current.state.doc
+        const fmAtSave = envelopeRef.current.frontmatter
+        const body = current.getMarkdown()
+        const text = serializeDocText(envelopeRef.current, body)
+        const result = await window.markdownApi.save({ text, mode, suggestedName })
+        if (result.ok && 'path' in result) {
+          setFilePath(result.path)
+          const unchanged =
+            editorRef.current?.state.doc === docAtSave &&
+            envelopeRef.current.frontmatter === fmAtSave
+          if (unchanged) {
+            dirtyRef.current = false
+            setDirty(false)
+            window.markdownApi.setDirty(false)
+            setSaveState('saved')
+            if (!silentSuccess) {
+              showWebOfficeNotification({
+                level: 'success',
+                code: successCode,
+                message: t('savedOk'),
+                operation,
+                dedupeKey,
+              })
+            }
+          } else {
+            dirtyRef.current = true
+            setDirty(true)
+            window.markdownApi.setDirty(true)
+            setSaveState('idle')
+          }
+          return true
         }
-        return true
+
+        if (result.ok) {
+          // User-cancelled Save As is not an error and must not produce a Toast.
+          setSaveState('idle')
+          return false
+        }
+
+        setSaveState('failed')
+        notifyFailure(
+          failedCode,
+          operation,
+          `${t('saveFailed')}: ${result.error}`,
+          result.code,
+          dedupeKey,
+        )
+        return false
+      } catch (error) {
+        console.error('[markdown] save failed:', error)
+        setSaveState('failed')
+        notifyFailure(
+          failedCode,
+          operation,
+          `${t('saveFailed')}: ${errorMessage(error)}`,
+          errorCode(error),
+          dedupeKey,
+        )
+        return false
+      } finally {
+        savingRef.current = false
       }
-      setSaveState(result.ok ? 'idle' : 'failed')
-      return false
-    } catch (err) {
-      console.error('[markdown] save failed:', err)
-      setSaveState('failed')
-      return false
-    } finally {
-      savingRef.current = false
-    }
-  }, [])
+    },
+    [t],
+  )
 
   const saveHistoryVersion = useCallback(async (): Promise<boolean> => {
     const action = window.markdownApi.saveHistoryVersion
@@ -265,6 +372,13 @@ export default function App() {
       if (!result.ok) {
         console.error('[markdown] save history failed:', result.error)
         setSaveState('failed')
+        notifyFailure(
+          'HISTORY_VERSION_SAVE_FAILED',
+          'saveVersion',
+          `${t('saveFailed')}: ${result.error}`,
+          result.code,
+          'history-version-save',
+        )
         return false
       }
 
@@ -281,15 +395,29 @@ export default function App() {
         window.markdownApi.setDirty(true)
         setSaveState('idle')
       }
+      showWebOfficeNotification({
+        level: 'success',
+        code: 'HISTORY_VERSION_SAVED',
+        message: t('savedOk'),
+        operation: 'saveVersion',
+        dedupeKey: 'history-version-save',
+      })
       return true
     } catch (error) {
       console.error('[markdown] save history failed:', error)
       setSaveState('failed')
+      notifyFailure(
+        'HISTORY_VERSION_SAVE_FAILED',
+        'saveVersion',
+        `${t('saveFailed')}: ${errorMessage(error)}`,
+        errorCode(error),
+        'history-version-save',
+      )
       return false
     } finally {
       savingRef.current = false
     }
-  }, [])
+  }, [t])
 
   const downloadMarkdown = useCallback(async (): Promise<void> => {
     const action = window.markdownApi.download
@@ -298,9 +426,25 @@ export default function App() {
     const text = serializeDocText(envelopeRef.current, current.getMarkdown())
     try {
       const result = await action.call(window.markdownApi, { text })
-      if (!result.ok) console.error('[markdown] download failed:', result.error)
+      if (!result.ok) {
+        console.error('[markdown] download failed:', result.error)
+        notifyFailure(
+          'DOCUMENT_DOWNLOAD_FAILED',
+          'download',
+          result.error,
+          result.code,
+          'document-download',
+        )
+      }
     } catch (error) {
       console.error('[markdown] download failed:', error)
+      notifyFailure(
+        'DOCUMENT_DOWNLOAD_FAILED',
+        'download',
+        errorMessage(error),
+        errorCode(error),
+        'document-download',
+      )
     }
   }, [])
 
@@ -378,6 +522,13 @@ export default function App() {
     if (result.status === 'cancelled') return
     if (result.status === 'failed') {
       console.error('[markdown] host open failed:', result.error)
+      notifyFailure(
+        'DOCUMENT_OPEN_FAILED',
+        'open',
+        `${t('loadError')}: ${result.error}`,
+        result.code,
+        'document-open-failed',
+      )
       return
     }
 
@@ -418,8 +569,15 @@ export default function App() {
       statusRef.current = 'ready'
       setStatus('ready')
       console.error('[markdown] selected file could not be opened:', error)
+      notifyFailure(
+        'DOCUMENT_OPEN_FAILED',
+        'open',
+        `${t('loadError')}: ${errorMessage(error)}`,
+        errorCode(error),
+        'document-open-failed',
+      )
     }
-  }, [])
+  }, [t])
 
   const runExport = useCallback(async (format: ExportFormat) => {
     const current = editorRef.current
@@ -432,7 +590,24 @@ export default function App() {
       if (format === 'pdf') {
         const html = buildPrintHtml(current.view.dom, suggestedName)
         const result = await window.markdownApi.exportPdf({ html, suggestedName })
-        if (!result.ok) console.error('[markdown] pdf export failed:', result.error)
+        if (!result.ok) {
+          console.error('[markdown] pdf export failed:', result.error)
+          notifyFailure(
+            'DOCUMENT_EXPORT_FAILED',
+            'export',
+            `PDF ${t('saveFailed')}: ${result.error}`,
+            undefined,
+            'document-export',
+          )
+        } else {
+          showWebOfficeNotification({
+            level: 'success',
+            code: 'DOCUMENT_EXPORT_SUCCEEDED',
+            message: `PDF ${t('savedOk')}`,
+            operation: 'export',
+            dedupeKey: 'document-export',
+          })
+        }
         return
       }
       const loadImage = async (src: string) => {
@@ -453,11 +628,35 @@ export default function App() {
         suggestedName,
         mode: format === 'docs' ? 'openInDocs' : 'dialog',
       })
-      if (!result.ok) console.error('[markdown] docx export failed:', result.error)
+      if (!result.ok) {
+        console.error('[markdown] docx export failed:', result.error)
+        notifyFailure(
+          'DOCUMENT_EXPORT_FAILED',
+          'export',
+          `DOCX ${t('saveFailed')}: ${result.error}`,
+          undefined,
+          'document-export',
+        )
+      } else {
+        showWebOfficeNotification({
+          level: 'success',
+          code: 'DOCUMENT_EXPORT_SUCCEEDED',
+          message: `DOCX ${t('savedOk')}`,
+          operation: 'export',
+          dedupeKey: 'document-export',
+        })
+      }
     } catch (err) {
       console.error('[markdown] export failed:', err)
+      notifyFailure(
+        'DOCUMENT_EXPORT_FAILED',
+        'export',
+        `${t('saveFailed')}: ${errorMessage(err)}`,
+        errorCode(err),
+        'document-export',
+      )
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     const offExport = window.markdownApi.onExportRequest((format) => void runExport(format))
@@ -517,7 +716,7 @@ export default function App() {
       // AI wrote into a never-saved document → name it from the content and save silently
       if (!mutated || filePathRef.current || !editorRef.current) return
       const name = deriveAutoFileName(editorRef.current)
-      if (name) void doSave('save', name)
+      if (name) void doSave('save', name, true)
     },
   }
 

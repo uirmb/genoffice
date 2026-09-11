@@ -36,14 +36,18 @@ export interface SaveMarkdownRequest {
 }
 
 export type SaveMarkdownResult =
-  { ok: true; path: string } | { ok: true; canceled: true } | { ok: false; error: string }
+  | { ok: true; path: string }
+  | { ok: true; canceled: true }
+  | { ok: false; error: string; code?: string | undefined }
 
 export interface MarkdownTextRequest {
   /** Full UTF-8 Markdown text including frontmatter. */
   text: string
 }
 
-export type MarkdownHostActionResult = { ok: true } | { ok: false; error: string }
+export type MarkdownHostActionResult =
+  | { ok: true }
+  | { ok: false; error: string; code?: string | undefined }
 
 /**
  * Transactional file-open result used by Markdown Web. Desktop keeps its native
@@ -52,11 +56,12 @@ export type MarkdownHostActionResult = { ok: true } | { ok: false; error: string
 export type OpenMarkdownResult =
   | { status: 'selected'; selectionId: string | null; path: string; text: string }
   | { status: 'cancelled' }
-  | { status: 'failed'; error: string }
+  | { status: 'failed'; error: string; code?: string | undefined }
 
 export interface ConfirmOpenMarkdownResult {
   ok: boolean
   error?: string
+  code?: string
 }
 
 /** AI channels are app-wide shared ipcMain handlers (shell registers via docs-main registerAiIpc); pass-through only */
