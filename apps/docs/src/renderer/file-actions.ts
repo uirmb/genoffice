@@ -538,11 +538,7 @@ export function noteDocumentSwapped(): void {
   pathlessDocSavedPath = null
 }
 
-function showSaveToast(
-  text: string,
-  kind: 'success' | 'error',
-  saveAs: boolean,
-): void {
+function showSaveToast(text: string, kind: 'success' | 'error', saveAs: boolean): void {
   showToast(text, kind, {
     code:
       kind === 'success'

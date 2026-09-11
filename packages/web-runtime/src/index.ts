@@ -60,11 +60,7 @@ export class OfficeNotificationAdapter {
   constructor(private readonly bridge?: EditorIframeBridge) {}
 
   configure(settings?: OfficeNotificationSettings): void {
-    if (
-      !settings ||
-      settings.owner !== 'host' ||
-      settings.transport !== 'office:notification'
-    ) {
+    if (!settings || settings.owner !== 'host' || settings.transport !== 'office:notification') {
       this.owner = 'editor'
       this.transport = null
       this.levels = new Set(ALL_NOTIFICATION_LEVELS)
@@ -178,11 +174,14 @@ function showLocalWebOfficeNotification(notification: OfficeNotificationInput): 
   const duration =
     notification.durationMs ??
     (notification.level === 'error' || notification.level === 'warning' ? 4000 : 2500)
-  const timer = window.setTimeout(() => {
-    localNotificationTimers.delete(toast)
-    toast.remove()
-    if (root && root.childElementCount === 0) root.remove()
-  }, Math.max(1000, duration))
+  const timer = window.setTimeout(
+    () => {
+      localNotificationTimers.delete(toast)
+      toast.remove()
+      if (root && root.childElementCount === 0) root.remove()
+    },
+    Math.max(1000, duration),
+  )
   localNotificationTimers.set(toast, timer)
 }
 

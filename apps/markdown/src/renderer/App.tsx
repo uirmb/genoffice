@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import type { Editor } from '@tiptap/core'
-import type { OfficeNotificationCode, OfficeNotificationOperation } from '@genoffice/office-protocol'
+import type {
+  OfficeNotificationCode,
+  OfficeNotificationOperation,
+} from '@genoffice/office-protocol'
 import { showWebOfficeNotification } from '@genoffice/web-runtime'
 import { useI18n } from './i18n/locale'
 import {
@@ -267,18 +270,13 @@ export default function App() {
 
   /** Serialize and write to disk; false when canceled/failed (caller keeps the tab open) */
   const doSave = useCallback(
-    async (
-      mode: SaveMode,
-      suggestedName?: string,
-      silentSuccess = false,
-    ): Promise<boolean> => {
+    async (mode: SaveMode, suggestedName?: string, silentSuccess = false): Promise<boolean> => {
       const current = editorRef.current
       if (!current || statusRef.current !== 'ready' || savingRef.current) return false
       savingRef.current = true
       setSaveState('saving')
       const operation = mode === 'saveAs' ? 'saveAs' : 'save'
-      const failedCode =
-        mode === 'saveAs' ? 'DOCUMENT_SAVE_AS_FAILED' : 'DOCUMENT_SAVE_FAILED'
+      const failedCode = mode === 'saveAs' ? 'DOCUMENT_SAVE_AS_FAILED' : 'DOCUMENT_SAVE_FAILED'
       const successCode =
         mode === 'saveAs' ? 'DOCUMENT_SAVE_AS_SUCCEEDED' : 'DOCUMENT_SAVE_SUCCEEDED'
       const dedupeKey = mode === 'saveAs' ? 'document-save-as' : 'document-save'
@@ -579,23 +577,62 @@ export default function App() {
     }
   }, [t])
 
-  const runExport = useCallback(async (format: ExportFormat) => {
-    const current = editorRef.current
-    if (!current || statusRef.current !== 'ready') return
-    const suggestedName =
-      (filePathRef.current
-        ? filePathRef.current.replace(/^.*[/\\]/, '').replace(/\.(md|markdown)$/i, '')
-        : deriveAutoFileName(current)) || 'Untitled'
-    try {
-      if (format === 'pdf') {
-        const html = buildPrintHtml(current.view.dom, suggestedName)
-        const result = await window.markdownApi.exportPdf({ html, suggestedName })
+  const runExport = useCallback(
+    async (format: ExportFormat) => {
+      const current = editorRef.current
+      if (!current || statusRef.current !== 'ready') return
+      const suggestedName =
+        (filePathRef.current
+          ? filePathRef.current.replace(/^.*[/\\]/, '').replace(/\.(md|markdown)$/i, '')
+          : deriveAutoFileName(current)) || 'Untitled'
+      try {
+        if (format === 'pdf') {
+          const html = buildPrintHtml(current.view.dom, suggestedName)
+          const result = await window.markdownApi.exportPdf({ html, suggestedName })
+          if (!result.ok) {
+            console.error('[markdown] pdf export failed:', result.error)
+            notifyFailure(
+              'DOCUMENT_EXPORT_FAILED',
+              'export',
+              `PDF ${t('saveFailed')}: ${result.error}`,
+              undefined,
+              'document-export',
+            )
+          } else {
+            showWebOfficeNotification({
+              level: 'success',
+              code: 'DOCUMENT_EXPORT_SUCCEEDED',
+              message: `PDF ${t('savedOk')}`,
+              operation: 'export',
+              dedupeKey: 'document-export',
+            })
+          }
+          return
+        }
+        const loadImage = async (src: string) => {
+          const data = await window.markdownApi.readImage(src)
+          if (!data) return null
+          const dims = await measureImage(resolveImageSrc(src))
+          let width = dims?.width || 400
+          let height = dims?.height || 300
+          if (width > DOCX_MAX_IMAGE_PX) {
+            height = Math.round((height * DOCX_MAX_IMAGE_PX) / width)
+            width = DOCX_MAX_IMAGE_PX
+          }
+          return { base64: data.base64, mime: data.mime, widthPx: width, heightPx: height }
+        }
+        const bytes = await exportDocxBytes(current.getJSON(), loadImage)
+        const result = await window.markdownApi.exportDocx({
+          base64: bytesToBase64(bytes),
+          suggestedName,
+          mode: format === 'docs' ? 'openInDocs' : 'dialog',
+        })
         if (!result.ok) {
-          console.error('[markdown] pdf export failed:', result.error)
+          console.error('[markdown] docx export failed:', result.error)
           notifyFailure(
             'DOCUMENT_EXPORT_FAILED',
             'export',
-            `PDF ${t('saveFailed')}: ${result.error}`,
+            `DOCX ${t('saveFailed')}: ${result.error}`,
             undefined,
             'document-export',
           )
@@ -603,60 +640,24 @@ export default function App() {
           showWebOfficeNotification({
             level: 'success',
             code: 'DOCUMENT_EXPORT_SUCCEEDED',
-            message: `PDF ${t('savedOk')}`,
+            message: `DOCX ${t('savedOk')}`,
             operation: 'export',
             dedupeKey: 'document-export',
           })
         }
-        return
-      }
-      const loadImage = async (src: string) => {
-        const data = await window.markdownApi.readImage(src)
-        if (!data) return null
-        const dims = await measureImage(resolveImageSrc(src))
-        let width = dims?.width || 400
-        let height = dims?.height || 300
-        if (width > DOCX_MAX_IMAGE_PX) {
-          height = Math.round((height * DOCX_MAX_IMAGE_PX) / width)
-          width = DOCX_MAX_IMAGE_PX
-        }
-        return { base64: data.base64, mime: data.mime, widthPx: width, heightPx: height }
-      }
-      const bytes = await exportDocxBytes(current.getJSON(), loadImage)
-      const result = await window.markdownApi.exportDocx({
-        base64: bytesToBase64(bytes),
-        suggestedName,
-        mode: format === 'docs' ? 'openInDocs' : 'dialog',
-      })
-      if (!result.ok) {
-        console.error('[markdown] docx export failed:', result.error)
+      } catch (err) {
+        console.error('[markdown] export failed:', err)
         notifyFailure(
           'DOCUMENT_EXPORT_FAILED',
           'export',
-          `DOCX ${t('saveFailed')}: ${result.error}`,
-          undefined,
+          `${t('saveFailed')}: ${errorMessage(err)}`,
+          errorCode(err),
           'document-export',
         )
-      } else {
-        showWebOfficeNotification({
-          level: 'success',
-          code: 'DOCUMENT_EXPORT_SUCCEEDED',
-          message: `DOCX ${t('savedOk')}`,
-          operation: 'export',
-          dedupeKey: 'document-export',
-        })
       }
-    } catch (err) {
-      console.error('[markdown] export failed:', err)
-      notifyFailure(
-        'DOCUMENT_EXPORT_FAILED',
-        'export',
-        `${t('saveFailed')}: ${errorMessage(err)}`,
-        errorCode(err),
-        'document-export',
-      )
-    }
-  }, [t])
+    },
+    [t],
+  )
 
   useEffect(() => {
     const offExport = window.markdownApi.onExportRequest((format) => void runExport(format))

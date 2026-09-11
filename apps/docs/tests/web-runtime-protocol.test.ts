@@ -221,7 +221,6 @@ describe('EmbeddedOfficeHost stable wire protocol compatibility', () => {
   })
 })
 
-
 describe('OfficeNotificationAdapter ownership negotiation', () => {
   it('keeps notifications editor-owned until the Host explicitly opts in', () => {
     const { bridge, sends } = createBridge()

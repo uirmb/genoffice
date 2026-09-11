@@ -46,8 +46,7 @@ export interface MarkdownTextRequest {
 }
 
 export type MarkdownHostActionResult =
-  | { ok: true }
-  | { ok: false; error: string; code?: string | undefined }
+  { ok: true } | { ok: false; error: string; code?: string | undefined }
 
 /**
  * Transactional file-open result used by Markdown Web. Desktop keeps its native

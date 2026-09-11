@@ -31,14 +31,7 @@ export type OfficeNotificationOwner = 'host' | 'editor'
 export type OfficeNotificationLevel = 'success' | 'info' | 'warning' | 'error'
 export type OfficeNotificationTransport = 'office:notification'
 export type OfficeNotificationOperation =
-  | 'open'
-  | 'save'
-  | 'saveAs'
-  | 'saveVersion'
-  | 'export'
-  | 'download'
-  | 'insertAsset'
-  | 'connection'
+  'open' | 'save' | 'saveAs' | 'saveVersion' | 'export' | 'download' | 'insertAsset' | 'connection'
 
 export type OfficeNotificationCode =
   | 'DOCUMENT_SAVE_SUCCEEDED'

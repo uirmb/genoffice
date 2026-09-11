@@ -238,7 +238,8 @@ export class MarkdownWebApi implements MarkdownApi {
       ) {
         const picked = await this.host.pickDocument({ accept: MARKDOWN_ACCEPT })
         if (picked.status === 'cancelled') return { status: 'cancelled' }
-        if (picked.status === 'failed') return { status: 'failed', error: picked.error, code: picked.code }
+        if (picked.status === 'failed')
+          return { status: 'failed', error: picked.error, code: picked.code }
 
         const file = retainFile(picked.file)
         this.pendingDocumentSelections.set(picked.selectionId, file)

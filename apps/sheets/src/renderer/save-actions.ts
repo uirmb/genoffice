@@ -41,11 +41,7 @@ export interface SaveContext {
 }
 
 export type WorkbookFileActionMode =
-  | 'save'
-  | 'save-as'
-  | 'save-history'
-  | 'export-xlsx'
-  | 'recovery'
+  'save' | 'save-as' | 'save-history' | 'export-xlsx' | 'recovery'
 
 function showSaveFeedback(
   text: string,
@@ -219,7 +215,8 @@ export async function handleSave(
   if (sheetOps.length > 0 && sheetOrder.length === 0) {
     if (mode !== 'recovery') {
       ctx.setMessage(t('appSheetOrderReadFailed'))
-      if (!quiet && mode !== 'recovery') showSaveFeedback(t('appSheetOrderReadFailed'), 'error', mode)
+      if (!quiet && mode !== 'recovery')
+        showSaveFeedback(t('appSheetOrderReadFailed'), 'error', mode)
     }
     return
   }
@@ -263,9 +260,7 @@ export async function handleSave(
       return
     }
     try {
-      ctx.setMessage(
-        mode === 'save-history' ? t('appSavingHistoryVersion') : t('appExportingXlsx'),
-      )
+      ctx.setMessage(mode === 'save-history' ? t('appSavingHistoryVersion') : t('appExportingXlsx'))
       const result =
         mode === 'save-history'
           ? await snapshotHost.saveHistoryVersion(payload)
@@ -274,8 +269,7 @@ export async function handleSave(
         ctx.setMessage(t('appSaveCanceled'))
         return
       }
-      const message =
-        mode === 'save-history' ? t('appHistoryVersionSaved') : t('appXlsxExported')
+      const message = mode === 'save-history' ? t('appHistoryVersionSaved') : t('appXlsxExported')
       ctx.setMessage(message)
       if (!quiet) showSaveFeedback(message, 'success', mode)
     } catch (error: unknown) {
