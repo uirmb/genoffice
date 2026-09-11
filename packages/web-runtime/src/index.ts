@@ -23,6 +23,9 @@ import {
   OFFICE_PROTOCOL_VERSION,
   type EditorToHostMessage,
   type HostToEditorMessage,
+  type OfficeNotificationLevel,
+  type OfficeNotificationPayload,
+  type OfficeNotificationSettings,
 } from '@genoffice/office-protocol'
 
 export type WebRuntimeMode = 'standalone' | 'embedded'
@@ -30,6 +33,170 @@ export type EditorIframeBridge = OfficeIframeBridge<HostToEditorMessage, EditorT
 
 export function detectWebRuntimeMode(currentWindow: Window = window): WebRuntimeMode {
   return currentWindow.parent === currentWindow ? 'standalone' : 'embedded'
+}
+
+export type OfficeNotificationInput = Omit<OfficeNotificationPayload, 'id'> & {
+  id?: string | undefined
+  requestId?: string | undefined
+}
+
+const ALL_NOTIFICATION_LEVELS: readonly OfficeNotificationLevel[] = [
+  'success',
+  'info',
+  'warning',
+  'error',
+]
+
+/**
+ * Notification ownership is negotiated only by office:init / office:new.
+ * Embedded mode therefore defaults to editor-owned notifications until a
+ * trusted Host explicitly opts into office:notification.
+ */
+export class OfficeNotificationAdapter {
+  private owner: 'host' | 'editor' = 'editor'
+  private transport: 'office:notification' | null = null
+  private levels = new Set<OfficeNotificationLevel>(ALL_NOTIFICATION_LEVELS)
+
+  constructor(private readonly bridge?: EditorIframeBridge) {}
+
+  configure(settings?: OfficeNotificationSettings): void {
+    if (
+      !settings ||
+      settings.owner !== 'host' ||
+      settings.transport !== 'office:notification'
+    ) {
+      this.owner = 'editor'
+      this.transport = null
+      this.levels = new Set(ALL_NOTIFICATION_LEVELS)
+      return
+    }
+
+    this.owner = 'host'
+    this.transport = settings.transport
+    this.levels = new Set(settings.levels?.length ? settings.levels : ALL_NOTIFICATION_LEVELS)
+  }
+
+  notify(notification: OfficeNotificationInput): boolean {
+    if (
+      !this.bridge ||
+      this.owner !== 'host' ||
+      this.transport !== 'office:notification' ||
+      !this.levels.has(notification.level)
+    ) {
+      return false
+    }
+
+    const { requestId, id, ...payload } = notification
+    this.bridge.send({
+      protocol: OFFICE_PROTOCOL_VERSION,
+      type: 'office:notification',
+      ...(requestId ? { requestId } : {}),
+      payload: {
+        id: id || createOfficeRequestId('notification'),
+        ...payload,
+      },
+    })
+    return true
+  }
+}
+
+let activeOfficeNotificationAdapter: OfficeNotificationAdapter | null = null
+
+function activateOfficeNotificationAdapter(adapter: OfficeNotificationAdapter): () => void {
+  activeOfficeNotificationAdapter = adapter
+  return () => {
+    if (activeOfficeNotificationAdapter === adapter) activeOfficeNotificationAdapter = null
+  }
+}
+
+/**
+ * Try to delegate a notification to the negotiated Host owner.
+ * Returns false when the editor owns display, so existing editor Toasts can
+ * render locally without knowing whether they are standalone or embedded.
+ */
+export function notifyOffice(notification: OfficeNotificationInput): boolean {
+  return activeOfficeNotificationAdapter?.notify(notification) ?? false
+}
+
+const localNotificationTimers = new WeakMap<HTMLElement, number>()
+
+function showLocalWebOfficeNotification(notification: OfficeNotificationInput): void {
+  const rootId = 'genoffice-web-notification-root'
+  let root = document.getElementById(rootId)
+  if (!root) {
+    root = document.createElement('div')
+    root.id = rootId
+    root.setAttribute('aria-live', 'polite')
+    Object.assign(root.style, {
+      position: 'fixed',
+      top: '14px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: '2147483646',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '8px',
+      alignItems: 'center',
+      pointerEvents: 'none',
+      maxWidth: 'min(680px, calc(100vw - 32px))',
+    })
+    document.body.append(root)
+  }
+
+  const dedupeKey = notification.dedupeKey || notification.code
+  const existing = [...root.children].find(
+    (node) => (node as HTMLElement).dataset.dedupeKey === dedupeKey,
+  ) as HTMLElement | undefined
+  const toast = existing ?? document.createElement('div')
+  if (!existing) root.append(toast)
+
+  const previousTimer = localNotificationTimers.get(toast)
+  if (previousTimer !== undefined) window.clearTimeout(previousTimer)
+
+  const palette = {
+    success: { background: '#ecfdf3', border: '#abefc6', color: '#067647' },
+    info: { background: '#eff8ff', border: '#b2ddff', color: '#175cd3' },
+    warning: { background: '#fffaeb', border: '#fedf89', color: '#b54708' },
+    error: { background: '#fef3f2', border: '#fecdca', color: '#b42318' },
+  }[notification.level]
+
+  toast.dataset.dedupeKey = dedupeKey
+  toast.textContent = notification.message
+  toast.setAttribute('role', notification.level === 'error' ? 'alert' : 'status')
+  Object.assign(toast.style, {
+    pointerEvents: 'auto',
+    padding: '10px 14px',
+    borderRadius: '8px',
+    border: `1px solid ${palette.border}`,
+    background: palette.background,
+    color: palette.color,
+    boxShadow: '0 8px 24px rgba(16, 24, 40, 0.12)',
+    font: '13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    overflowWrap: 'anywhere',
+  })
+
+  const duration =
+    notification.durationMs ??
+    (notification.level === 'error' || notification.level === 'warning' ? 4000 : 2500)
+  const timer = window.setTimeout(() => {
+    localNotificationTimers.delete(toast)
+    toast.remove()
+    if (root && root.childElementCount === 0) root.remove()
+  }, Math.max(1000, duration))
+  localNotificationTimers.set(toast, timer)
+}
+
+/**
+ * Web-only convenience for editors that do not already have a Toast component.
+ * In UC it delegates to the Host when negotiated; standalone Web falls back to
+ * a lightweight editor-owned Toast. Electron callers without an active Web
+ * runtime are intentionally left untouched.
+ */
+export function showWebOfficeNotification(notification: OfficeNotificationInput): boolean {
+  if (!activeOfficeNotificationAdapter) return false
+  if (activeOfficeNotificationAdapter.notify(notification)) return true
+  showLocalWebOfficeNotification(notification)
+  return true
 }
 
 function randomSuffix(): string {
@@ -135,6 +302,8 @@ function legacyPickUsesAssets(options: PickFileOptions): boolean {
 export class StandaloneOfficeHost implements OfficeHostApi {
   private readonly files = new Map<string, OfficeFile>()
   private readonly pendingDocuments = new Map<string, OfficeFile>()
+  private readonly notifications = new OfficeNotificationAdapter()
+  private readonly deactivateNotifications = activateOfficeNotificationAdapter(this.notifications)
   private dirty = false
 
   async getLocale(): Promise<string> {
@@ -312,6 +481,7 @@ export class StandaloneOfficeHost implements OfficeHostApi {
 
   destroy(): void {
     window.removeEventListener('beforeunload', this.beforeUnload)
+    this.deactivateNotifications()
     this.files.clear()
     this.pendingDocuments.clear()
   }
@@ -612,6 +782,7 @@ export class EmbeddedOfficeHost implements OfficeHostApi {
 export interface EmbeddedOfficeRuntime {
   bridge: EditorIframeBridge
   host: EmbeddedOfficeHost
+  notifications: OfficeNotificationAdapter
   destroy(): void
 }
 
@@ -632,13 +803,23 @@ export function createEmbeddedOfficeRuntime(
     targetOrigin: options.hostOrigin,
     requestTimeoutMs: options.requestTimeoutMs,
   })
+  const notifications = new OfficeNotificationAdapter(bridge)
+  const unsubscribeNotifications = bridge.subscribe((message) => {
+    if (message.type === 'office:init' || message.type === 'office:new') {
+      notifications.configure(message.payload.notifications)
+    }
+  })
+  const deactivateNotifications = activateOfficeNotificationAdapter(notifications)
   bridge.start()
   const host = new EmbeddedOfficeHost(bridge, options.locale)
 
   return {
     bridge,
     host,
+    notifications,
     destroy: () => {
+      unsubscribeNotifications()
+      deactivateNotifications()
       host.destroy()
       bridge.destroy()
     },
