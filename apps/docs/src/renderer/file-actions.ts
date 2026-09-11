@@ -59,6 +59,7 @@ import { createSaveSerializer } from './save-until-persisted'
 import { checkMissingFonts, collectDocFonts } from './font-check'
 import { defaultEastAsiaFontFor } from './font-list'
 import { hasPrintableHeaderFooter } from './pagination'
+import { showWebOfficeNotification } from '@genoffice/web-runtime'
 import { showToast } from './components/toast-bus'
 
 /** The App state the file actions need; built fresh per call. */
@@ -537,6 +538,25 @@ export function noteDocumentSwapped(): void {
   pathlessDocSavedPath = null
 }
 
+function showSaveToast(
+  text: string,
+  kind: 'success' | 'error',
+  saveAs: boolean,
+): void {
+  showToast(text, kind, {
+    code:
+      kind === 'success'
+        ? saveAs
+          ? 'DOCUMENT_SAVE_AS_SUCCEEDED'
+          : 'DOCUMENT_SAVE_SUCCEEDED'
+        : saveAs
+          ? 'DOCUMENT_SAVE_AS_FAILED'
+          : 'DOCUMENT_SAVE_FAILED',
+    operation: saveAs ? 'saveAs' : 'save',
+    dedupeKey: saveAs ? 'document-save-as' : 'document-save',
+  })
+}
+
 export function save(ctx: FileActionContext, saveAs: boolean, auto = false): Promise<boolean> {
   // A save arriving mid-flight waits for the current one instead of failing.
   // Reuse the finished pass only when it left nothing behind — judged by the
@@ -588,7 +608,7 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
       if (!result.ok) {
         if (result.error) {
           ctx.setStatus(t('appSaveFailed', { error: result.error }))
-          if (!auto) showToast(t('appSaveFailed', { error: result.error }), 'error')
+          if (!auto) showSaveToast(t('appSaveFailed', { error: result.error }), 'error', saveAs)
         }
         return false
       }
@@ -597,11 +617,23 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
     } else {
       const result = await window.desktop.saveDocx(savedPath, buffer, auto)
       if (!result.ok) {
-        // external-modified: the main process already prompted (or the autosave
-        // deferred to a manual save) — stay dirty, no second dialog/error banner
-        if (result.reason !== 'external-modified') {
-          ctx.setStatus(t('appSaveFailed', { error: result.error ?? '' }))
-          if (!auto) showToast(t('appSaveFailed', { error: result.error ?? '' }), 'error')
+        const failed = t('appSaveFailed', { error: result.error ?? '' })
+        if (result.reason === 'external-modified') {
+          // Electron already owns its conflict prompt. Web runtimes need the same
+          // ownership negotiation as every other notification: standalone shows
+          // locally; UC receives VERSION_CONFLICT only after opting in.
+          if (!auto) {
+            showWebOfficeNotification({
+              level: 'warning',
+              code: 'VERSION_CONFLICT',
+              message: failed,
+              operation: 'save',
+              dedupeKey: 'document-version-conflict',
+            })
+          }
+        } else {
+          ctx.setStatus(failed)
+          if (!auto) showSaveToast(failed, 'error', saveAs)
         }
         return false
       }
@@ -719,11 +751,11 @@ async function saveOnce(ctx: FileActionContext, saveAs: boolean, auto: boolean):
     ctx.setStatus(
       auto ? t('appAutoSavedAt', { time: new Date().toLocaleTimeString() }) : t('appSaved'),
     )
-    if (!auto) showToast(t('appSaved'))
+    if (!auto) showSaveToast(t('appSaved'), 'success', saveAs)
     return true
   } catch (err) {
     ctx.setStatus(t('appSaveFailed', { error: String(err) }))
-    if (!auto) showToast(t('appSaveFailed', { error: String(err) }), 'error')
+    if (!auto) showSaveToast(t('appSaveFailed', { error: String(err) }), 'error', saveAs)
     return false
   } finally {
     ctx.saveInFlightRef.current = false

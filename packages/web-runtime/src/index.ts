@@ -73,7 +73,7 @@ export class OfficeNotificationAdapter {
 
     this.owner = 'host'
     this.transport = settings.transport
-    this.levels = new Set(settings.levels?.length ? settings.levels : ALL_NOTIFICATION_LEVELS)
+    this.levels = new Set(settings.levels ?? ALL_NOTIFICATION_LEVELS)
   }
 
   notify(notification: OfficeNotificationInput): boolean {
