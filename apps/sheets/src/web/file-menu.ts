@@ -24,11 +24,7 @@ function button(className: string): HTMLButtonElement {
   return element
 }
 
-function setMenuLabel(
-  element: HTMLButtonElement,
-  label: string,
-  shortcut?: string,
-): void {
+function setMenuLabel(element: HTMLButtonElement, label: string, shortcut?: string): void {
   element.replaceChildren()
   const text = document.createElement('span')
   text.textContent = label
@@ -56,16 +52,12 @@ function setSaveMenuLabel(
 }
 
 function currentWorkbookDirty(): boolean {
-  const saveButton = document.querySelector<HTMLButtonElement>(
-    '[data-workbook-save-button="true"]',
-  )
+  const saveButton = document.querySelector<HTMLButtonElement>('[data-workbook-save-button="true"]')
   return saveButton?.dataset.dirty === 'true'
 }
 
 function currentWorkbookSaving(): boolean {
-  const saveButton = document.querySelector<HTMLButtonElement>(
-    '[data-workbook-save-button="true"]',
-  )
+  const saveButton = document.querySelector<HTMLButtonElement>('[data-workbook-save-button="true"]')
   return saveButton?.dataset.saving === 'true'
 }
 
