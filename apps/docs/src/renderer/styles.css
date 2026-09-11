@@ -7179,9 +7179,13 @@ tr > .page-gap-cut {
 }
 
 @keyframes save-loading-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .save-loading-spinner { animation-duration: 1.4s; }
+  .save-loading-spinner {
+    animation-duration: 1.4s;
+  }
 }
